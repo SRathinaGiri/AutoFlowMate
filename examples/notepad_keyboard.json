@@ -1,0 +1,39 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Notepad: type and save",
+  "description": "Starts Notepad, types a few lines with the keyboard, saves through the Save As dialog (UI Automation for the file name box), verifies the file and closes Notepad.",
+  "version": 1,
+  "variables": {
+    "out_file": "${flow_dir}\\output\\notepad_${timestamp}.txt"
+  },
+  "steps": [
+    { "id": "mkdir", "action": "dir_create", "path": "${flow_dir}\\output" },
+    { "id": "start", "action": "run_program", "program": "notepad.exe" },
+    { "id": "focus", "action": "window_activate", "title": "Notepad", "timeout_ms": 15000 },
+    { "id": "settle", "action": "wait", "ms": 800 },
+    { "id": "new_tab", "action": "key_press", "keys": "ctrl+n", "comment": "Windows 11 Notepad may reopen old tabs; start a fresh one" },
+    { "id": "wait_tab", "action": "wait", "ms": 500 },
+    { "id": "type1", "action": "type_text", "text": "Hello from AutoFlowMate!" },
+    { "id": "enter", "action": "key_press", "keys": "enter", "times": 2 },
+    { "id": "type2", "action": "type_text", "text": "Written at ${now} by user ${env.USERNAME}." },
+    { "id": "save", "action": "key_press", "keys": "ctrl+shift+s" },
+    { "id": "dialog", "action": "ui_wait", "window": "Notepad", "automation_id": "1001", "control_type": "Edit", "timeout_ms": 10000 },
+    { "id": "filename", "action": "ui_set_text", "window": "Notepad", "automation_id": "1001", "control_type": "Edit", "text": "${out_file}" },
+    { "id": "confirm", "action": "key_press", "keys": "enter" },
+    { "id": "wait_save", "action": "wait", "ms": 1000 },
+    { "id": "exists", "action": "file_exists", "path": "${out_file}", "output_var": "saved" },
+    {
+      "id": "check",
+      "action": "if",
+      "condition": { "left": "${saved}", "op": "is_true" },
+      "then": [
+        { "id": "read", "action": "file_read", "path": "${out_file}", "output_var": "content" },
+        { "id": "ok", "action": "log", "message": "Saved ${out_file}:${newline}${content}" }
+      ],
+      "else": [
+        { "id": "fail", "action": "stop", "success": false, "message": "file was not saved" }
+      ]
+    },
+    { "id": "close_tab", "action": "key_press", "keys": "ctrl+w", "comment": "close the tab we created" }
+  ]
+}

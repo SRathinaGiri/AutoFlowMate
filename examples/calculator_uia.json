@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Calculator via UI Automation",
+  "description": "Opens Windows Calculator, computes a + b by clicking buttons through UI Automation (no screen coordinates), reads the result and closes Calculator.",
+  "version": 1,
+  "variables": {
+    "a": "7",
+    "b": "8"
+  },
+  "steps": [
+    { "id": "launch", "action": "open", "target": "calculator:" },
+    { "id": "activate", "action": "window_activate", "title": "Calculator", "exact": true, "timeout_ms": 15000 },
+    { "id": "clear", "action": "ui_click", "window": "Calculator", "automation_id": "clearButton", "invoke": true },
+    { "id": "digit_a", "action": "ui_click", "window": "Calculator", "automation_id": "num${a}Button", "invoke": true },
+    { "id": "plus", "action": "ui_click", "window": "Calculator", "automation_id": "plusButton", "invoke": true },
+    { "id": "digit_b", "action": "ui_click", "window": "Calculator", "automation_id": "num${b}Button", "invoke": true },
+    { "id": "equals", "action": "ui_click", "window": "Calculator", "automation_id": "equalButton", "invoke": true },
+    { "id": "read", "action": "ui_get_text", "window": "Calculator", "automation_id": "CalculatorResults", "output_var": "display" },
+    { "id": "show", "action": "log", "message": "Calculator says: ${display}" },
+    {
+      "id": "verify",
+      "action": "if",
+      "condition": { "left": "${display}", "op": "ends_with", "right": "15" },
+      "then": [ { "id": "ok", "action": "log", "message": "Result verified" } ],
+      "else": [ { "id": "bad", "action": "log", "level": "warn", "message": "Unexpected result (try a=7, b=8)" } ]
+    },
+    { "id": "close", "action": "window_close", "title": "Calculator", "exact": true }
+  ]
+}

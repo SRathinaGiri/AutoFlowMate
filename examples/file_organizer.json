@@ -1,0 +1,50 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "File organizer",
+  "description": "Creates sample files in an inbox folder, then sorts them into sub-folders by extension and writes a report. Safe to run: touches only examples/output.",
+  "version": 1,
+  "variables": {
+    "inbox": "${flow_dir}\\output\\inbox",
+    "sorted": "${flow_dir}\\output\\sorted"
+  },
+  "steps": [
+    { "id": "clean", "action": "dir_delete", "path": "${flow_dir}\\output", "recursive": true, "missing_ok": true },
+    { "id": "mk_inbox", "action": "dir_create", "path": "${inbox}" },
+    {
+      "id": "make_samples",
+      "action": "for_each",
+      "items": ["report.txt", "notes.txt", "data.csv", "photo.png", "budget.csv"],
+      "item_var": "fname",
+      "steps": [
+        { "id": "write_sample", "action": "file_write", "path": "${inbox}\\${fname}", "content": "sample file ${fname} created ${now}" }
+      ]
+    },
+    { "id": "list", "action": "dir_list", "path": "${inbox}", "pattern": "*", "output_var": "files" },
+    { "id": "count", "action": "set_variable", "name": "moved", "value": 0 },
+    {
+      "id": "sort",
+      "action": "for_each",
+      "items": "${files}",
+      "item_var": "file",
+      "steps": [
+        { "id": "info", "action": "file_info", "path": "${file}", "output_var": "fi" },
+        {
+          "id": "has_ext",
+          "action": "if",
+          "condition": { "left": "${fi.extension}", "op": "not_empty" },
+          "then": [
+            { "id": "move", "action": "file_move", "source": "${file}", "destination": "${sorted}\\${fi.extension}\\", "overwrite": true },
+            { "id": "log_move", "action": "log", "message": "moved ${fi.name} -> ${fi.extension}/" },
+            { "id": "append", "action": "file_write", "path": "${sorted}\\report.txt", "content": "${fi.name}\t${fi.extension}\t${fi.size} bytes${newline}", "append": true }
+          ],
+          "else": [
+            { "id": "log_skip", "action": "log", "level": "warn", "message": "skipped ${fi.name} (no extension)" }
+          ]
+        }
+      ]
+    },
+    { "id": "check", "action": "dir_list", "path": "${inbox}", "output_var": "left" },
+    { "id": "read_report", "action": "file_read", "path": "${sorted}\\report.txt", "output_var": "report" },
+    { "id": "done", "action": "log", "message": "Done. Report:${newline}${report}" }
+  ]
+}

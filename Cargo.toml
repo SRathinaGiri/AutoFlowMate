@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["crates/autoflow-core", "crates/autoflow-cli", "crates/autoflow-gui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/SRathinaGiri/AutoFlowMate"
+
+[workspace.dependencies]
+autoflow-core = { path = "crates/autoflow-core" }
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+schemars = "1"
+chrono = "0.4"
+glob = "0.3"
+enigo = "0.6"
+uiautomation = "0.25"
+arboard = "3"
+xcap = "0.9"
+clap = { version = "4", features = ["derive"] }
+eframe = "0.37"
+rfd = "0.18"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
