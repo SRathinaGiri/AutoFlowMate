@@ -21,6 +21,9 @@ AutoFlowMate runs **flows**: JSON files listing steps such as `file_copy`, `wind
 | `autoflow inspect --at X Y` / `autoflow inspect --delay 3` | Describe the UI element at a point, plus a ready selector |
 | `autoflow mouse [--once]` | Live mouse X/Y and pixel colour (PyAutoGUI displayMousePosition) |
 | `autoflow locate image.png [--confidence 0.9] [--all]` | Test whether an image is found on screen right now |
+| `autoflow schedule add flow.json --when "daily 09:00"` | Run a flow automatically (Windows Task Scheduler) |
+| `autoflow schedule list` / `run NAME` / `remove NAME` | See next/last run and result, start now, delete |
+| `autoflow run flow.json --log run.log` | Also append a timestamped log of the run |
 | `autoflow schema` | JSON Schema for flow files |
 | `autoflow new flow.json` | Empty flow |
 
@@ -320,6 +323,35 @@ Robustness rules:
   with `success: false` if the check fails, so failures are visible.
 - Don't close or discard windows/tabs/documents the flow did not create.
 
+## Scheduling a flow
+
+When the user wants a flow to run by itself ("every morning", "every Friday", "each hour"), use
+Windows Task Scheduler through `autoflow schedule` — don't build polling loops or ask them to
+keep a window open:
+
+```powershell
+autoflow schedule add C:\flows\tally_export.json --when "weekdays 18:30" --name "Tally export"
+```
+
+- `--when`: `daily HH:MM`, `weekdays HH:MM`, `weekly mon,thu HH:MM`, `monthly D HH:MM`,
+  `once YYYY-MM-DD HH:MM`, `every 30m` / `every 2h`, `logon`. 24-hour times.
+- Optional: `--var name=value` (passed to every run), `--time-limit-minutes 120`,
+  `--print-xml` (show the task without creating it).
+- The task runs `autoflow.exe run "<flow>" --scheduled`: hidden console, log appended to
+  `<flow folder>\logs\<flow name>.log`, exit code shown as the task's last result
+  (0 success, 1 flow failed, 2 invalid). Check with `autoflow schedule list`; test right away
+  with `autoflow schedule run "<name>"` and read the log.
+- Tasks run only while the user is logged on, never overlap, catch up after a missed start
+  (PC off) and may run on battery. Studio has the same in **⏰ Schedule…**.
+- **Desktop flows need an unlocked screen.** Windows blocks synthetic keyboard/mouse input on a
+  locked or disconnected session, so tell the user to keep the PC logged in and unlocked at
+  that time (or schedule pure file/program flows, which work regardless).
+- Validate first — `schedule add` refuses an invalid flow. Make scheduled flows self-checking
+  (verify outputs, `stop` with `success: false`) because nobody is watching; avoid
+  `message_box`/`input_box`, which would wait forever.
+- Paths in the flow should be absolute or `${flow_dir}`-relative; the task's working directory
+  is the flow's folder.
+
 ## Safety
 
 - **Fail-safe:** pushing the mouse into **any screen corner** aborts a run (even mid-typing),
@@ -352,4 +384,13 @@ See the repo's `examples/` folder:
 read-back verification), `notepad_keyboard.json` (keyboard, Save-As dialog, file check),
 `pyautogui_tour.json` (screen size, eased mouse moves, pixel colour, region screenshot, image
 search, message box), `tally_balance_sheet_export.json` (keyboard-driven Tally export with
-wait-for-screen, wait-for-file and verification).
+wait-for-screen, wait-for-file and verification), `excel_sales_sheet.json` (Excel: click "Blank
+workbook" via UI Automation, type a table with `\t`/`\n`, formulas, check a result by copying the
+cell to the clipboard, Save As/OneDrive "Move" dialog via its `File name` box, quit only if the
+flow started Excel).
+
+Excel tips: in a typed row `\t` moves right and `\n` returns to the row's first column; F5 + a
+cell address + Enter jumps to a cell; Ctrl+C then `clipboard_get` reads a value; F12 opens Save
+As — or "This file was created in the cloud" when Excel auto-creates files in OneDrive — so find
+the file-name box with `window: "Excel"`, `automation_id: "1001"`, `name: "File name"`
+(`name_contains: true`) instead of relying on the dialog title.

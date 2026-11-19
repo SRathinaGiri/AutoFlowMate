@@ -1,0 +1,93 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Excel: sample sales sheet with formulas",
+  "description": "Opens Excel, creates a blank workbook, types a small sales table with row formulas and a SUM total, checks the total by copying the cell, saves the workbook under examples/output with a timestamp and verifies the file. Quits Excel only if it was not already running.",
+  "version": 1,
+  "settings": {
+    "key_delay_ms": 40,
+    "input_pause_ms": 150,
+    "step_delay_ms": 300,
+    "mouse_move_ms": 0,
+    "failsafe": true,
+    "abort_hotkey": "ctrl+alt+q"
+  },
+  "variables": {
+    "excel_exe": "C:\\Program Files\\Microsoft Office\\Root\\Office16\\EXCEL.EXE",
+    "out_dir": "${flow_dir}\\output",
+    "book_name": "Sales_${now:yyyyMMdd_HHmmss}",
+    "book_path": "${out_dir}\\${book_name}.xlsx",
+    "expected_total": "730"
+  },
+  "steps": [
+    { "id": "mkdir", "action": "dir_create", "path": "${out_dir}" },
+    { "id": "was_open", "action": "window_exists", "title": "Excel", "output_var": "excel_was_open",
+      "comment": "Remember whether Excel was already running, so we only quit what we started" },
+
+    { "id": "start", "action": "run_program", "program": "${excel_exe}" },
+    { "id": "blank", "action": "ui_click", "window": "Excel", "name": "Blank workbook", "invoke": true, "timeout_ms": 60000,
+      "comment": "Excel's start screen: click the 'Blank workbook' tile through UI Automation" },
+    { "id": "book_ready", "action": "ui_wait", "window": "Excel", "name": "Formula Bar", "timeout_ms": 30000,
+      "comment": "The new workbook is ready when its formula bar exists" },
+    { "id": "focus", "action": "window_activate", "title": "Excel", "timeout_ms": 10000 },
+    { "id": "go_a1", "action": "key_press", "keys": "ctrl+home" },
+
+    { "id": "header", "action": "type_text", "text": "Item\tQty\tPrice\tTotal\n",
+      "comment": "Tab moves right; Enter returns to column A of the next row" },
+    { "id": "row2", "action": "type_text", "text": "Apples\t10\t25\t=B2*C2\n" },
+    { "id": "row3", "action": "type_text", "text": "Bananas\t24\t5\t=B3*C3\n" },
+    { "id": "row4", "action": "type_text", "text": "Oranges\t12\t30\t=B4*C4\n" },
+    { "id": "row5", "action": "type_text", "text": "Total\t\t\t=SUM(D2:D4)\n" },
+
+    { "id": "goto", "action": "key_press", "keys": "f5", "comment": "Go To dialog" },
+    { "id": "goto_d5", "action": "type_text", "text": "D5\n" },
+    { "id": "copy", "action": "key_press", "keys": "ctrl+c" },
+    { "id": "read", "action": "clipboard_get", "output_var": "total" },
+    { "id": "uncopy", "action": "key_press", "keys": "esc" },
+    {
+      "id": "check_total", "action": "if",
+      "condition": { "left": "${total}", "op": "contains", "right": "${expected_total}" },
+      "then": [ { "id": "total_ok", "action": "log", "message": "Formula check OK: D5 = ${expected_total}" } ],
+      "else": [ { "id": "total_bad", "action": "stop", "success": false, "message": "Formula check failed: D5 shows '${total}', expected ${expected_total}" } ]
+    },
+
+    { "id": "save_as", "action": "key_press", "keys": "f12",
+      "comment": "Opens 'Save As' - or 'This file was created in the cloud' (a Move dialog) when Excel auto-creates new files in OneDrive" },
+    { "id": "file_name", "action": "ui_set_text", "window": "Excel", "automation_id": "1001", "name": "File name", "name_contains": true,
+      "control_type": "Edit", "text": "${book_path}", "timeout_ms": 15000,
+      "comment": "The dialog's 'File name:' box (id 1001 + its label, so it waits for the dialog and never hits another id-1001 box in Excel). Searched inside the Excel window so the dialog title does not matter. Full path so it lands exactly where we check" },
+    { "id": "save", "action": "key_press", "keys": "enter", "comment": "Save (or Move) is the default button" },
+
+    { "id": "deadline", "action": "set_variable", "name": "deadline", "value": "${unix}" },
+    { "id": "plus20", "action": "increment", "name": "deadline", "by": 20 },
+    {
+      "id": "wait_file", "action": "while", "max_iterations": 200,
+      "condition": { "left": "${unix}", "op": "less_than", "right": "${deadline}" },
+      "steps": [
+        { "id": "exists", "action": "file_exists", "path": "${book_path}", "output_var": "saved" },
+        { "id": "saved_if", "action": "if", "condition": { "left": "${saved}", "op": "is_true" },
+          "then": [ { "id": "brk", "action": "break" } ],
+          "else": [ { "id": "nap", "action": "wait", "ms": 500 } ] }
+      ]
+    },
+    {
+      "id": "verify", "action": "if",
+      "condition": { "left": "${book_path}", "op": "path_exists" },
+      "then": [
+        { "id": "info", "action": "file_info", "path": "${book_path}", "output_var": "book" },
+        { "id": "ok", "action": "log", "message": "Saved ${book.name} (${book.size} bytes) in ${book.parent}" }
+      ],
+      "else": [ { "id": "fail", "action": "stop", "success": false, "message": "Workbook was not saved to ${book_path}" } ]
+    },
+
+    { "id": "focus_book", "action": "window_activate", "title": "${book_name}", "timeout_ms": 10000 },
+    {
+      "id": "close", "action": "if",
+      "condition": { "left": "${excel_was_open}", "op": "is_true" },
+      "then": [ { "id": "close_book", "action": "key_press", "keys": "ctrl+w", "comment": "Excel was already open: close only our workbook" } ],
+      "else": [
+        { "id": "quit_excel", "action": "key_press", "keys": "alt+f4", "comment": "We started Excel: quit it (the workbook is saved, so no prompt)" },
+        { "id": "closed", "action": "window_wait_close", "title": "${book_name}", "timeout_ms": 15000, "on_error": "continue" }
+      ]
+    }
+  ]
+}

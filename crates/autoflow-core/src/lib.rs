@@ -5,6 +5,7 @@ pub mod dialogs;
 pub mod engine;
 pub mod failsafe;
 pub mod flow;
+pub mod schedule;
 pub mod vision;
 pub mod input;
 pub mod validate;

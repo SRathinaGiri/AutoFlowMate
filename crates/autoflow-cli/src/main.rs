@@ -44,6 +44,18 @@ enum Cmd {
         /// Skip validation before running.
         #[arg(long)]
         no_validate: bool,
+        /// Append a timestamped log of the run to this file.
+        #[arg(long, value_name = "FILE")]
+        log: Option<PathBuf>,
+        /// Mode used by scheduled tasks: hide the console window and log to
+        /// <flow folder>\logs\<flow name>.log (unless --log is given).
+        #[arg(long)]
+        scheduled: bool,
+    },
+    /// Run flows automatically with Windows Task Scheduler.
+    Schedule {
+        #[command(subcommand)]
+        cmd: ScheduleCmd,
     },
     /// Check a flow file for errors without running it.
     Validate {
@@ -108,6 +120,41 @@ enum Cmd {
     },
 }
 
+#[derive(Subcommand)]
+enum ScheduleCmd {
+    /// Create (or replace) a scheduled task for a flow.
+    ///
+    /// WHEN examples: "daily 09:00", "weekdays 18:30", "weekly mon,thu 09:00",
+    /// "monthly 1 09:00", "once 2026-11-20 09:00", "every 30m", "every 2h", "logon".
+    Add {
+        flow: PathBuf,
+        /// When to run (quote it), e.g. "daily 09:00".
+        #[arg(long = "when", value_name = "WHEN")]
+        when: String,
+        /// Task name (default: the flow file name).
+        #[arg(long)]
+        name: Option<String>,
+        /// Variables passed to every run: --var name=value (repeatable).
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+        /// Stop a run that takes longer than this.
+        #[arg(long, default_value_t = 120)]
+        time_limit_minutes: u32,
+        /// Print the task XML instead of creating the task.
+        #[arg(long)]
+        print_xml: bool,
+    },
+    /// List AutoFlowMate tasks with next/last run and result.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Start a task now (to test it).
+    Run { name: String },
+    /// Delete a task.
+    Remove { name: String },
+}
+
 fn main() -> ExitCode {
     // Physical-pixel coordinates everywhere (mouse, screenshots, UI Automation, image search).
     #[cfg(windows)]
@@ -124,8 +171,25 @@ fn main() -> ExitCode {
 
 fn real_main(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
-        Cmd::Run { flow, vars, dry_run, json, step_delay, key_delay, input_pause, no_failsafe, no_validate } => {
-            let text = std::fs::read_to_string(&flow)?;
+        Cmd::Schedule { cmd } => schedule_cmd(cmd),
+        Cmd::Run { flow, vars, dry_run, json, step_delay, key_delay, input_pause, no_failsafe, no_validate, log, scheduled } => {
+            if scheduled {
+                hide_console();
+            }
+            let log_file = log.or_else(|| scheduled.then(|| autoflow_core::schedule::log_path(&abs(&flow))));
+            let mut logger = match &log_file {
+                Some(p) => Some(RunLog::open(p, &flow, scheduled)?),
+                None => None,
+            };
+            let text = match std::fs::read_to_string(&flow) {
+                Ok(t) => t,
+                Err(e) => {
+                    if let Some(l) = logger.as_mut() {
+                        l.line(&format!("ERROR cannot read flow: {e}"));
+                    }
+                    return Err(e.into());
+                }
+            };
             let (parsed, issues) = validate_json(&text);
             let has_errors = issues.iter().any(|i| i.severity == Severity::Error);
             if !no_validate || parsed.is_none() {
@@ -135,8 +199,14 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
                     } else {
                         eprintln!("{:?} {}: {}", i.severity, i.location, i.message);
                     }
+                    if let Some(l) = logger.as_mut() {
+                        l.line(&format!("{:?} {}: {}", i.severity, i.location, i.message));
+                    }
                 }
                 if has_errors {
+                    if let Some(l) = logger.as_mut() {
+                        l.line("RESULT invalid flow (exit 2)");
+                    }
                     return Ok(ExitCode::from(2));
                 }
             }
@@ -156,10 +226,20 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
                 flow_dir: flow_dir(&flow),
                 ..RunOptions::default()
             };
-            let mut sink = |e: Event| print_event(&e, json);
+            let mut sink = |e: Event| {
+                print_event(&e, json);
+                if let Some(l) = logger.as_mut() {
+                    l.event(&e);
+                }
+            };
             let result = run_flow(&flow_doc, overrides, &opts, &mut sink);
             if json {
                 println!("{}", json!({"event": "result", "success": result.success, "message": result.message, "variables": result.variables}));
+            }
+            if let Some(p) = &log_file {
+                if !json && !scheduled {
+                    eprintln!("log: {}", p.display());
+                }
             }
             Ok(if result.success { ExitCode::SUCCESS } else { ExitCode::from(1) })
         }
@@ -290,6 +370,147 @@ fn action_docs() -> String {
         md.push_str(&format!("```json\n{}\n```\n", serde_json::to_string(&a.template).unwrap()));
     }
     md
+}
+
+/// Absolute path without the `\\?\` prefix.
+fn abs(path: &Path) -> PathBuf {
+    let p = std::fs::canonicalize(path).unwrap_or_else(|_| std::env::current_dir().unwrap_or_default().join(path));
+    PathBuf::from(p.display().to_string().trim_start_matches(r"\\?\"))
+}
+
+/// Appends a plain-text record of a run to a log file.
+struct RunLog {
+    file: std::fs::File,
+}
+
+impl RunLog {
+    fn open(path: &Path, flow: &Path, scheduled: bool) -> Result<Self> {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        // Keep logs from growing forever: rotate at 5 MB.
+        if std::fs::metadata(path).map(|m| m.len() > 5_000_000).unwrap_or(false) {
+            let _ = std::fs::rename(path, path.with_extension("log.old"));
+        }
+        let file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
+        let mut l = Self { file };
+        l.line(&format!("===== {} {}", if scheduled { "scheduled run of" } else { "run of" }, flow.display()));
+        Ok(l)
+    }
+
+    fn line(&mut self, s: &str) {
+        use std::io::Write;
+        let ts = autoflow_core::vars::Vars::default().interpolate("${now}").unwrap_or_default();
+        let _ = writeln!(self.file, "{ts}  {s}");
+    }
+
+    fn event(&mut self, e: &Event) {
+        match e {
+            Event::StepStarted { .. } => {}
+            Event::StepFinished { id, action, ok: true, millis, .. } => self.line(&format!("ok    [{id}] {action} ({millis} ms)")),
+            Event::StepFinished { id, action, error, .. } => {
+                self.line(&format!("FAIL  [{id}] {action}: {}", error.as_deref().unwrap_or("")))
+            }
+            Event::Log { level, message } => self.line(&format!("{:<5} {message}", format!("{level:?}").to_uppercase())),
+            Event::Finished { success, message } => {
+                self.line(&format!("RESULT {} {message}", if *success { "SUCCESS" } else { "FAILED" }))
+            }
+        }
+    }
+}
+
+/// Hide this process's console window (scheduled runs must not cover the app being automated).
+fn hide_console() {
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetConsoleWindow() -> isize;
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn ShowWindow(hwnd: isize, cmd: i32) -> i32;
+        }
+        unsafe {
+            let h = GetConsoleWindow();
+            if h != 0 {
+                ShowWindow(h, 0);
+            }
+        }
+    }
+}
+
+fn schedule_cmd(cmd: ScheduleCmd) -> Result<ExitCode> {
+    use autoflow_core::schedule::{self, TaskSpec, Trigger};
+    match cmd {
+        ScheduleCmd::Add { flow, when, name, vars, time_limit_minutes, print_xml } => {
+            let flow = abs(&flow);
+            // Refuse to schedule a broken flow.
+            let (parsed, issues) = validate_json(&std::fs::read_to_string(&flow)?);
+            if parsed.is_none() || issues.iter().any(|i| i.severity == Severity::Error) {
+                for i in &issues {
+                    eprintln!("{:?} {}: {}", i.severity, i.location, i.message);
+                }
+                bail!("fix the flow before scheduling it (autoflow validate)");
+            }
+            let mut extra = vec![];
+            for v in vars {
+                autoflow_core::vars::parse_override(&v)?;
+                extra.push("--var".to_string());
+                extra.push(v);
+            }
+            let name = name.unwrap_or_else(|| flow.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default());
+            let spec = TaskSpec {
+                name: schedule::sanitize_name(&name),
+                flow: flow.clone(),
+                trigger: Trigger::parse(&when)?,
+                exe: abs(&std::env::current_exe()?),
+                extra_args: extra,
+                time_limit_minutes,
+            };
+            if print_xml {
+                print!("{}", schedule::task_xml(&spec));
+                return Ok(ExitCode::SUCCESS);
+            }
+            schedule::create(&spec)?;
+            println!("scheduled \"{}\": {}", spec.name, spec.trigger.describe());
+            println!("  runs:  {} run \"{}\" --scheduled", spec.exe.display(), flow.display());
+            println!("  log:   {}", schedule::log_path(&flow).display());
+            println!("  note:  desktop flows only run while you are logged on and the screen is unlocked");
+            Ok(ExitCode::SUCCESS)
+        }
+        ScheduleCmd::List { json } => {
+            let tasks = schedule::list()?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&tasks)?);
+            } else if tasks.is_empty() {
+                println!("no AutoFlowMate tasks");
+            } else {
+                for t in tasks {
+                    let desc = t.description.trim_start_matches("AutoFlowMate | ");
+                    println!("{}  [{}]", t.name, t.state);
+                    println!("    {desc}");
+                    println!(
+                        "    next: {}   last: {} ({})",
+                        if t.next_run.is_empty() { "-" } else { &t.next_run },
+                        if t.last_run.is_empty() { "-" } else { &t.last_run },
+                        t.last_result_text()
+                    );
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        ScheduleCmd::Run { name } => {
+            schedule::run_now(&name)?;
+            println!("started \"{name}\" (check `autoflow schedule list` and the flow's logs folder)");
+            Ok(ExitCode::SUCCESS)
+        }
+        ScheduleCmd::Remove { name } => {
+            schedule::remove(&name)?;
+            println!("removed \"{name}\"");
+            Ok(ExitCode::SUCCESS)
+        }
+    }
 }
 
 fn flow_dir(path: &Path) -> PathBuf {

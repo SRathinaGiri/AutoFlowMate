@@ -70,7 +70,23 @@ struct Studio {
     view: View,
     zoom: f32,
     settings_buf: HashMap<String, String>,
+    sched: Option<SchedUi>,
 }
+
+/// State of the "Schedule" window.
+struct SchedUi {
+    name: String,
+    kind: usize,
+    time: String,
+    date: String,
+    days: [bool; 7],
+    day_of_month: u8,
+    minutes: u32,
+    tasks: Vec<autoflow_core::schedule::TaskInfo>,
+    message: Option<(bool, String)>,
+}
+
+const SCHED_KINDS: [&str; 7] = ["Daily", "Weekdays (Mon-Fri)", "Weekly", "Monthly", "Once", "Every N minutes", "At log-on"];
 
 impl Studio {
     fn new(path: Option<PathBuf>) -> Self {
@@ -97,6 +113,7 @@ impl Studio {
             view: View::Flowchart,
             zoom: 1.0,
             settings_buf: HashMap::new(),
+            sched: None,
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -449,6 +466,13 @@ impl Studio {
                 .changed();
             self.dirty |= changed;
             ui.separator();
+            if ui
+                .button("⏰ Schedule…")
+                .on_hover_text("Run this flow automatically with Windows Task Scheduler")
+                .clicked()
+            {
+                self.open_schedule();
+            }
             if ui.button("✔ Validate").clicked() {
                 self.log.clear();
                 self.validate();
@@ -757,6 +781,154 @@ impl Studio {
         ui.label(format!("File: {}", self.path.as_ref().map(|p| p.display().to_string()).unwrap_or("(not saved)".into())));
     }
 
+    // ---------------------------------------------------------------- scheduling
+
+    fn open_schedule(&mut self) {
+        if self.path.is_none() || self.dirty {
+            self.save(false);
+        }
+        let Some(path) = self.path.clone() else {
+            self.info(LogKind::Warn, "save the flow before scheduling it");
+            return;
+        };
+        let mut days = [false; 7];
+        days[autoflow_core::schedule::today_weekday() as usize] = true;
+        let date = autoflow_core::vars::Vars::default().interpolate("${date}").unwrap_or_default();
+        let mut s = SchedUi {
+            name: path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
+            kind: 0,
+            time: "09:00".into(),
+            date,
+            days,
+            day_of_month: 1,
+            minutes: 30,
+            tasks: vec![],
+            message: None,
+        };
+        refresh_tasks(&mut s, &path);
+        self.sched = Some(s);
+    }
+
+    fn schedule_window(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.path.clone() else { return };
+        let Some(mut s) = self.sched.take() else { return };
+        let mut open = true;
+        egui::Window::new("⏰ Schedule this flow").open(&mut open).resizable(false).collapsible(false).show(ctx, |ui| {
+            ui.label(RichText::new(path.display().to_string()).weak());
+            ui.add_space(4.0);
+            egui::Grid::new("schedgrid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
+                ui.label("Task name");
+                ui.text_edit_singleline(&mut s.name);
+                ui.end_row();
+                ui.label("Run");
+                egui::ComboBox::from_id_salt("schedkind").selected_text(SCHED_KINDS[s.kind]).show_ui(ui, |ui| {
+                    for (i, k) in SCHED_KINDS.iter().enumerate() {
+                        ui.selectable_value(&mut s.kind, i, *k);
+                    }
+                });
+                ui.end_row();
+                match s.kind {
+                    2 => {
+                        ui.label("Days");
+                        ui.horizontal(|ui| {
+                            for (i, d) in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].iter().enumerate() {
+                                ui.checkbox(&mut s.days[i], *d);
+                            }
+                        });
+                        ui.end_row();
+                    }
+                    3 => {
+                        ui.label("Day of month");
+                        ui.add(egui::DragValue::new(&mut s.day_of_month).range(1..=31));
+                        ui.end_row();
+                    }
+                    4 => {
+                        ui.label("Date");
+                        ui.add(egui::TextEdit::singleline(&mut s.date).hint_text("YYYY-MM-DD").desired_width(110.0));
+                        ui.end_row();
+                    }
+                    5 => {
+                        ui.label("Every");
+                        ui.add(egui::DragValue::new(&mut s.minutes).range(1..=1440).suffix(" min"));
+                        ui.end_row();
+                    }
+                    _ => {}
+                }
+                if s.kind != 5 && s.kind != 6 {
+                    ui.label("Time");
+                    ui.add(egui::TextEdit::singleline(&mut s.time).hint_text("HH:MM (24 h)").desired_width(70.0));
+                    ui.end_row();
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("Desktop flows run only while you are logged on with the screen unlocked. Each run is logged to logs\\<flow>.log next to the flow.")
+                    .small()
+                    .weak(),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Create / replace task").strong()).clicked() {
+                    s.message = Some(create_task(&s, &path));
+                    refresh_tasks(&mut s, &path);
+                }
+                if ui.button("Refresh").clicked() {
+                    refresh_tasks(&mut s, &path);
+                }
+                if ui.button("Open log").clicked() {
+                    let log = autoflow_core::schedule::log_path(&path);
+                    if log.exists() {
+                        let _ = std::process::Command::new("notepad").arg(&log).spawn();
+                    } else {
+                        s.message = Some((false, "no log yet - the flow has not run on a schedule".into()));
+                    }
+                }
+            });
+            if let Some((ok, m)) = &s.message {
+                ui.colored_label(if *ok { Color32::from_rgb(90, 180, 100) } else { Color32::from_rgb(220, 90, 90) }, m);
+            }
+            ui.separator();
+            ui.label(RichText::new("Tasks for this flow").strong());
+            if s.tasks.is_empty() {
+                ui.weak("none");
+            }
+            let mut action: Option<(bool, String)> = None;
+            for t in &s.tasks {
+                let when = t.description.split(" | ").nth(1).unwrap_or("");
+                ui.label(RichText::new(format!("{}  —  {when}", t.name)).strong());
+                ui.weak(format!(
+                    "next: {}    last: {} ({})",
+                    if t.next_run.is_empty() { "-" } else { &t.next_run },
+                    if t.last_run.is_empty() { "-" } else { &t.last_run },
+                    t.last_result_text()
+                ));
+                ui.horizontal(|ui| {
+                    if ui.button("Run now").clicked() {
+                        action = Some((true, t.name.clone()));
+                    }
+                    if ui.button("Delete").clicked() {
+                        action = Some((false, t.name.clone()));
+                    }
+                });
+                ui.add_space(4.0);
+            }
+            if let Some((run, name)) = action {
+                let r = if run { autoflow_core::schedule::run_now(&name) } else { autoflow_core::schedule::remove(&name) };
+                s.message = Some(match r {
+                    Ok(()) => (true, format!("{} \"{name}\"", if run { "started" } else { "deleted" })),
+                    Err(e) => (false, e.to_string()),
+                });
+                if run {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                }
+                refresh_tasks(&mut s, &path);
+            }
+        });
+        if open {
+            self.sched = Some(s);
+        }
+    }
+
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_centered(|ui| {
             let (x, y) = autoflow_core::failsafe::cursor().unwrap_or((0, 0));
@@ -899,6 +1071,7 @@ impl eframe::App for Studio {
             self.last_title = title;
         }
 
+        self.schedule_window(&ctx);
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").exact_size(22.0).show(ui, |ui| self.status_bar(ui));
         egui::Panel::bottom("log").resizable(true).default_size(170.0).show(ui, |ui| self.log_view(ui));
@@ -1029,6 +1202,55 @@ fn cat_color(cat: &str) -> Color32 {
         "Keyboard" => Color32::from_rgb(220, 190, 70),
         "UI Element" => Color32::from_rgb(110, 200, 110),
         _ => Color32::from_rgb(160, 160, 170),
+    }
+}
+
+fn refresh_tasks(s: &mut SchedUi, flow: &std::path::Path) {
+    match autoflow_core::schedule::for_flow(flow) {
+        Ok(t) => s.tasks = t,
+        Err(e) => s.message = Some((false, format!("cannot list tasks: {e}"))),
+    }
+}
+
+/// Build the trigger from the form and register the task.
+fn create_task(s: &SchedUi, flow: &std::path::Path) -> (bool, String) {
+    use autoflow_core::schedule::{self, TaskSpec, Trigger};
+    const D: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    let when = match s.kind {
+        0 => format!("daily {}", s.time.trim()),
+        1 => format!("weekdays {}", s.time.trim()),
+        2 => {
+            let days: Vec<&str> = (0..7).filter(|i| s.days[*i]).map(|i| D[i]).collect();
+            if days.is_empty() {
+                return (false, "pick at least one day".into());
+            }
+            format!("weekly {} {}", days.join(","), s.time.trim())
+        }
+        3 => format!("monthly {} {}", s.day_of_month, s.time.trim()),
+        4 => format!("once {} {}", s.date.trim(), s.time.trim()),
+        5 => format!("every {}m", s.minutes),
+        _ => "logon".into(),
+    };
+    let trigger = match Trigger::parse(&when) {
+        Ok(t) => t,
+        Err(e) => return (false, e.to_string()),
+    };
+    // The task runs the CLI that sits next to Studio.
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("autoflow.exe")))
+        .unwrap_or_default();
+    let spec = TaskSpec {
+        name: schedule::sanitize_name(&s.name),
+        flow: flow.to_path_buf(),
+        trigger,
+        exe,
+        extra_args: vec![],
+        time_limit_minutes: 120,
+    };
+    match schedule::create(&spec) {
+        Ok(()) => (true, format!("scheduled \"{}\": {}", spec.name, spec.trigger.describe())),
+        Err(e) => (false, e.to_string()),
     }
 }
 

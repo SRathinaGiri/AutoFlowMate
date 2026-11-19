@@ -52,6 +52,14 @@
   a free-form node graph: every flow stays valid JSON, with no dangling edges. Sizes are measured
   recursively. `if` lays out two branch columns that merge, and loops get a frame with a
   loop-back arrow. Connectors are egui drag-and-drop targets carrying `(list path, index)`.
+- **Scheduling** (`schedule.rs`) registers tasks in Task Scheduler's `\AutoFlowMate\` folder
+  from Task XML via `schtasks /Create /XML`. XML is used rather than option strings because its
+  dates are locale-independent and there is no 261-character `/TR` limit. Tasks use an
+  `InteractiveToken` principal, so they run only while the user is logged on, which desktop
+  input requires. Other settings: `IgnoreNew` for overlapping runs, `StartWhenAvailable`, and
+  battery allowed. Listing uses PowerShell's `Get-ScheduledTask` because it returns structured,
+  locale-independent fields. Scheduled runs call `autoflow run --scheduled`, which hides the
+  console and logs to `logs\<flow>.log`.
 - **Windows specifics** are behind `cfg(windows)` (`uia.rs`, window and `ui_*` actions), so the
   core still compiles elsewhere. That leaves room for Linux/macOS backends later.
 
@@ -75,6 +83,6 @@ The GUI form, palette and CLI pick up the action with no further changes.
 | Vision | OCR (`ocr_read`, `text_click`), multi-scale image search | Windows.Media.Ocr via `windows` crate |
 | Recorder | Record mouse/keyboard/UIA events into steps | low-level hooks (`rdev`) plus `inspect_point` per click |
 | Data | `excel_read/write`, `csv_read`, JSON/regex helpers, arithmetic expressions | `calamine`, `rust_xlsxwriter`, `csv`, `evalexpr` |
-| Scheduling | Run flows on a timer or trigger | Windows Task Scheduler wrapper (`autoflow schedule`) |
+| Triggers | File-arrival / folder-watch trigger (`autoflow watch`, started at log-on by a scheduled task), e-mail trigger | polling or `notify` crate |
 | Agents | MCP server exposing run/validate/inspect/windows as tools | `rmcp` |
 | Studio | Undo/redo, unsaved-changes prompt on close, breakpoints and step-through, variable watch | egui |

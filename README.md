@@ -81,7 +81,8 @@ Full reference: [skills/autoflowmate/references/actions.md](skills/autoflowmate/
 ```
 
 More in [examples/](examples): `file_organizer.json`, `calculator_uia.json`, `notepad_keyboard.json`,
-`pyautogui_tour.json`.
+`pyautogui_tour.json`, `tally_balance_sheet_export.json` (keyboard-driven TallyPrime export) and
+`excel_sales_sheet.json` (Excel: type a table with formulas, check the total, save).
 
 ## Build
 
@@ -119,7 +120,7 @@ Binaries: `target\release\autoflow.exe` (CLI) and `target\release\autoflow-studi
 .\target\release\autoflow.exe run examples\notepad_keyboard.json --key-delay 200
 ```
 
-Other commands: `actions`, `template <action>`, `windows`, `mouse`, `locate <image>`, `schema`, `docs`, `new`.
+Other commands: `actions`, `template <action>`, `windows`, `mouse`, `locate <image>`, `schedule`, `schema`, `docs`, `new`.
 
 In Studio, the **Flowchart** view shows the flow as a diagram. **Drag** an action from the palette
 onto any connector to insert it there, drag a node onto another connector to move it, and
@@ -129,6 +130,43 @@ the same flow. Edit fields on the right. **⌖ Pick element** captures the contr
 after 3 seconds and fills the selected `ui_*` or mouse step, or adds a new `ui_click`. For
 `image_*` steps, **📷 Snip image** opens the Windows snipping tool and saves the picture next to the
 flow. F5 runs, Ctrl+S saves.
+
+## Scheduling
+
+Flows can run by themselves through **Windows Task Scheduler**: it is built into Windows,
+survives reboots, needs no AutoFlowMate process running in the background and records every
+run's result. In Studio use **⏰ Schedule…**, or from the command line:
+
+```powershell
+.\target\release\autoflow.exe schedule add examples\tally_balance_sheet_export.json --when "weekdays 18:30"
+```
+
+```powershell
+.\target\release\autoflow.exe schedule list
+```
+
+| `--when` | Runs |
+|---|---|
+| `daily 09:00` | every day at 09:00 |
+| `weekdays 18:30` | Monday–Friday |
+| `weekly mon,thu 09:00` | on the listed days |
+| `monthly 1 09:00` | on day 1 of each month |
+| `once 2026-11-20 09:00` | one time |
+| `every 30m`, `every 2h` | repeatedly, starting in a minute |
+| `logon` | when you log on |
+
+`schedule run NAME` starts a task now (to test it) and `schedule remove NAME` deletes it. Tasks
+live in the *AutoFlowMate* folder of Task Scheduler. Each one:
+
+- runs `autoflow.exe run "<flow>" --scheduled`, which hides the console window and appends a
+  timestamped log to `<flow folder>\logs\<flow name>.log`;
+- reports the exit code as the task's last result (0 = success, 1 = flow failed, 2 = invalid flow);
+- runs only while you are logged on, never starts a second copy, catches up after a missed start
+  (PC off) and may run on battery.
+
+**Desktop flows (keyboard, mouse, windows) need your session logged in and the screen unlocked.**
+Windows blocks synthetic input on a locked screen. Flows that only use files and programs work
+regardless. You can also log any manual run with `autoflow run flow.json --log run.log`.
 
 ## Using with AI agents
 
