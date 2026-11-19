@@ -307,6 +307,17 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
         Action::ImageClick(x) => check_image(&x.target, loc, issues),
         Action::ImageWait(x) | Action::ImageWaitVanish(x) => check_image(&x.target, loc, issues),
         Action::InputBox(x) => need(issues, "output_var", &x.output_var),
+        Action::BrowserNavigate(x) => need(issues, "url", &x.url),
+        Action::BrowserType(x) => web_target(&x.target, loc, a.name(), issues),
+        Action::BrowserClick(x) | Action::BrowserWait(x) => web_target(&x.target, loc, a.name(), issues),
+        Action::BrowserGetText(x) => {
+            web_target(&x.target, loc, a.name(), issues);
+            need(issues, "output_var", &x.output_var);
+        }
+        Action::BrowserScreenshot(x) => need(issues, "path", &x.path),
+        Action::BrowserEval(x) => {
+            need(issues, "script", &x.script);
+        }
         Action::Screenshot(x) => need(issues, "path", &x.path),
         Action::Break(_) if loop_depth == 0 => issues.push(err(loc, "break used outside of a loop".into())),
         Action::MouseClick(x) if x.x.is_some() != x.y.is_some() => issues.push(err(loc, "mouse_click: set both x and y, or neither".into())),
@@ -314,6 +325,15 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             issues.push(err(loc, "for_each: \"items\" is required".into()))
         }
         _ => {}
+    }
+}
+
+fn web_target(t: &crate::actions::WebTarget, loc: &str, action: &str, issues: &mut Vec<Issue>) {
+    if t.element_id.trim().is_empty() && t.selector.trim().is_empty() {
+        issues.push(err(loc, format!("{action}: give the \"element_id\" (or a CSS \"selector\")")));
+    }
+    if t.element_id.trim().starts_with('#') {
+        issues.push(warn(loc, format!("{action}: \"element_id\" should be the bare id without '#', e.g. \"email\"")));
     }
 }
 

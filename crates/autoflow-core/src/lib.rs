@@ -7,6 +7,7 @@ pub mod failsafe;
 pub mod flow;
 pub mod schedule;
 pub mod vision;
+pub mod web;
 pub mod input;
 pub mod validate;
 pub mod vars;

@@ -876,6 +876,126 @@ pub struct ImageWait {
     pub target: ImageTarget,
 }
 
+// -------------------------------------------------------------------------- web
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserOpen {
+    /// Page to open: a URL (https://…) or a local .html file path.
+    pub url: String,
+    /// "edge" (default), "chrome", or the full path to a Chromium-based browser .exe.
+    pub browser: String,
+    /// Run without a visible window.
+    pub headless: bool,
+    /// Window width in pixels.
+    pub width: u32,
+    /// Window height in pixels.
+    pub height: u32,
+    /// Leave the browser open when the flow ends.
+    pub keep_open: bool,
+    /// How long to wait for the page to load, in ms.
+    pub timeout_ms: u64,
+}
+impl Default for BrowserOpen {
+    fn default() -> Self {
+        Self { url: String::new(), browser: "edge".into(), headless: false, width: 1280, height: 900, keep_open: false, timeout_ms: 30_000 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserNavigate {
+    /// URL or local .html file path to load in the open browser.
+    pub url: String,
+    /// How long to wait for the page to load, in ms.
+    pub timeout_ms: u64,
+}
+impl Default for BrowserNavigate {
+    fn default() -> Self {
+        Self { url: String::new(), timeout_ms: 30_000 }
+    }
+}
+
+/// Which element on the page: by `element_id` (simplest) or by CSS `selector`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WebTarget {
+    /// The element's id attribute, e.g. `email` for <input id="email"> (without #).
+    /// (Named element_id because every step already has its own `id`.)
+    pub element_id: String,
+    /// CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`.
+    pub selector: String,
+    /// How long to wait for the element to appear, in ms.
+    pub timeout_ms: u64,
+}
+impl Default for WebTarget {
+    fn default() -> Self {
+        Self { element_id: String::new(), selector: String::new(), timeout_ms: 10_000 }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserElement {
+    #[serde(flatten)]
+    pub target: WebTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserType {
+    #[serde(flatten)]
+    pub target: WebTarget,
+    /// Text to type (interpolated).
+    pub text: String,
+    /// Empty the field first.
+    pub clear: bool,
+    /// Press Enter after typing (submits most forms).
+    pub press_enter: bool,
+}
+impl Default for BrowserType {
+    fn default() -> Self {
+        Self { target: WebTarget::default(), text: String::new(), clear: true, press_enter: false }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserGetText {
+    #[serde(flatten)]
+    pub target: WebTarget,
+    /// What to read: empty = visible text, `value` = input value, `html`, or any attribute name (e.g. `href`).
+    pub attribute: String,
+    /// Variable that receives the result.
+    pub output_var: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserScreenshot {
+    /// PNG path to write.
+    pub path: String,
+    /// Only this element (by its id attribute); empty = the visible page.
+    pub element_id: String,
+    /// Only this element (by CSS selector); empty = the visible page.
+    pub selector: String,
+    /// How long to wait for the element, in ms.
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserEval {
+    /// JavaScript expression evaluated in the page; its value is returned (promises are awaited).
+    pub script: String,
+    /// Variable that receives the result.
+    pub output_var: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserClose {}
+
 // ---------------------------------------------------------------------- dialogs
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1056,6 +1176,16 @@ actions! {
     "Image", "image_click", ImageClick(ImageClick), "Wait for a picture on screen and click it.";
     "Image", "image_wait", ImageWait(ImageWait), "Wait until a picture appears on screen.";
     "Image", "image_wait_vanish", ImageWaitVanish(ImageWait), "Wait until a picture is no longer on screen.";
+
+    "Web", "browser_open", BrowserOpen(BrowserOpen), "Start Edge/Chrome and open a page (URL or local .html file).";
+    "Web", "browser_navigate", BrowserNavigate(BrowserNavigate), "Load another page in the open browser.";
+    "Web", "browser_type", BrowserType(BrowserType), "Type text into a page element given by id or selector.";
+    "Web", "browser_click", BrowserClick(BrowserElement), "Click a page element given by id or selector.";
+    "Web", "browser_wait", BrowserWait(BrowserElement), "Wait until a page element exists.";
+    "Web", "browser_get_text", BrowserGetText(BrowserGetText), "Read a page element's text, value or attribute into a variable.";
+    "Web", "browser_screenshot", BrowserScreenshot(BrowserScreenshot), "Save a PNG of the page or of one element.";
+    "Web", "browser_eval", BrowserEval(BrowserEval), "Run JavaScript in the page and store the result.";
+    "Web", "browser_close", BrowserClose(BrowserClose), "Close the browser.";
 
     "Dialog", "message_box", MessageBox(MessageBox), "Show a message box and store which button was clicked.";
     "Dialog", "input_box", InputBox(InputBox), "Ask the user to type a value (optionally masked).";

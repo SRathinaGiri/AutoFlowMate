@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AutoFlowMate test form</title>
+<style>
+  body { font-family: Segoe UI, system-ui, sans-serif; background: #f3f4f8; margin: 0; }
+  .card { max-width: 520px; margin: 48px auto; background: #fff; border-radius: 14px; padding: 28px 32px;
+          box-shadow: 0 6px 24px rgba(30, 40, 90, .12); }
+  h1 { margin: 0 0 4px; font-size: 22px; color: #3b2fb0; }
+  p.sub { margin: 0 0 20px; color: #666; }
+  label { display: block; margin: 14px 0 6px; font-weight: 600; }
+  input, textarea, select { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #c9cbe0;
+          border-radius: 8px; font: inherit; }
+  button { margin-top: 20px; background: linear-gradient(90deg, #2563eb, #7c3aed); color: #fff; border: 0;
+           padding: 10px 22px; border-radius: 8px; font-size: 15px; cursor: pointer; }
+  #confirmation { margin-top: 22px; padding: 16px; border-radius: 10px; background: #e8f7ee; color: #14532d;
+                  border: 1px solid #a7e3bf; }
+  #error { margin-top: 16px; color: #b91c1c; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Contact us</h1>
+    <p class="sub">A local test page for AutoFlowMate web automation.</p>
+    <form id="contact" novalidate>
+      <label for="name">Name</label>
+      <input id="name" name="name" autocomplete="off">
+      <label for="email">E-mail</label>
+      <input id="email" name="email" type="email" autocomplete="off">
+      <label for="topic">Topic</label>
+      <select id="topic" name="topic">
+        <option>General</option><option>Billing</option><option>Support</option>
+      </select>
+      <label for="message">Message</label>
+      <textarea id="message" name="message" rows="4"></textarea>
+      <button id="submit" type="submit">Send</button>
+    </form>
+    <div id="error"></div>
+    <div id="result"></div>
+  </div>
+<script>
+  document.getElementById('contact').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    const name = document.getElementById('name').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const err = document.getElementById('error');
+    err.textContent = '';
+    if (!name || !email.includes('@')) {
+      err.textContent = 'Please enter your name and a valid e-mail.';
+      return;
+    }
+    document.getElementById('submit').disabled = true;
+    document.getElementById('submit').textContent = 'Sending…';
+    // Simulate a server round trip, then show the confirmation.
+    setTimeout(function () {
+      const ticket = 'T-' + (100000 + Math.floor(Math.random() * 900000));
+      const topic = document.getElementById('topic').value;
+      const box = document.createElement('div');
+      box.id = 'confirmation';
+      box.innerHTML = 'Thank you, <b id="who"></b>! Your ' + topic.toLowerCase() +
+        ' request was received.<br>Ticket: <span id="ticket" data-ticket="' + ticket + '">' + ticket +
+        '</span><br>We will reply to <span id="reply_to"></span>.';
+      box.querySelector('#who').textContent = name;
+      box.querySelector('#reply_to').textContent = email;
+      document.getElementById('result').appendChild(box);
+      document.getElementById('submit').textContent = 'Sent';
+    }, 1200);
+  });
+</script>
+</body>
+</html>

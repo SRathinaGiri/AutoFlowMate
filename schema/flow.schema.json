@@ -943,6 +943,132 @@
           ]
         },
         {
+          "description": "Start Edge/Chrome and open a page (URL or local .html file).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_open"
+            }
+          },
+          "$ref": "#/$defs/BrowserOpen",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Load another page in the open browser.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_navigate"
+            }
+          },
+          "$ref": "#/$defs/BrowserNavigate",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Type text into a page element given by id or selector.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_type"
+            }
+          },
+          "$ref": "#/$defs/BrowserType",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Click a page element given by id or selector.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_click"
+            }
+          },
+          "$ref": "#/$defs/BrowserElement",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Wait until a page element exists.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_wait"
+            }
+          },
+          "$ref": "#/$defs/BrowserElement",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Read a page element's text, value or attribute into a variable.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_get_text"
+            }
+          },
+          "$ref": "#/$defs/BrowserGetText",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Save a PNG of the page or of one element.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_screenshot"
+            }
+          },
+          "$ref": "#/$defs/BrowserScreenshot",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Run JavaScript in the page and store the result.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_eval"
+            }
+          },
+          "$ref": "#/$defs/BrowserEval",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Close the browser.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_close"
+            }
+          },
+          "$ref": "#/$defs/BrowserClose",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Show a message box and store which button was clicked.",
           "type": "object",
           "properties": {
@@ -2479,6 +2605,208 @@
           "default": 5000
         }
       }
+    },
+    "BrowserOpen": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "Page to open: a URL (https://…) or a local .html file path.",
+          "type": "string",
+          "default": ""
+        },
+        "browser": {
+          "description": "\"edge\" (default), \"chrome\", or the full path to a Chromium-based browser .exe.",
+          "type": "string",
+          "default": "edge"
+        },
+        "headless": {
+          "description": "Run without a visible window.",
+          "type": "boolean",
+          "default": false
+        },
+        "width": {
+          "description": "Window width in pixels.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1280
+        },
+        "height": {
+          "description": "Window height in pixels.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 900
+        },
+        "keep_open": {
+          "description": "Leave the browser open when the flow ends.",
+          "type": "boolean",
+          "default": false
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the page to load, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 30000
+        }
+      }
+    },
+    "BrowserNavigate": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "description": "URL or local .html file path to load in the open browser.",
+          "type": "string",
+          "default": ""
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the page to load, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 30000
+        }
+      }
+    },
+    "BrowserType": {
+      "description": "Which element on the page: by `element_id` (simplest) or by CSS `selector`.",
+      "type": "object",
+      "properties": {
+        "element_id": {
+          "description": "The element's id attribute, e.g. `email` for <input id=\"email\"> (without #).\n(Named element_id because every step already has its own `id`.)",
+          "type": "string",
+          "default": ""
+        },
+        "selector": {
+          "description": "CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`.",
+          "type": "string",
+          "default": ""
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the element to appear, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 10000
+        },
+        "text": {
+          "description": "Text to type (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "clear": {
+          "description": "Empty the field first.",
+          "type": "boolean",
+          "default": true
+        },
+        "press_enter": {
+          "description": "Press Enter after typing (submits most forms).",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "BrowserElement": {
+      "description": "Which element on the page: by `element_id` (simplest) or by CSS `selector`.",
+      "type": "object",
+      "properties": {
+        "element_id": {
+          "description": "The element's id attribute, e.g. `email` for <input id=\"email\"> (without #).\n(Named element_id because every step already has its own `id`.)",
+          "type": "string",
+          "default": ""
+        },
+        "selector": {
+          "description": "CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`.",
+          "type": "string",
+          "default": ""
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the element to appear, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 10000
+        }
+      }
+    },
+    "BrowserGetText": {
+      "description": "Which element on the page: by `element_id` (simplest) or by CSS `selector`.",
+      "type": "object",
+      "properties": {
+        "element_id": {
+          "description": "The element's id attribute, e.g. `email` for <input id=\"email\"> (without #).\n(Named element_id because every step already has its own `id`.)",
+          "type": "string",
+          "default": ""
+        },
+        "selector": {
+          "description": "CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`.",
+          "type": "string",
+          "default": ""
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the element to appear, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 10000
+        },
+        "attribute": {
+          "description": "What to read: empty = visible text, `value` = input value, `html`, or any attribute name (e.g. `href`).",
+          "type": "string",
+          "default": ""
+        },
+        "output_var": {
+          "description": "Variable that receives the result.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "BrowserScreenshot": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "PNG path to write.",
+          "type": "string",
+          "default": ""
+        },
+        "element_id": {
+          "description": "Only this element (by its id attribute); empty = the visible page.",
+          "type": "string",
+          "default": ""
+        },
+        "selector": {
+          "description": "Only this element (by CSS selector); empty = the visible page.",
+          "type": "string",
+          "default": ""
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the element, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
+    "BrowserEval": {
+      "type": "object",
+      "properties": {
+        "script": {
+          "description": "JavaScript expression evaluated in the page; its value is returned (promises are awaited).",
+          "type": "string",
+          "default": ""
+        },
+        "output_var": {
+          "description": "Variable that receives the result.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "BrowserClose": {
+      "type": "object"
     },
     "DialogButtons": {
       "type": "string",

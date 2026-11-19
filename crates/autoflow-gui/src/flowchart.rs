@@ -52,10 +52,10 @@ impl Chart<'_> {
         let mut y = rect.top() + MARGIN * z;
 
         let p = Painter { ui, painter: &painter, chart: self, z };
-        p.terminal(Pos2::new(cx, y), "Start");
+        p.terminal(Pos2::new(cx, y + TERM_H * z / 2.0), "Start");
         y += TERM_H * z;
         let end = p.list(steps, &vec![], cx, y, ops);
-        p.terminal(Pos2::new(cx, end), "End");
+        p.terminal(Pos2::new(cx, end + TERM_H * z / 2.0), "End");
     }
 }
 
@@ -306,8 +306,8 @@ impl Painter<'_, '_> {
 
         let pad = if matches!(shape, NodeShape::Decision) { 22.0 } else { 13.0 } * z;
         let title = match &s.action {
-            Action::If(_) => "if".to_string(),
-            a => a.name().to_string(),
+            Action::If(_) => format!("{} if", crate::icons::action_icon("if")),
+            a => format!("{} {}", crate::icons::action_icon(a.name()), a.name()),
         };
         let mut title_text = title;
         if running {

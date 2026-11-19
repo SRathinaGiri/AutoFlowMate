@@ -1,0 +1,89 @@
+name: Release
+
+# Push a tag like v0.2.0 (matching the version in Cargo.toml) to build and publish a release:
+#   git tag v0.2.0 && git push origin v0.2.0
+# Or run it by hand from the Actions tab (it then only builds and uploads the zip as an artifact,
+# unless you tick "publish").
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Also create the GitHub release for the version in Cargo.toml'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        shell: pwsh
+        run: |
+          rustup update stable --no-self-update
+          rustup default stable
+          rustc --version
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-release-${{ runner.os }}-
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $tag = "v$v"
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {
+            throw "Tag $env:GITHUB_REF_NAME does not match Cargo.toml version $v (expected $tag)"
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Version $v, tag $tag"
+
+      - name: Test
+        run: cargo test --workspace --locked --release
+
+      - name: Package
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoFlowMate-${{ steps.version.outputs.tag }}-windows-x64
+          path: |
+            dist/*.zip
+            dist/*.sha256
+
+      - name: Publish GitHub release
+        if: github.ref_type == 'tag' || inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          $notes = ".github/release-notes/$env:TAG.md"
+          $files = @(Get-ChildItem dist -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.sha256' } | ForEach-Object { $_.FullName })
+          $ghArgs = @($env:TAG) + $files + @('--title', "AutoFlowMate $env:TAG", '--target', $env:GITHUB_SHA)
+          if (Test-Path $notes) { $ghArgs += @('--notes-file', $notes) } else { $ghArgs += '--generate-notes' }
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $env:TAG exists; replacing its assets"
+            gh release upload $env:TAG $files --clobber
+          } else {
+            gh release create @ghArgs
+          }
+          if ($LASTEXITCODE -ne 0) { throw "gh release failed" }

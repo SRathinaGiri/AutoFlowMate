@@ -52,6 +52,13 @@
   a free-form node graph: every flow stays valid JSON, with no dangling edges. Sizes are measured
   recursively. `if` lays out two branch columns that merge, and loops get a frame with a
   loop-back arrow. Connectors are egui drag-and-drop targets carrying `(list path, index)`.
+- **Web** (`web.rs`) starts Edge or Chrome itself with `--remote-debugging-port` on a free port
+  and a private temporary profile. It reads `/json/version` to get the DevTools WebSocket URL,
+  then attaches with `headless_chrome::Browser::connect`. The browser is not launched through
+  headless_chrome because that waits for a stderr line that Edge on Windows never prints, and
+  `msedge.exe` is a launcher that exits immediately. Elements are found by
+  `[id="…"]` or a CSS selector. Typing uses `Input.insertText`, and the browser is closed with
+  `Browser.close` and its profile deleted when the run ends.
 - **Scheduling** (`schedule.rs`) registers tasks in Task Scheduler's `\AutoFlowMate\` folder
   from Task XML via `schtasks /Create /XML`. XML is used rather than option strings because its
   dates are locale-independent and there is no 261-character `/TR` limit. Tasks use an
@@ -79,7 +86,7 @@ The GUI form, palette and CLI pick up the action with no further changes.
 
 | Area | Idea | Likely crate/approach |
 |---|---|---|
-| Web | `browser_open`, `browser_click` (CSS/XPath), `browser_type`, `browser_get_text`, `browser_eval` | `chromiumoxide` (CDP) or `fantoccini` (WebDriver) as a new action category |
+| Web | XPath targets, multiple tabs, file upload/download, cookies, attach to the user's logged-in browser, full-page screenshots | `headless_chrome` CDP calls |
 | Vision | OCR (`ocr_read`, `text_click`), multi-scale image search | Windows.Media.Ocr via `windows` crate |
 | Recorder | Record mouse/keyboard/UIA events into steps | low-level hooks (`rdev`) plus `inspect_point` per click |
 | Data | `excel_read/write`, `csv_read`, JSON/regex helpers, arithmetic expressions | `calamine`, `rust_xlsxwriter`, `csv`, `evalexpr` |

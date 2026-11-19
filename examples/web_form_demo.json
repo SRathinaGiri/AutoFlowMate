@@ -1,0 +1,50 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Web: fill a form by element id",
+  "description": "Opens a web page in Edge, types into fields by their element id, submits, waits for the confirmation, reads values back, checks them and saves screenshots of the page and of the confirmation. Uses the bundled local test page; point page_url at your own site and change the ids.",
+  "version": 1,
+  "settings": {
+    "key_delay_ms": 100,
+    "input_pause_ms": 100,
+    "step_delay_ms": 300,
+    "mouse_move_ms": 0,
+    "failsafe": true,
+    "abort_hotkey": "ctrl+alt+q"
+  },
+  "variables": {
+    "page_url": "web/contact_form.html",
+    "person": "Rathinagiri",
+    "email": "test@example.com",
+    "message": "Hello from AutoFlowMate at ${now}",
+    "out_dir": "${flow_dir}\\output",
+    "stamp": "${now:yyyyMMdd_HHmmss}"
+  },
+  "steps": [
+    { "id": "open", "action": "browser_open", "url": "${page_url}", "browser": "edge", "width": 1100, "height": 850 },
+    { "id": "name", "action": "browser_type", "element_id": "name", "text": "${person}" },
+    { "id": "email", "action": "browser_type", "element_id": "email", "text": "${email}" },
+    { "id": "topic", "action": "browser_eval", "script": "document.getElementById('topic').value = 'Support'; 'Support'", "output_var": "topic",
+      "comment": "Selects need a value set by script (or a click on the option)" },
+    { "id": "message", "action": "browser_type", "element_id": "message", "text": "${message}" },
+    { "id": "send", "action": "browser_click", "element_id": "submit" },
+
+    { "id": "wait_ok", "action": "browser_wait", "element_id": "confirmation", "timeout_ms": 15000,
+      "comment": "The page shows the confirmation after its (simulated) server round trip" },
+    { "id": "read_msg", "action": "browser_get_text", "element_id": "confirmation", "output_var": "confirmation" },
+    { "id": "read_ticket", "action": "browser_get_text", "element_id": "ticket", "attribute": "data-ticket", "output_var": "ticket" },
+    { "id": "read_typed", "action": "browser_get_text", "element_id": "email", "attribute": "value", "output_var": "typed_email" },
+    { "id": "log", "action": "log", "message": "Confirmation: ${confirmation} | ticket ${ticket} | typed e-mail ${typed_email}" },
+    {
+      "id": "check", "action": "if",
+      "condition": { "left": "${confirmation}", "op": "contains", "right": "${person}" },
+      "then": [ { "id": "ok", "action": "log", "message": "Form submitted OK (ticket ${ticket})" } ],
+      "else": [ { "id": "bad", "action": "stop", "success": false, "message": "Confirmation does not mention ${person}: ${confirmation}" } ]
+    },
+
+    { "id": "shot_page", "action": "browser_screenshot", "path": "${out_dir}\\web_page_${stamp}.png" },
+    { "id": "shot_box", "action": "browser_screenshot", "element_id": "confirmation", "path": "${out_dir}\\web_confirmation_${stamp}.png" },
+    { "id": "title", "action": "browser_eval", "script": "document.title", "output_var": "title" },
+    { "id": "done", "action": "log", "message": "Saved screenshots of '${title}' to ${out_dir}" },
+    { "id": "close", "action": "browser_close" }
+  ]
+}

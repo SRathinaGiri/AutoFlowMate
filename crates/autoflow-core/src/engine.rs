@@ -101,7 +101,7 @@ pub fn run_flow(flow: &Flow, overrides: Map<String, Value>, opts: &RunOptions, s
         crate::failsafe::start(opts.stop.clone(), reason.clone(), settings.failsafe, &hotkey).map(Some)
     };
 
-    let mut ctx = Context { vars, opts, settings, reason, sink, input: None, #[cfg(windows)] uia: None, depth: 0 };
+    let mut ctx = Context { vars, opts, settings, reason, sink, input: None, #[cfg(windows)] uia: None, web: None, depth: 0 };
     let result = guard.and_then(|g| {
         if g.is_some() {
             let s = &ctx.settings;
@@ -122,6 +122,7 @@ pub fn run_flow(flow: &Flow, overrides: Map<String, Value>, opts: &RunOptions, s
     });
     // Release anything key_down/mouse_down left pressed.
     ctx.input = None;
+    ctx.web = None;
     let (success, message) = match result {
         Ok(Ctl::Next) | Ok(Ctl::Break) => (true, format!("completed in {:.1}s", started.elapsed().as_secs_f64())),
         Ok(Ctl::Stop { success, message }) => (success, if message.is_empty() { "stopped".into() } else { message }),
@@ -185,6 +186,7 @@ struct Context<'a> {
     input: Option<Input>,
     #[cfg(windows)]
     uia: Option<crate::uia::Uia>,
+    web: Option<crate::web::WebSession>,
     depth: usize,
 }
 
@@ -879,6 +881,81 @@ impl<'a> Context<'a> {
                 }
             }
 
+            // ---------------- web
+            Action::BrowserOpen(a) => {
+                let url = crate::web::to_url(&self.text(&a.url)?, &self.opts.flow_dir);
+                if !self.dry(format!("open {url} in {}", a.browser)) {
+                    self.web = None; // close a previous browser first
+                    let w = crate::web::WebSession::open(&self.text(&a.browser)?, a.headless, (a.width, a.height), a.keep_open)?;
+                    if !url.trim().is_empty() {
+                        w.navigate(&url, a.timeout_ms)?;
+                    }
+                    let title = w.title();
+                    self.web = Some(w);
+                    self.log(LogLevel::Info, format!("browser opened: {title}"));
+                }
+            }
+            Action::BrowserNavigate(a) => {
+                let url = crate::web::to_url(&self.text(&a.url)?, &self.opts.flow_dir);
+                if !self.dry(format!("go to {url}")) {
+                    self.web()?.navigate(&url, a.timeout_ms)?;
+                }
+            }
+            Action::BrowserType(a) => {
+                let css = self.web_css(&a.target)?;
+                let text = self.text(&a.text)?;
+                if !self.dry(format!("type {} chars into {css}", text.chars().count())) {
+                    self.web()?.type_text(&css, &text, a.clear, a.press_enter, a.target.timeout_ms)?;
+                }
+            }
+            Action::BrowserClick(a) => {
+                let css = self.web_css(&a.target)?;
+                if !self.dry(format!("click {css}")) {
+                    self.web()?.click(&css, a.target.timeout_ms)?;
+                }
+            }
+            Action::BrowserWait(a) => {
+                let css = self.web_css(&a.target)?;
+                if !self.dry(format!("wait for {css}")) {
+                    self.web()?.wait(&css, a.target.timeout_ms)?;
+                }
+            }
+            Action::BrowserGetText(a) => {
+                let css = self.web_css(&a.target)?;
+                if self.dry(format!("read {css}")) {
+                    self.set_var(&a.output_var, json!(""))?;
+                } else {
+                    let attr = self.text(&a.attribute)?;
+                    let v = self.web()?.get(&css, &attr, a.target.timeout_ms)?;
+                    self.set_var(&a.output_var, json!(v))?;
+                }
+            }
+            Action::BrowserScreenshot(a) => {
+                let p = self.path(&a.path)?;
+                let (id, sel) = (self.text(&a.element_id)?, self.text(&a.selector)?);
+                let css = if id.trim().is_empty() && sel.trim().is_empty() { None } else { Some(crate::web::css(&id, &sel)?) };
+                if !self.dry(format!("save page screenshot to {}", p.display())) {
+                    let timeout = if a.timeout_ms == 0 { 10_000 } else { a.timeout_ms };
+                    self.web()?.screenshot(&p, css.as_deref(), timeout)?;
+                }
+            }
+            Action::BrowserEval(a) => {
+                let script = self.text(&a.script)?;
+                if self.dry("run JavaScript".into()) {
+                    self.set_var(&a.output_var, Value::Null)?;
+                } else {
+                    let v = self.web()?.eval(&script)?;
+                    self.set_var(&a.output_var, v)?;
+                }
+            }
+            Action::BrowserClose(_) => {
+                if !self.dry("close the browser".into()) {
+                    if let Some(w) = self.web.take() {
+                        w.close();
+                    }
+                }
+            }
+
             // ---------------- dialogs
             Action::MessageBox(a) => {
                 let (title, text) = (self.text(&a.title)?, self.text(&a.text)?);
@@ -907,6 +984,14 @@ impl<'a> Context<'a> {
             other => bail!("action `{}` is only supported on Windows", other.name()),
         }
         Ok(Ctl::Next)
+    }
+
+    fn web(&self) -> Result<&crate::web::WebSession> {
+        self.web.as_ref().ok_or_else(|| anyhow!("no browser is open: add a browser_open step first"))
+    }
+
+    fn web_css(&self, t: &WebTarget) -> Result<String> {
+        crate::web::css(&self.text(&t.element_id)?, &self.text(&t.selector)?)
     }
 
     fn image_template(&self, t: &ImageTarget) -> Result<xcap::image::GrayImage> {
@@ -1091,6 +1176,7 @@ impl<'a> Context<'a> {
                 input: self.input.take(),
                 #[cfg(windows)]
                 uia: self.uia.take(),
+                web: self.web.take(),
                 depth: self.depth + 1,
             };
             let ctl = child.run_steps(&sub.steps, 0);
@@ -1098,6 +1184,9 @@ impl<'a> Context<'a> {
             #[cfg(windows)]
             {
                 self.uia = child.uia.take();
+            }
+            {
+                self.web = child.web.take();
             }
             (ctl, child.vars.map)
         };

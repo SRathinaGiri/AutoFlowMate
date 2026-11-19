@@ -16,6 +16,7 @@ glob.workspace = true
 enigo.workspace = true
 arboard.workspace = true
 xcap.workspace = true
+headless_chrome.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 uiautomation.workspace = true

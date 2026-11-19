@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod flowchart;
+mod icons;
 mod form;
 mod tree;
 
@@ -27,10 +28,11 @@ type SnipResult = Result<String, String>;
 
 fn main() -> eframe::Result {
     let path = std::env::args().nth(1).map(PathBuf::from);
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1320.0, 820.0]).with_min_inner_size([900.0, 500.0]),
-        ..Default::default()
-    };
+    let mut viewport = egui::ViewportBuilder::default().with_inner_size([1320.0, 820.0]).with_min_inner_size([900.0, 500.0]);
+    if let Ok(icon) = eframe::icon_data::from_png_bytes(ICON_PNG) {
+        viewport = viewport.with_icon(icon);
+    }
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     eframe::run_native("AutoFlowMate Studio", options, Box::new(move |_cc| Ok(Box::new(Studio::new(path)))))
 }
 
@@ -71,7 +73,15 @@ struct Studio {
     zoom: f32,
     settings_buf: HashMap<String, String>,
     sched: Option<SchedUi>,
+    icon_tex: Option<egui::TextureHandle>,
+    /// Splash screen is shown until this time (seconds since start), or until clicked.
+    splash_until: Option<f64>,
+    show_about: bool,
 }
+
+const ICON_PNG: &[u8] = include_bytes!("../../../assets/autoflowmate.png");
+const GITHUB_URL: &str = "https://github.com/SRathinaGiri/AutoFlowMate";
+const SPLASH_SECONDS: f64 = 2.5;
 
 /// State of the "Schedule" window.
 struct SchedUi {
@@ -114,6 +124,9 @@ impl Studio {
             zoom: 1.0,
             settings_buf: HashMap::new(),
             sched: None,
+            icon_tex: None,
+            splash_until: Some(-1.0),
+            show_about: false,
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -439,6 +452,14 @@ impl Studio {
                     ui.close();
                 }
             });
+            ui.menu_button("Help", |ui| {
+                if ui.button("About AutoFlowMate").clicked() {
+                    self.show_about = true;
+                    ui.close();
+                }
+                ui.hyperlink_to("Project on GitHub", GITHUB_URL);
+                ui.hyperlink_to("Action reference", format!("{GITHUB_URL}/blob/main/skills/autoflowmate/references/actions.md"));
+            });
             ui.separator();
             let running = self.running.is_some();
             if ui.add_enabled(!running, egui::Button::new(RichText::new("▶ Run (F5)").color(Color32::from_rgb(80, 180, 90)))).clicked() {
@@ -511,9 +532,17 @@ impl Studio {
                 if items.is_empty() {
                     continue;
                 }
-                egui::CollapsingHeader::new(RichText::new(cat).strong().color(cat_color(cat))).default_open(true).show(ui, |ui| {
+                egui::CollapsingHeader::new(RichText::new(format!("{}  {cat}", icons::category_icon(cat))).strong().color(cat_color(cat))).default_open(true).show(ui, |ui| {
+                    let w = ui.available_width();
                     for a in items {
-                        let r = ui.add(egui::Button::new(a.name).sense(egui::Sense::click_and_drag())).on_hover_text(a.description);
+                        let r = ui
+                            .add(
+                                egui::Button::new(format!("{}  {}", icons::action_icon(a.name), a.name))
+                                    .right_text("")
+                                    .min_size(egui::vec2(w, 24.0))
+                                    .sense(egui::Sense::click_and_drag()),
+                            )
+                            .on_hover_text(a.description);
                         r.dnd_set_drag_payload(DragItem::New(a.name.to_string()));
                         if r.clicked() {
                             add = Some(a.name.to_string());
@@ -648,7 +677,7 @@ impl Studio {
         };
         let name = step.action.name();
         let desc = self.catalog.iter().find(|a| a.name == name).map(|a| a.description).unwrap_or("");
-        ui.heading(RichText::new(name).color(cat_color(step.action.category())));
+        ui.heading(RichText::new(format!("{}  {name}", icons::action_icon(name))).color(cat_color(step.action.category())));
         ui.label(desc);
         ui.separator();
 
@@ -779,6 +808,92 @@ impl Studio {
         }
         ui.add_space(8.0);
         ui.label(format!("File: {}", self.path.as_ref().map(|p| p.display().to_string()).unwrap_or("(not saved)".into())));
+    }
+
+    // ---------------------------------------------------------------- branding
+
+    fn icon(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
+        self.icon_tex
+            .get_or_insert_with(|| {
+                let img = eframe::icon_data::from_png_bytes(ICON_PNG)
+                    .map(|i| egui::ColorImage::from_rgba_unmultiplied([i.width as usize, i.height as usize], &i.rgba))
+                    .unwrap_or_else(|_| egui::ColorImage::new([1, 1], vec![Color32::TRANSPARENT]));
+                ctx.load_texture("app_icon", img, egui::TextureOptions::LINEAR)
+            })
+            .clone()
+    }
+
+    /// Icon, name, version, tagline and GitHub link (splash and About).
+    fn brand(ui: &mut egui::Ui, tex: &egui::TextureHandle, icon_px: f32) {
+        ui.vertical_centered(|ui| {
+            ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(icon_px, icon_px)));
+            ui.add_space(8.0);
+            ui.label(RichText::new("AutoFlowMate").size(30.0).strong());
+            ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).weak());
+            ui.add_space(6.0);
+            ui.label("Windows desktop & web automation (RPA) — flows as JSON");
+            ui.label(RichText::new("Visual flowchart · CLI · AI-agent skill · scheduling").weak());
+            ui.add_space(8.0);
+            ui.hyperlink_to(RichText::new(GITHUB_URL).size(14.0), GITHUB_URL);
+        });
+    }
+
+    fn splash(&mut self, ctx: &egui::Context) {
+        let Some(mut until) = self.splash_until else { return };
+        let now = ctx.input(|i| i.time);
+        if until < 0.0 {
+            // Start the timer once the window is actually shown and focused
+            // (eframe renders a few frames before the window becomes visible).
+            let focused = ctx.input(|i| i.viewport().focused) == Some(true);
+            if focused || now > 15.0 {
+                until = now + SPLASH_SECONDS;
+                self.splash_until = Some(until);
+            } else {
+                until = f64::INFINITY;
+            }
+        }
+        let clicked = ctx.input(|i| i.pointer.any_click() || i.key_pressed(egui::Key::Escape));
+        if now >= until || (clicked && now > until - SPLASH_SECONDS + 0.3) {
+            self.splash_until = None;
+            return;
+        }
+        let tex = self.icon(ctx);
+        // Dim the editor behind the splash.
+        let screen = ctx.content_rect();
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::NULL.with("splash_dim")))
+            .rect_filled(screen, 0.0, Color32::from_black_alpha(140));
+        egui::Area::new(egui::Id::NULL.with("splash"))
+            .order(egui::Order::Tooltip)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                egui::Frame::window(ui.style()).inner_margin(egui::Margin::same(28)).corner_radius(16.0).show(ui, |ui| {
+                    ui.set_width(460.0);
+                    Self::brand(ui, &tex, 128.0);
+                    ui.add_space(10.0);
+                    ui.vertical_centered(|ui| ui.label(RichText::new("click anywhere to start").small().weak()));
+                });
+            });
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+
+    fn about_window(&mut self, ctx: &egui::Context) {
+        if !self.show_about {
+            return;
+        }
+        let tex = self.icon(ctx);
+        let mut open = true;
+        egui::Window::new("About AutoFlowMate").open(&mut open).resizable(false).collapsible(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            ui.set_width(440.0);
+            Self::brand(ui, &tex, 96.0);
+            ui.separator();
+            ui.label(RichText::new("Shortcuts").strong());
+            ui.label("F5 run · Ctrl+S save · Ctrl+O open · Ctrl+wheel zoom flowchart");
+            ui.label("Abort a run: move the mouse into a screen corner, or press the abort hotkey (default Ctrl+Alt+Q)");
+            ui.add_space(6.0);
+            ui.label(RichText::new("Built with").strong());
+            ui.label(RichText::new("Rust · egui/eframe · enigo · uiautomation · headless_chrome · xcap · arboard").weak());
+        });
+        self.show_about = open;
     }
 
     // ---------------------------------------------------------------- scheduling
@@ -1072,6 +1187,8 @@ impl eframe::App for Studio {
         }
 
         self.schedule_window(&ctx);
+        self.about_window(&ctx);
+        self.splash(&ctx);
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").exact_size(22.0).show(ui, |ui| self.status_bar(ui));
         egui::Panel::bottom("log").resizable(true).default_size(170.0).show(ui, |ui| self.log_view(ui));
@@ -1124,7 +1241,7 @@ fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize
                 ops.push(TreeOp::Toggle(path.clone()));
             }
             let marker = if running { "▶ " } else if failed { "✖ " } else { "" };
-            let mut label = RichText::new(format!("{marker}{}", step.action.name())).strong().color(cat_color(step.action.category()));
+            let mut label = RichText::new(format!("{marker}{} {}", icons::action_icon(step.action.name()), step.action.name())).strong().color(cat_color(step.action.category()));
             if !step.enabled {
                 label = label.strikethrough().weak();
             }
@@ -1201,6 +1318,11 @@ fn cat_color(cat: &str) -> Color32 {
         "Mouse" => Color32::from_rgb(230, 110, 140),
         "Keyboard" => Color32::from_rgb(220, 190, 70),
         "UI Element" => Color32::from_rgb(110, 200, 110),
+        "Web" => Color32::from_rgb(60, 150, 235),
+        "Image" => Color32::from_rgb(235, 120, 60),
+        "Screen" => Color32::from_rgb(150, 120, 220),
+        "Dialog" => Color32::from_rgb(200, 100, 180),
+        "Clipboard" => Color32::from_rgb(120, 160, 120),
         _ => Color32::from_rgb(160, 160, 170),
     }
 }

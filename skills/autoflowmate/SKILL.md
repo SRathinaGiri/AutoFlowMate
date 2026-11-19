@@ -1,6 +1,6 @@
 ---
 name: autoflowmate
-description: Automate Windows desktop tasks (files, programs, windows, mouse, keyboard, UI elements, image recognition, dialogs, clipboard, screenshots) by writing AutoFlowMate flow JSON and running it with the `autoflow` CLI — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image on screen, organise files, or edit/debug an existing AutoFlowMate `.json` flow.
+description: Automate Windows desktop and web tasks (files, programs, windows, mouse, keyboard, UI elements, web pages by element id, image recognition, dialogs, clipboard, screenshots) by writing AutoFlowMate flow JSON and running it with the `autoflow` CLI — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image on screen, organise files, or edit/debug an existing AutoFlowMate `.json` flow.
 ---
 
 # AutoFlowMate (Windows RPA)
@@ -307,6 +307,38 @@ Prefer, in this order (most robust first):
    `mouse_drag`, `mouse_down`/`mouse_up`) — last resort; breaks when windows move or DPI changes.
    Use `window_set_state` maximized first to stabilise layouts. `screen_size` gives the resolution.
 
+### Web pages (browser_*)
+
+For web applications use the **Web** actions — they drive Edge (default) or Chrome through the
+DevTools protocol, address elements by their HTML **`element_id`** (or a CSS `selector`), work
+without moving the mouse, and are far more reliable than clicking screen coordinates:
+
+```json
+{ "id": "open",  "action": "browser_open", "url": "https://example.com/contact", "browser": "edge" },
+{ "id": "name",  "action": "browser_type", "element_id": "name", "text": "${person}" },
+{ "id": "send",  "action": "browser_click", "element_id": "submit" },
+{ "id": "wait",  "action": "browser_wait", "element_id": "confirmation", "timeout_ms": 15000 },
+{ "id": "read",  "action": "browser_get_text", "element_id": "confirmation", "output_var": "msg" },
+{ "id": "shot",  "action": "browser_screenshot", "path": "${flow_dir}\\output\\result.png" },
+{ "id": "close", "action": "browser_close" }
+```
+
+- The field is `element_id` (bare id, no `#`) — every step already has its own `id`. Use
+  `selector` for anything else (`form button[type=submit]`, `.result`, `table tr:nth-child(2) td`).
+- `browser_open` accepts a URL or a local `.html` path; `headless: true` hides the window,
+  `keep_open: true` leaves it open after the run. Only one browser per flow; the browser is
+  closed automatically when the flow ends.
+- `browser_type` clears the field first (`clear`) and can `press_enter`. `browser_get_text`
+  reads visible text, `attribute: "value"` (inputs), `"html"`, or any attribute (`href`).
+- `browser_wait` for the element that proves the next page/state arrived before reading it.
+- `<select>` and anything else unusual: `browser_eval` runs JavaScript and returns its value,
+  e.g. `"document.getElementById('topic').value = 'Support'"` or `"document.title"`.
+- `browser_screenshot` saves the visible page, or one element with `element_id`/`selector`.
+- The browser uses a private temporary profile (not the user's logged-in profile): sites that
+  need a login must be logged into within the flow — ask the user for credentials via
+  `input_box` (`password: true`) at run time, never hard-code them.
+- To find ids, the user can right-click the element → Inspect in Edge/Chrome.
+
 Ask the user with `message_box` (ok/ok_cancel/yes_no…, answer in `output_var`) or `input_box`
 (`password: true` masks input) when a flow needs a decision or a value at run time.
 `key_down`/`key_up` hold modifiers (e.g. shift while clicking).
@@ -394,3 +426,7 @@ cell address + Enter jumps to a cell; Ctrl+C then `clipboard_get` reads a value;
 As — or "This file was created in the cloud" when Excel auto-creates files in OneDrive — so find
 the file-name box with `window: "Excel"`, `automation_id: "1001"`, `name: "File name"`
 (`name_contains: true`) instead of relying on the dialog title.
+
+`web_form_demo.json` (with `web/contact_form.html`): open a page, type into fields by
+`element_id`, set a `<select>` via `browser_eval`, submit, wait for and read the confirmation,
+verify it, screenshot the page and one element.

@@ -12,7 +12,7 @@ so you can build them in a GUI, write them by hand, or have an **AI agent** gene
 - **AI skill** ([skills/autoflowmate/SKILL.md](skills/autoflowmate/SKILL.md)): teaches agents such
   as Claude Code to author, validate and run flows.
 
-## What it can automate (59 actions)
+## What it can automate (68 actions)
 
 | Category | Actions |
 |---|---|
@@ -25,6 +25,7 @@ so you can build them in a GUI, write them by hand, or have an **AI agent** gene
 | UI Element | ui_click, ui_set_text, ui_get_text, ui_wait, ui_exists (Windows UI Automation selectors) |
 | Image | image_find, image_find_all, image_click, image_wait, image_wait_vanish (find a picture on screen) |
 | Screen | screenshot (monitor, window or region), screen_size, pixel_get, pixel_matches |
+| Web | browser_open, browser_navigate, browser_type, browser_click, browser_wait, browser_get_text, browser_screenshot, browser_eval, browser_close (Edge/Chrome; elements by **element id** or CSS selector) |
 | Dialog | message_box (alert/confirm), input_box (prompt/password) |
 | Clipboard | clipboard_set, clipboard_get |
 
@@ -81,8 +82,9 @@ Full reference: [skills/autoflowmate/references/actions.md](skills/autoflowmate/
 ```
 
 More in [examples/](examples): `file_organizer.json`, `calculator_uia.json`, `notepad_keyboard.json`,
-`pyautogui_tour.json`, `tally_balance_sheet_export.json` (keyboard-driven TallyPrime export) and
-`excel_sales_sheet.json` (Excel: type a table with formulas, check the total, save).
+`pyautogui_tour.json`, `tally_balance_sheet_export.json` (keyboard-driven TallyPrime export),
+`excel_sales_sheet.json` (Excel: type a table with formulas, check the total, save) and
+`web_form_demo.json` (fill a web form by element id, read the result, take screenshots).
 
 ## Build
 
@@ -93,6 +95,30 @@ cargo build --release
 ```
 
 Binaries: `target\release\autoflow.exe` (CLI) and `target\release\autoflow-studio.exe` (GUI).
+
+### Download a release
+
+Ready-made Windows builds are on the [Releases page](https://github.com/SRathinaGiri/AutoFlowMate/releases).
+Unzip and run `autoflow-studio.exe`.
+
+### Releasing (maintainers)
+
+1. Bump `version` in the workspace `Cargo.toml`.
+2. Add release notes in `.github/release-notes/vX.Y.Z.md`.
+3. Commit, then tag and push:
+
+```powershell
+git tag v0.2.0
+```
+
+```powershell
+git push origin v0.2.0
+```
+
+The **Release** workflow (`.github/workflows/release.yml`) runs on Windows. It checks that the tag
+matches `Cargo.toml`, runs the tests, builds the portable zip with `scripts/package.ps1`, and
+publishes a GitHub release with the zip and its SHA-256 checksum. **CI** builds and tests every
+push to `main`. To build the same zip locally, run `scripts\package.ps1`.
 
 ## Use
 
@@ -130,6 +156,26 @@ the same flow. Edit fields on the right. **⌖ Pick element** captures the contr
 after 3 seconds and fills the selected `ui_*` or mouse step, or adds a new `ui_click`. For
 `image_*` steps, **📷 Snip image** opens the Windows snipping tool and saves the picture next to the
 flow. F5 runs, Ctrl+S saves.
+
+## Web automation
+
+The **Web** actions drive Microsoft Edge (or Chrome) through the DevTools protocol. Address any
+element by its HTML `element_id` (or a CSS `selector`): type into it, click it, wait for it, read
+its text/value/attributes, run JavaScript, and screenshot the page or a single element. No
+mouse movement is involved, so web steps are not affected by screen layout.
+
+```json
+{ "id": "open",  "action": "browser_open", "url": "https://example.com/contact" },
+{ "id": "name",  "action": "browser_type", "element_id": "name", "text": "Rathinagiri" },
+{ "id": "send",  "action": "browser_click", "element_id": "submit" },
+{ "id": "wait",  "action": "browser_wait", "element_id": "confirmation" },
+{ "id": "read",  "action": "browser_get_text", "element_id": "confirmation", "output_var": "msg" },
+{ "id": "shot",  "action": "browser_screenshot", "path": "result.png" }
+```
+
+Try it offline with `examples/web_form_demo.json` and the bundled `examples/web/contact_form.html`.
+The browser runs with a private temporary profile, which is deleted afterwards, and it closes
+when the flow ends unless `keep_open` is set.
 
 ## Scheduling
 

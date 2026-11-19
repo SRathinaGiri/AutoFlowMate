@@ -857,6 +857,136 @@ Wait until a picture is no longer on screen.
 {"action":"image_wait_vanish","image":"","confidence":0.9,"region":null,"timeout_ms":5000}
 ```
 
+## Web
+
+### `browser_open`
+
+Start Edge/Chrome and open a page (URL or local .html file).
+
+| field | default | description |
+|---|---|---|
+| `url` | `""` | Page to open: a URL (https://…) or a local .html file path. |
+| `browser` | `"edge"` | "edge" (default), "chrome", or the full path to a Chromium-based browser .exe. |
+| `headless` | `false` | Run without a visible window. |
+| `width` | `1280` | Window width in pixels. |
+| `height` | `900` | Window height in pixels. |
+| `keep_open` | `false` | Leave the browser open when the flow ends. |
+| `timeout_ms` | `30000` | How long to wait for the page to load, in ms. |
+
+```json
+{"action":"browser_open","url":"","browser":"edge","headless":false,"width":1280,"height":900,"keep_open":false,"timeout_ms":30000}
+```
+
+### `browser_navigate`
+
+Load another page in the open browser.
+
+| field | default | description |
+|---|---|---|
+| `url` | `""` | URL or local .html file path to load in the open browser. |
+| `timeout_ms` | `30000` | How long to wait for the page to load, in ms. |
+
+```json
+{"action":"browser_navigate","url":"","timeout_ms":30000}
+```
+
+### `browser_type`
+
+Type text into a page element given by id or selector.
+
+| field | default | description |
+|---|---|---|
+| `element_id` | `""` | The element's id attribute, e.g. `email` for <input id="email"> (without #). (Named element_id because every step already has its own `id`.) |
+| `selector` | `""` | CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`. |
+| `timeout_ms` | `10000` | How long to wait for the element to appear, in ms. |
+| `text` | `""` | Text to type (interpolated). |
+| `clear` | `true` | Empty the field first. |
+| `press_enter` | `false` | Press Enter after typing (submits most forms). |
+
+```json
+{"action":"browser_type","element_id":"","selector":"","timeout_ms":10000,"text":"","clear":true,"press_enter":false}
+```
+
+### `browser_click`
+
+Click a page element given by id or selector.
+
+| field | default | description |
+|---|---|---|
+| `element_id` | `""` | The element's id attribute, e.g. `email` for <input id="email"> (without #). (Named element_id because every step already has its own `id`.) |
+| `selector` | `""` | CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`. |
+| `timeout_ms` | `10000` | How long to wait for the element to appear, in ms. |
+
+```json
+{"action":"browser_click","element_id":"","selector":"","timeout_ms":10000}
+```
+
+### `browser_wait`
+
+Wait until a page element exists.
+
+| field | default | description |
+|---|---|---|
+| `element_id` | `""` | The element's id attribute, e.g. `email` for <input id="email"> (without #). (Named element_id because every step already has its own `id`.) |
+| `selector` | `""` | CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`. |
+| `timeout_ms` | `10000` | How long to wait for the element to appear, in ms. |
+
+```json
+{"action":"browser_wait","element_id":"","selector":"","timeout_ms":10000}
+```
+
+### `browser_get_text`
+
+Read a page element's text, value or attribute into a variable.
+
+| field | default | description |
+|---|---|---|
+| `element_id` | `""` | The element's id attribute, e.g. `email` for <input id="email"> (without #). (Named element_id because every step already has its own `id`.) |
+| `selector` | `""` | CSS selector instead of an id, e.g. `form button[type=submit]`, `.result`. |
+| `timeout_ms` | `10000` | How long to wait for the element to appear, in ms. |
+| `attribute` | `""` | What to read: empty = visible text, `value` = input value, `html`, or any attribute name (e.g. `href`). |
+| `output_var` | `""` | Variable that receives the result. |
+
+```json
+{"action":"browser_get_text","element_id":"","selector":"","timeout_ms":10000,"attribute":"","output_var":""}
+```
+
+### `browser_screenshot`
+
+Save a PNG of the page or of one element.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | PNG path to write. |
+| `element_id` | `""` | Only this element (by its id attribute); empty = the visible page. |
+| `selector` | `""` | Only this element (by CSS selector); empty = the visible page. |
+| `timeout_ms` | `0` | How long to wait for the element, in ms. |
+
+```json
+{"action":"browser_screenshot","path":"","element_id":"","selector":"","timeout_ms":0}
+```
+
+### `browser_eval`
+
+Run JavaScript in the page and store the result.
+
+| field | default | description |
+|---|---|---|
+| `script` | `""` | JavaScript expression evaluated in the page; its value is returned (promises are awaited). |
+| `output_var` | `""` | Variable that receives the result. |
+
+```json
+{"action":"browser_eval","script":"","output_var":""}
+```
+
+### `browser_close`
+
+Close the browser.
+
+```json
+{"action":"browser_close"}
+```
+
 ## Dialog
 
 ### `message_box`
