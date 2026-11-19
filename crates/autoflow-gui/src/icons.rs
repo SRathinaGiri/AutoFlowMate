@@ -25,6 +25,10 @@ pub fn action_icon(name: &str) -> &'static str {
         "dir_create" => "📁",
         "dir_delete" => "🗂",
         "dir_list" => "📂",
+        // Data
+        "read_excel" => "📊",
+        "read_csv" => "🧾",
+        "read_pdf" => "📕",
         // Program
         "run_program" => "🚀",
         "kill_program" => "❌",
@@ -90,6 +94,7 @@ pub fn category_icon(cat: &str) -> &'static str {
     match cat {
         "Flow" => "🔀",
         "File" => "📁",
+        "Data" => "📊",
         "Program" => "🚀",
         "Window" => "🗖",
         "Mouse" => "🖱",

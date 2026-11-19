@@ -25,6 +25,9 @@ clap = { version = "4", features = ["derive"] }
 eframe = "0.37"
 rfd = "0.18"
 headless_chrome = "1"
+calamine = { version = "0.38", features = ["dates"] }
+csv = "1"
+pdf-extract = "0.12"
 
 [profile.release]
 opt-level = 3

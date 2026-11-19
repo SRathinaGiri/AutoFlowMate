@@ -876,6 +876,93 @@ pub struct ImageWait {
     pub target: ImageTarget,
 }
 
+// ------------------------------------------------------------------------- data
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ReadExcel {
+    /// Workbook file (.xlsx, .xlsm, .xls, .xlsb, .ods).
+    pub path: String,
+    /// Sheet name; empty = the first sheet.
+    pub sheet: String,
+    /// Only this cell range, e.g. `A1:D50`; empty = the whole used area.
+    pub range: String,
+    /// The first row holds column names.
+    pub has_header: bool,
+    /// Return only this column as a list: header name (e.g. `GSTIN`), letter (`B`) or number (`2`). Empty = all columns.
+    pub column: String,
+    /// Leave out empty rows (and empty cells when reading one column).
+    pub skip_empty: bool,
+    /// Variable receiving the data: a list of values (column), of records {header: value}, or of rows.
+    pub output_var: String,
+    /// Variable receiving the number of rows (optional).
+    pub count_var: String,
+}
+impl Default for ReadExcel {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            sheet: String::new(),
+            range: String::new(),
+            has_header: true,
+            column: String::new(),
+            skip_empty: true,
+            output_var: "rows".into(),
+            count_var: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ReadCsv {
+    /// CSV / TSV / text table file.
+    pub path: String,
+    /// Separator character: `,` `;` `|` or `tab`; empty = detect automatically.
+    pub delimiter: String,
+    /// The first row holds column names.
+    pub has_header: bool,
+    /// Return only this column as a list: header name, letter (`B`) or number (`2`). Empty = all columns.
+    pub column: String,
+    /// Leave out empty rows (and empty cells when reading one column).
+    pub skip_empty: bool,
+    /// Variable receiving the data: a list of values (column), of records {header: value}, or of rows.
+    pub output_var: String,
+    /// Variable receiving the number of rows (optional).
+    pub count_var: String,
+}
+impl Default for ReadCsv {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            delimiter: String::new(),
+            has_header: true,
+            column: String::new(),
+            skip_empty: true,
+            output_var: "rows".into(),
+            count_var: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ReadPdf {
+    /// PDF file.
+    pub path: String,
+    /// Pages to read, e.g. `1`, `2-4`, `1,3,5-`; empty = all pages.
+    pub pages: String,
+    /// Variable receiving the text (pages separated by a blank line).
+    pub output_var: String,
+    /// Variable receiving the number of pages in the PDF (optional).
+    pub page_count_var: String,
+}
+impl Default for ReadPdf {
+    fn default() -> Self {
+        Self { path: String::new(), pages: String::new(), output_var: "pdf_text".into(), page_count_var: String::new() }
+    }
+}
+
 // -------------------------------------------------------------------------- web
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -979,8 +1066,32 @@ pub struct BrowserScreenshot {
     pub element_id: String,
     /// Only this element (by CSS selector); empty = the visible page.
     pub selector: String,
+    /// Capture the whole page including the parts below the fold (ignored for an element).
+    pub full_page: bool,
     /// How long to wait for the element, in ms.
     pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BrowserWaitText {
+    /// Text to wait for (interpolated), e.g. a heading that only the result page shows.
+    pub text: String,
+    /// Look only inside this element (by id); empty = the whole page.
+    pub element_id: String,
+    /// Look only inside this element (by CSS selector); empty = the whole page.
+    pub selector: String,
+    /// Compare case-insensitively.
+    pub ignore_case: bool,
+    /// How long to wait, in ms.
+    pub timeout_ms: u64,
+    /// Variable receiving the page/element text once found (optional).
+    pub output_var: String,
+}
+impl Default for BrowserWaitText {
+    fn default() -> Self {
+        Self { text: String::new(), element_id: String::new(), selector: String::new(), ignore_case: true, timeout_ms: 30_000, output_var: String::new() }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -1053,6 +1164,8 @@ pub struct InputBox {
     pub default: String,
     /// Mask the input (for passwords). The value is never written to the log.
     pub password: bool,
+    /// Picture to show above the text box (PNG/JPG path), e.g. a CAPTCHA captured with browser_screenshot.
+    pub image: String,
     /// Variable receiving the text.
     pub output_var: String,
     /// Fail the step when the user presses Cancel (otherwise the variable is set to "").
@@ -1060,7 +1173,15 @@ pub struct InputBox {
 }
 impl Default for InputBox {
     fn default() -> Self {
-        Self { title: "AutoFlowMate".into(), prompt: String::new(), default: String::new(), password: false, output_var: "input".into(), fail_on_cancel: true }
+        Self {
+            title: "AutoFlowMate".into(),
+            prompt: String::new(),
+            default: String::new(),
+            password: false,
+            image: String::new(),
+            output_var: "input".into(),
+            fail_on_cancel: true,
+        }
     }
 }
 
@@ -1133,6 +1254,10 @@ actions! {
     "File", "dir_delete", DirDelete(DirDelete), "Delete a folder.";
     "File", "dir_list", DirList(DirList), "List files/folders matching a pattern into an array variable.";
 
+    "Data", "read_excel", ReadExcel(ReadExcel), "Read a sheet (or one column) of an Excel workbook into a list variable.";
+    "Data", "read_csv", ReadCsv(ReadCsv), "Read a CSV/TSV table (or one column) into a list variable.";
+    "Data", "read_pdf", ReadPdf(ReadPdf), "Read the text of a PDF (all or some pages) into a variable.";
+
     "Program", "run_program", RunProgram(RunProgram), "Start a program, optionally waiting and capturing its output.";
     "Program", "kill_program", KillProgram(KillProgram), "Terminate all processes with the given image name.";
     "Program", "open", Open(Open), "Open a file, folder or URL with its default application.";
@@ -1182,6 +1307,7 @@ actions! {
     "Web", "browser_type", BrowserType(BrowserType), "Type text into a page element given by id or selector.";
     "Web", "browser_click", BrowserClick(BrowserElement), "Click a page element given by id or selector.";
     "Web", "browser_wait", BrowserWait(BrowserElement), "Wait until a page element exists.";
+    "Web", "browser_wait_text", BrowserWaitText(BrowserWaitText), "Wait until some text appears on the page (e.g. after a search).";
     "Web", "browser_get_text", BrowserGetText(BrowserGetText), "Read a page element's text, value or attribute into a variable.";
     "Web", "browser_screenshot", BrowserScreenshot(BrowserScreenshot), "Save a PNG of the page or of one element.";
     "Web", "browser_eval", BrowserEval(BrowserEval), "Run JavaScript in the page and store the result.";

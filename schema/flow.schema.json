@@ -506,6 +506,48 @@
           ]
         },
         {
+          "description": "Read a sheet (or one column) of an Excel workbook into a list variable.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "read_excel"
+            }
+          },
+          "$ref": "#/$defs/ReadExcel",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Read a CSV/TSV table (or one column) into a list variable.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "read_csv"
+            }
+          },
+          "$ref": "#/$defs/ReadCsv",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Read the text of a PDF (all or some pages) into a variable.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "read_pdf"
+            }
+          },
+          "$ref": "#/$defs/ReadPdf",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Start a program, optionally waiting and capturing its output.",
           "type": "object",
           "properties": {
@@ -1080,6 +1122,20 @@
           ]
         },
         {
+          "description": "Wait until some text appears on the page (e.g. after a search).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "browser_wait_text"
+            }
+          },
+          "$ref": "#/$defs/BrowserWaitText",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Read a page element's text, value or attribute into a variable.",
           "type": "object",
           "properties": {
@@ -1626,6 +1682,116 @@
           "description": "Receives an array of full paths, sorted.",
           "type": "string",
           "default": "files"
+        }
+      }
+    },
+    "ReadExcel": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Workbook file (.xlsx, .xlsm, .xls, .xlsb, .ods).",
+          "type": "string",
+          "default": ""
+        },
+        "sheet": {
+          "description": "Sheet name; empty = the first sheet.",
+          "type": "string",
+          "default": ""
+        },
+        "range": {
+          "description": "Only this cell range, e.g. `A1:D50`; empty = the whole used area.",
+          "type": "string",
+          "default": ""
+        },
+        "has_header": {
+          "description": "The first row holds column names.",
+          "type": "boolean",
+          "default": true
+        },
+        "column": {
+          "description": "Return only this column as a list: header name (e.g. `GSTIN`), letter (`B`) or number (`2`). Empty = all columns.",
+          "type": "string",
+          "default": ""
+        },
+        "skip_empty": {
+          "description": "Leave out empty rows (and empty cells when reading one column).",
+          "type": "boolean",
+          "default": true
+        },
+        "output_var": {
+          "description": "Variable receiving the data: a list of values (column), of records {header: value}, or of rows.",
+          "type": "string",
+          "default": "rows"
+        },
+        "count_var": {
+          "description": "Variable receiving the number of rows (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "ReadCsv": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "CSV / TSV / text table file.",
+          "type": "string",
+          "default": ""
+        },
+        "delimiter": {
+          "description": "Separator character: `,` `;` `|` or `tab`; empty = detect automatically.",
+          "type": "string",
+          "default": ""
+        },
+        "has_header": {
+          "description": "The first row holds column names.",
+          "type": "boolean",
+          "default": true
+        },
+        "column": {
+          "description": "Return only this column as a list: header name, letter (`B`) or number (`2`). Empty = all columns.",
+          "type": "string",
+          "default": ""
+        },
+        "skip_empty": {
+          "description": "Leave out empty rows (and empty cells when reading one column).",
+          "type": "boolean",
+          "default": true
+        },
+        "output_var": {
+          "description": "Variable receiving the data: a list of values (column), of records {header: value}, or of rows.",
+          "type": "string",
+          "default": "rows"
+        },
+        "count_var": {
+          "description": "Variable receiving the number of rows (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "ReadPdf": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "PDF file.",
+          "type": "string",
+          "default": ""
+        },
+        "pages": {
+          "description": "Pages to read, e.g. `1`, `2-4`, `1,3,5-`; empty = all pages.",
+          "type": "string",
+          "default": ""
+        },
+        "output_var": {
+          "description": "Variable receiving the text (pages separated by a blank line).",
+          "type": "string",
+          "default": "pdf_text"
+        },
+        "page_count_var": {
+          "description": "Variable receiving the number of pages in the PDF (optional).",
+          "type": "string",
+          "default": ""
         }
       }
     },
@@ -2797,6 +2963,43 @@
         }
       }
     },
+    "BrowserWaitText": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "description": "Text to wait for (interpolated), e.g. a heading that only the result page shows.",
+          "type": "string",
+          "default": ""
+        },
+        "element_id": {
+          "description": "Look only inside this element (by id); empty = the whole page.",
+          "type": "string",
+          "default": ""
+        },
+        "selector": {
+          "description": "Look only inside this element (by CSS selector); empty = the whole page.",
+          "type": "string",
+          "default": ""
+        },
+        "ignore_case": {
+          "description": "Compare case-insensitively.",
+          "type": "boolean",
+          "default": true
+        },
+        "timeout_ms": {
+          "description": "How long to wait, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 30000
+        },
+        "output_var": {
+          "description": "Variable receiving the page/element text once found (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
     "BrowserGetText": {
       "description": "Which element on the page: by `element_id` (simplest) or by CSS `selector`.",
       "type": "object",
@@ -2847,6 +3050,11 @@
           "description": "Only this element (by CSS selector); empty = the visible page.",
           "type": "string",
           "default": ""
+        },
+        "full_page": {
+          "description": "Capture the whole page including the parts below the fold (ignored for an element).",
+          "type": "boolean",
+          "default": false
         },
         "timeout_ms": {
           "description": "How long to wait for the element, in ms.",
@@ -2949,6 +3157,11 @@
           "description": "Mask the input (for passwords). The value is never written to the log.",
           "type": "boolean",
           "default": false
+        },
+        "image": {
+          "description": "Picture to show above the text box (PNG/JPG path), e.g. a CAPTCHA captured with browser_screenshot.",
+          "type": "string",
+          "default": ""
         },
         "output_var": {
           "description": "Variable receiving the text.",

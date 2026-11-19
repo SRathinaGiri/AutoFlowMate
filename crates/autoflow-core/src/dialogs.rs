@@ -54,13 +54,28 @@ Add-Type -AssemblyName System.Drawing
 $f = New-Object Windows.Forms.Form
 $f.Text = $env:AF_TITLE; $f.StartPosition = 'CenterScreen'; $f.TopMost = $true
 $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false
-$f.AutoScaleMode = 'Dpi'; $f.ClientSize = New-Object Drawing.Size(400, 150)
-$l = New-Object Windows.Forms.Label; $l.Text = $env:AF_PROMPT; $l.SetBounds(12, 10, 376, 44)
-$t = New-Object Windows.Forms.TextBox; $t.Text = $env:AF_DEFAULT; $t.SetBounds(12, 60, 376, 24)
+$f.AutoScaleMode = 'Dpi'
+# Optional picture (e.g. a CAPTCHA), shown enlarged above the text box.
+$top = 10; $w = 400; $pic = $null
+if ($env:AF_IMAGE -and (Test-Path $env:AF_IMAGE)) {
+  $bytes = [IO.File]::ReadAllBytes($env:AF_IMAGE)
+  $img = [Drawing.Image]::FromStream((New-Object IO.MemoryStream(,$bytes)))
+  $scale = [Math]::Min(3.0, [Math]::Max(1.0, 360.0 / [Math]::Max(1, $img.Width)))
+  $pw = [int]($img.Width * $scale); $ph = [int]($img.Height * $scale)
+  $w = [Math]::Max(400, $pw + 24)
+  $pic = New-Object Windows.Forms.PictureBox; $pic.Image = $img; $pic.SizeMode = 'Zoom'
+  $pic.BorderStyle = 'FixedSingle'; $pic.SetBounds([int](($w - $pw) / 2), 10, $pw, $ph)
+  $top = 20 + $ph
+}
+$f.ClientSize = New-Object Drawing.Size($w, ($top + 140))
+$l = New-Object Windows.Forms.Label; $l.Text = $env:AF_PROMPT; $l.SetBounds(12, $top, ($w - 24), 44)
+$t = New-Object Windows.Forms.TextBox; $t.Text = $env:AF_DEFAULT; $t.SetBounds(12, ($top + 50), ($w - 24), 24)
+$t.Font = New-Object Drawing.Font('Segoe UI', 12)
 if ($env:AF_PASSWORD -eq '1') { $t.UseSystemPasswordChar = $true }
-$ok = New-Object Windows.Forms.Button; $ok.Text = 'OK'; $ok.SetBounds(220, 105, 80, 30); $ok.DialogResult = 'OK'
-$c = New-Object Windows.Forms.Button; $c.Text = 'Cancel'; $c.SetBounds(308, 105, 80, 30); $c.DialogResult = 'Cancel'
-$f.Controls.AddRange(@($l, $t, $ok, $c)); $f.AcceptButton = $ok; $f.CancelButton = $c
+$ok = New-Object Windows.Forms.Button; $ok.Text = 'OK'; $ok.SetBounds(($w - 180), ($top + 95), 80, 30); $ok.DialogResult = 'OK'
+$c = New-Object Windows.Forms.Button; $c.Text = 'Cancel'; $c.SetBounds(($w - 92), ($top + 95), 80, 30); $c.DialogResult = 'Cancel'
+$f.Controls.AddRange(@($l, $t, $ok, $c)); if ($pic) { $f.Controls.Add($pic) }
+$f.AcceptButton = $ok; $f.CancelButton = $c
 $f.Add_Shown({ $f.Activate(); $t.Focus() })
 if ($f.ShowDialog() -eq 'OK') {
   [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -69,12 +84,18 @@ if ($f.ShowDialog() -eq 'OK') {
 "#;
 
 /// Ask for a line of text. Returns None when cancelled.
-pub fn input_box(title: &str, prompt: &str, default: &str, password: bool) -> Result<Option<String>> {
+pub fn input_box(title: &str, prompt: &str, default: &str, password: bool, image: Option<&std::path::Path>) -> Result<Option<String>> {
+    if let Some(p) = image {
+        if !p.exists() {
+            bail!("input_box image not found: {}", p.display());
+        }
+    }
     let mut cmd = std::process::Command::new("powershell");
     cmd.args(["-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", INPUT_SCRIPT])
         .env("AF_TITLE", title)
         .env("AF_PROMPT", prompt)
         .env("AF_DEFAULT", default)
+        .env("AF_IMAGE", image.map(|p| p.display().to_string()).unwrap_or_default())
         .env("AF_PASSWORD", if password { "1" } else { "0" })
         .stdin(std::process::Stdio::null());
     #[cfg(windows)]

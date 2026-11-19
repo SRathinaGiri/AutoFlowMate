@@ -68,6 +68,7 @@ struct Studio {
     minimize_on_run: bool,
     pick_rx: Option<Receiver<Result<(i32, i32, Option<String>), String>>>,
     snip_rx: Option<(StepPath, Receiver<SnipResult>)>,
+    web_pick_rx: Option<(StepPath, Receiver<Result<autoflow_core::web::PickedElement, String>>)>,
     palette_filter: String,
     last_title: String,
     view: View,
@@ -81,6 +82,8 @@ struct Studio {
     right_tab: RightTab,
     last_sel: Selection,
     vars_ui: variables::VarsUi,
+    table_cache: HashMap<String, (Option<std::time::SystemTime>, form::TableInfo)>,
+    preview: Option<(String, Result<Value, String>)>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -129,6 +132,7 @@ impl Studio {
             minimize_on_run: false,
             pick_rx: None,
             snip_rx: None,
+            web_pick_rx: None,
             palette_filter: String::new(),
             last_title: String::new(),
             view: View::Flowchart,
@@ -141,6 +145,8 @@ impl Studio {
             right_tab: RightTab::Flow,
             last_sel: Selection::None,
             vars_ui: variables::VarsUi::default(),
+            table_cache: HashMap::new(),
+            preview: None,
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -768,6 +774,7 @@ impl Studio {
         }
         let vars = self.var_infos();
         let dir = self.flow_dir();
+        let table = if matches!(name, "read_excel" | "read_csv") { Some(self.table_info(&action_part, name)) } else { None };
         let mut form = form::Form {
             help: &help,
             json_buffers: &mut self.json_buffers,
@@ -775,6 +782,7 @@ impl Studio {
             vars: &vars,
             flow_dir: dir.as_deref(),
             new_var: None,
+            table: table.as_ref(),
         };
         let mut changed = form.object(ui, "a", &mut action_part);
         ui.add_space(8.0);
@@ -821,6 +829,30 @@ impl Studio {
                 self.apply(TreeOp::Delete(p.clone()));
             }
         });
+        if matches!(name, "read_excel" | "read_csv" | "read_pdf") {
+            ui.add_space(6.0);
+            if ui
+                .button("👁 Preview data")
+                .on_hover_text("Read the file now with these settings and show the first rows (what the flow will get)")
+                .clicked()
+            {
+                self.preview_data(p);
+            }
+        }
+        let targets_element = name.starts_with("browser_")
+            && !matches!(name, "browser_open" | "browser_navigate" | "browser_eval" | "browser_close");
+        if targets_element {
+            ui.add_space(6.0);
+            let busy = self.web_pick_rx.is_some();
+            if ui
+                .add_enabled(!busy, egui::Button::new(if busy { "🎯 Waiting for Ctrl+click in the browser…" } else { "🎯 Pick on page" }))
+                .on_hover_text("Opens the flow's page (from its browser_open step). Hold Ctrl and click the element: its id (or a selector) is filled in here. No developer tools needed.")
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                self.start_web_pick(&ctx, p.clone());
+            }
+        }
         if name.starts_with("image_") {
             ui.add_space(6.0);
             let busy = self.snip_rx.is_some();
@@ -874,6 +906,7 @@ impl Studio {
                 vars: &[],
                 flow_dir: None,
                 new_var: None,
+                table: None,
             };
             if f.object(ui, "settings", o) {
                 if let Ok(s) = serde_json::from_value(v) {
@@ -1181,6 +1214,225 @@ impl Studio {
         self.info(LogKind::Info, "Snip: drag a rectangle around the target (Esc cancels)…");
     }
 
+    /// Flow variables with their initial values resolved (for previews and pickers).
+    fn resolved_vars(&self) -> autoflow_core::vars::Vars {
+        let mut vars = autoflow_core::vars::Vars { map: Map::new(), flow_dir: self.flow_dir().map(|d| d.display().to_string()).unwrap_or_default() };
+        for (k, v) in &self.flow.variables {
+            if let Ok(r) = vars.resolve_value(v) {
+                vars.map.insert(k.clone(), r);
+            }
+        }
+        vars
+    }
+
+    /// Resolve a path field like the engine does (variables, relative to the flow folder).
+    fn resolve_path(&self, raw: &str) -> Option<PathBuf> {
+        let t = self.resolved_vars().interpolate(raw).ok()?;
+        if t.trim().is_empty() {
+            return None;
+        }
+        let p = PathBuf::from(t.trim());
+        Some(if p.is_absolute() { p } else { self.flow_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default()).join(p) })
+    }
+
+    /// Sheets and headers of the file a read_excel / read_csv step uses (cached by file time).
+    fn table_info(&mut self, fields: &Map<String, Value>, action: &str) -> form::TableInfo {
+        let s = |k: &str| fields.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let Some(path) = self.resolve_path(&s("path")) else { return form::TableInfo::default() };
+        let sheet = self.resolved_vars().interpolate(&s("sheet")).unwrap_or_default();
+        let delim = s("delimiter");
+        let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+        let key = format!("{}|{action}|{sheet}|{delim}", path.display());
+        if let Some((m, info)) = self.table_cache.get(&key) {
+            if *m == modified {
+                return info.clone();
+            }
+        }
+        let mut info = form::TableInfo::default();
+        if !path.exists() {
+            info.error = Some(format!("file not found: {}", path.display()));
+        } else if action == "read_excel" {
+            match autoflow_core::data::sheet_names(&path) {
+                Ok(names) => info.sheets = names,
+                Err(e) => info.error = Some(e.to_string()),
+            }
+            if let Ok((_, raw)) = autoflow_core::data::read_excel_raw(&path, &sheet, "") {
+                info.headers = autoflow_core::data::headers(&raw);
+            }
+        } else if let Ok(raw) = autoflow_core::data::read_csv_raw(&path, &delim) {
+            info.headers = autoflow_core::data::headers(&raw);
+        }
+        self.table_cache.insert(key, (modified, info.clone()));
+        info
+    }
+
+    /// Run the selected data step's import now and show the result.
+    fn preview_data(&mut self, p: &StepPath) {
+        let Some(step) = tree::step_ref(&self.flow.steps, p) else { return };
+        let vars = self.resolved_vars();
+        let txt = |s: &str| vars.interpolate(s).unwrap_or_else(|_| s.to_string());
+        let result: Result<(String, Value), String> = (|| {
+            match &step.action {
+                Action::ReadExcel(a) => {
+                    let path = self.resolve_path(&a.path).ok_or("set the workbook path first")?;
+                    let (used, raw) = autoflow_core::data::read_excel_raw(&path, &txt(&a.sheet), &txt(&a.range)).map_err(|e| e.to_string())?;
+                    let v = autoflow_core::data::shape(raw, a.has_header, &txt(&a.column), a.skip_empty).map_err(|e| e.to_string())?;
+                    Ok((format!("{} [{used}]", path.display()), v))
+                }
+                Action::ReadCsv(a) => {
+                    let path = self.resolve_path(&a.path).ok_or("set the CSV path first")?;
+                    let raw = autoflow_core::data::read_csv_raw(&path, &txt(&a.delimiter)).map_err(|e| e.to_string())?;
+                    let v = autoflow_core::data::shape(raw, a.has_header, &txt(&a.column), a.skip_empty).map_err(|e| e.to_string())?;
+                    Ok((path.display().to_string(), v))
+                }
+                Action::ReadPdf(a) => {
+                    let path = self.resolve_path(&a.path).ok_or("set the PDF path first")?;
+                    let (text, n) = autoflow_core::data::read_pdf(&path, &txt(&a.pages)).map_err(|e| e.to_string())?;
+                    Ok((format!("{} ({n} pages)", path.display()), Value::String(text)))
+                }
+                _ => Err("not a data step".into()),
+            }
+        })();
+        self.preview = Some(match result {
+            Ok((title, v)) => (title, Ok(v)),
+            Err(e) => ("Preview".into(), Err(e)),
+        });
+    }
+
+    fn preview_window(&mut self, ctx: &egui::Context) {
+        let Some((title, res)) = &self.preview else { return };
+        let mut open = true;
+        egui::Window::new("👁 Data preview").open(&mut open).default_size([760.0, 420.0]).resizable(true).show(ctx, |ui| {
+            ui.label(RichText::new(title).weak());
+            ui.separator();
+            match res {
+                Err(e) => {
+                    ui.colored_label(Color32::from_rgb(220, 80, 80), e);
+                }
+                Ok(Value::String(text)) => {
+                    ui.label(format!("{} characters", text.chars().count()));
+                    egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                        let mut t = text.chars().take(20_000).collect::<String>();
+                        ui.add(egui::TextEdit::multiline(&mut t).code_editor().desired_width(f32::INFINITY));
+                    });
+                }
+                Ok(Value::Array(items)) => {
+                    let n = items.len();
+                    ui.label(format!("{n} item(s){}", if n > 50 { " — showing the first 50" } else { "" }));
+                    egui::ScrollArea::both().max_height(360.0).show(ui, |ui| {
+                        let first = items.first();
+                        let headers: Vec<String> = match first {
+                            Some(Value::Object(o)) => o.keys().cloned().collect(),
+                            Some(Value::Array(a)) => (0..a.len()).map(|i| format!("{}", i + 1)).collect(),
+                            _ => vec!["value".into()],
+                        };
+                        egui::Grid::new("preview_grid").striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
+                            ui.strong("#");
+                            for h in &headers {
+                                ui.strong(h);
+                            }
+                            ui.end_row();
+                            for (i, item) in items.iter().take(50).enumerate() {
+                                ui.weak(format!("{}", i + 1));
+                                match item {
+                                    Value::Object(o) => {
+                                        for h in &headers {
+                                            ui.label(o.get(h).map(autoflow_core::vars::to_text).unwrap_or_default());
+                                        }
+                                    }
+                                    Value::Array(a) => {
+                                        for j in 0..headers.len() {
+                                            ui.label(a.get(j).map(autoflow_core::vars::to_text).unwrap_or_default());
+                                        }
+                                    }
+                                    other => {
+                                        ui.label(autoflow_core::vars::to_text(other));
+                                    }
+                                }
+                                ui.end_row();
+                            }
+                        });
+                    });
+                }
+                Ok(other) => {
+                    ui.label(other.to_string());
+                }
+            }
+            ui.add_space(6.0);
+            ui.weak("Records are used in loops as ${row.Header}; a single column gives a plain list for for_each.");
+        });
+        if !open {
+            self.preview = None;
+        }
+    }
+
+    /// URL of the flow's first browser_open step, with flow variables filled in.
+    fn flow_start_url(&self) -> String {
+        let mut url = String::new();
+        autoflow_core::flow::visit(&self.flow.steps, &mut |s| {
+            if url.is_empty() {
+                if let Action::BrowserOpen(a) = &s.action {
+                    url = a.url.clone();
+                }
+            }
+        });
+        let mut vars = autoflow_core::vars::Vars { map: Map::new(), flow_dir: self.flow_dir().map(|d| d.display().to_string()).unwrap_or_default() };
+        for (k, v) in &self.flow.variables {
+            if let Ok(r) = vars.resolve_value(v) {
+                vars.map.insert(k.clone(), r);
+            }
+        }
+        let url = vars.interpolate(&url).unwrap_or(url);
+        let base = self.flow_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        if url.trim().is_empty() { String::new() } else { autoflow_core::web::to_url(&url, &base) }
+    }
+
+    fn start_web_pick(&mut self, ctx: &egui::Context, p: StepPath) {
+        let url = self.flow_start_url();
+        if url.is_empty() {
+            self.info(LogKind::Warn, "add a browser_open step with the page URL first - the picker opens that page");
+            return;
+        }
+        let (tx, rx) = channel();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let r = autoflow_core::web::pick_element(&url, "edge", 300_000, &|| false).map_err(|e| e.to_string());
+            let _ = tx.send(r);
+            repaint.request_repaint();
+        });
+        self.web_pick_rx = Some((p, rx));
+        self.info(LogKind::Info, "Pick on page: a browser opens - type/log in as needed, then hold Ctrl and click the element");
+    }
+
+    fn poll_web_pick(&mut self) {
+        let Some((p, rx)) = &self.web_pick_rx else { return };
+        let Ok(res) = rx.try_recv() else { return };
+        let p = p.clone();
+        self.web_pick_rx = None;
+        match res {
+            Ok(el) => {
+                if let Some(step) = tree::step_mut(&mut self.flow.steps, &p) {
+                    let mut v = serde_json::to_value(&*step).unwrap();
+                    if el.id.is_empty() {
+                        v["selector"] = Value::String(el.selector.clone());
+                        v["element_id"] = Value::String(String::new());
+                    } else {
+                        v["element_id"] = Value::String(el.id.clone());
+                        v["selector"] = Value::String(String::new());
+                    }
+                    if let Ok(s) = serde_json::from_value::<Step>(v) {
+                        *step = s;
+                        self.dirty = true;
+                        self.buffers_for = None;
+                    }
+                }
+                let what = if el.id.is_empty() { format!("selector {}", el.selector) } else { format!("element_id \"{}\"", el.id) };
+                self.info(LogKind::Ok, format!("picked <{}> {what} {}", el.tag, if el.text.is_empty() { String::new() } else { format!("(\"{}\")", el.text) }));
+            }
+            Err(e) => self.info(LogKind::Error, format!("pick on page failed: {e}")),
+        }
+    }
+
     fn poll_snip(&mut self) {
         let Some((p, rx)) = &self.snip_rx else { return };
         let Ok(res) = rx.try_recv() else { return };
@@ -1230,6 +1482,7 @@ impl eframe::App for Studio {
         self.poll_run(&ctx);
         self.poll_pick();
         self.poll_snip();
+        self.poll_web_pick();
         // Keep the live mouse position in the status bar fresh.
         ctx.request_repaint_after(std::time::Duration::from_millis(if self.pick_rx.is_some() || self.snip_rx.is_some() { 150 } else { 250 }));
 
@@ -1264,6 +1517,7 @@ impl eframe::App for Studio {
 
         self.schedule_window(&ctx);
         self.about_window(&ctx);
+        self.preview_window(&ctx);
         self.splash(&ctx);
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").exact_size(22.0).show(ui, |ui| self.status_bar(ui));
@@ -1395,6 +1649,7 @@ fn cat_color(cat: &str) -> Color32 {
         "Keyboard" => Color32::from_rgb(220, 190, 70),
         "UI Element" => Color32::from_rgb(110, 200, 110),
         "Web" => Color32::from_rgb(60, 150, 235),
+        "Data" => Color32::from_rgb(30, 160, 120),
         "Image" => Color32::from_rgb(235, 120, 60),
         "Screen" => Color32::from_rgb(150, 120, 220),
         "Dialog" => Color32::from_rgb(200, 100, 180),

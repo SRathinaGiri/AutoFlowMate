@@ -1,0 +1,101 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "GST: search taxpayers and save the result pages",
+  "description": "Reads the GSTINs from an Excel sheet, then for each GSTIN: opens the GST 'Search Taxpayer' page, types the GSTIN, shows the CAPTCHA picture in a box for YOU to type (AutoFlowMate never solves CAPTCHAs), searches, waits for the result and saves the whole result page as <GSTIN>.png. Up to 3 CAPTCHA attempts per GSTIN; Cancel stops the run.",
+  "version": 1,
+  "settings": {
+    "key_delay_ms": 100,
+    "input_pause_ms": 100,
+    "step_delay_ms": 300,
+    "mouse_move_ms": 0,
+    "failsafe": true,
+    "abort_hotkey": "ctrl+alt+q"
+  },
+  "variables": {
+    "gstin_file": "data/gstins.xlsx",
+    "gstin_sheet": "GSTINs",
+    "gstin_column": "GSTIN",
+    "search_url": "https://services.gst.gov.in/services/searchtp",
+    "out_dir": "${flow_dir}\\output\\gst",
+    "captcha_png": "${flow_dir}\\output\\gst\\captcha.png",
+    "result_marker": "Legal Name"
+  },
+  "variable_types": {
+    "gstin_file": "file",
+    "gstin_sheet": "text",
+    "gstin_column": "text",
+    "search_url": "url",
+    "out_dir": "folder",
+    "captcha_png": "file",
+    "result_marker": "text"
+  },
+  "steps": [
+    { "id": "mkdir", "action": "dir_create", "path": "${out_dir}" },
+    { "id": "read_list", "action": "read_excel", "path": "${gstin_file}", "sheet": "${gstin_sheet}", "column": "${gstin_column}",
+      "output_var": "gstins", "count_var": "gstin_count",
+      "comment": "The GSTINs come from the Excel sheet (use read_csv for a .csv file)" },
+    { "id": "has_list", "action": "if",
+      "condition": { "left": "${gstin_count}", "op": "greater_than", "right": "0" },
+      "then": [ { "id": "list_log", "action": "log", "message": "${gstin_count} GSTIN(s) to search: ${gstins}" } ],
+      "else": [ { "id": "no_list", "action": "stop", "success": false, "message": "No GSTINs found in ${gstin_file} [${gstin_sheet}] column ${gstin_column}" } ] },
+    { "id": "open", "action": "browser_open", "url": "${search_url}", "browser": "edge", "width": 1280, "height": 960, "timeout_ms": 60000 },
+    { "id": "saved", "action": "set_variable", "name": "saved", "value": 0 },
+    {
+      "id": "each_gstin", "action": "for_each", "items": "${gstins}", "item_var": "gstin", "index_var": "n",
+      "steps": [
+        { "id": "reload", "action": "browser_navigate", "url": "${search_url}", "timeout_ms": 60000,
+          "comment": "Step 7: a fresh page for every GSTIN" },
+        { "id": "wait_box", "action": "browser_wait", "element_id": "for_gstin", "timeout_ms": 30000 },
+        { "id": "type_gstin", "action": "browser_type", "element_id": "for_gstin", "text": "${gstin}" },
+        { "id": "found_flag", "action": "set_variable", "name": "found", "value": "false" },
+        {
+          "id": "attempts", "action": "repeat", "times": 3, "index_var": "attempt",
+          "steps": [
+            { "id": "wait_captcha", "action": "browser_wait", "element_id": "imgCaptcha", "timeout_ms": 15000,
+              "comment": "The CAPTCHA appears once a GSTIN has been typed" },
+            { "id": "settle", "action": "wait", "ms": 1200, "comment": "let the CAPTCHA picture finish loading" },
+            { "id": "shot_captcha", "action": "browser_screenshot", "element_id": "imgCaptcha", "path": "${captcha_png}" },
+            { "id": "try_no", "action": "set_variable", "name": "try_no", "value": "${attempt}" },
+            { "id": "try_plus1", "action": "increment", "name": "try_no", "by": 1 },
+            { "id": "ask_captcha", "action": "input_box", "title": "GST search - CAPTCHA",
+              "prompt": "GSTIN ${gstin}: type the characters shown above (attempt ${try_no} of 3; Cancel stops the run)",
+              "image": "${captcha_png}", "output_var": "captcha", "fail_on_cancel": true },
+            { "id": "type_captcha", "action": "browser_type", "element_id": "fo-captcha", "text": "${captcha}" },
+            { "id": "search", "action": "browser_click", "element_id": "lotsearch" },
+            { "id": "clear_text", "action": "set_variable", "name": "page_text", "value": "" },
+            { "id": "wait_result", "action": "browser_wait_text", "text": "${result_marker}", "timeout_ms": 20000,
+              "output_var": "page_text", "on_error": "continue",
+              "comment": "Step 5: the result page shows 'Legal Name of Business'" },
+            {
+              "id": "got_it", "action": "if",
+              "condition": { "left": "${page_text}", "op": "contains", "right": "${result_marker}", "ignore_case": true },
+              "then": [
+                { "id": "mark_found", "action": "set_variable", "name": "found", "value": "true" },
+                { "id": "stop_trying", "action": "break" }
+              ],
+              "else": [
+                { "id": "retry_log", "action": "log", "level": "warn", "message": "${gstin}: no result yet (wrong CAPTCHA?) - asking again" }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "save", "action": "if",
+          "condition": { "left": "${found}", "op": "is_true" },
+          "then": [
+            { "id": "shot_page", "action": "browser_screenshot", "path": "${out_dir}\\${gstin}.png", "full_page": true,
+              "comment": "Step 6: the entire page, named after the GSTIN" },
+            { "id": "count", "action": "increment", "name": "saved" },
+            { "id": "ok", "action": "log", "message": "Saved ${out_dir}\\${gstin}.png" }
+          ],
+          "else": [
+            { "id": "shot_fail", "action": "browser_screenshot", "path": "${out_dir}\\${gstin}_not_found.png", "full_page": true },
+            { "id": "fail_log", "action": "log", "level": "warn", "message": "${gstin}: no result after 3 attempts - saved ${gstin}_not_found.png" }
+          ]
+        }
+      ]
+    },
+    { "id": "close", "action": "browser_close" },
+    { "id": "done", "action": "log", "message": "Saved ${saved} result page(s) to ${out_dir}" }
+  ]
+}

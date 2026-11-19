@@ -1,6 +1,7 @@
 //! AutoFlowMate core: flow model, validation and execution engine.
 
 pub mod actions;
+pub mod data;
 pub mod dialogs;
 pub mod engine;
 pub mod failsafe;

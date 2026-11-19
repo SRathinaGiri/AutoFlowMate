@@ -368,6 +368,19 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             need(issues, "output_var", &x.output_var);
         }
         Action::BrowserScreenshot(x) => need(issues, "path", &x.path),
+        Action::BrowserWaitText(x) => need(issues, "text", &x.text),
+        Action::ReadExcel(x) => {
+            need(issues, "path", &x.path);
+            need(issues, "output_var", &x.output_var);
+        }
+        Action::ReadCsv(x) => {
+            need(issues, "path", &x.path);
+            need(issues, "output_var", &x.output_var);
+        }
+        Action::ReadPdf(x) => {
+            need(issues, "path", &x.path);
+            need(issues, "output_var", &x.output_var);
+        }
         Action::BrowserEval(x) => {
             need(issues, "script", &x.script);
         }

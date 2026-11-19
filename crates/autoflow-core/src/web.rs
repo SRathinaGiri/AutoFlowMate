@@ -227,6 +227,13 @@ impl WebSession {
         self.tab
             .call_method(headless_chrome::protocol::cdp::Input::InsertText { text: text.to_string() })
             .map_err(|err| anyhow!("cannot type into {css}: {err}"))?;
+        // Frameworks (Angular, React, …) often react to key and change events, not just input.
+        e.call_js_fn(
+            "function() { for (const t of ['keydown', 'keypress', 'keyup']) { this.dispatchEvent(new KeyboardEvent(t, {bubbles: true, key: 'Unidentified'})); } this.dispatchEvent(new Event('change', {bubbles: true})); }",
+            vec![],
+            false,
+        )
+        .ok();
         if enter {
             self.tab.press_key("Enter")?;
         }
@@ -249,9 +256,10 @@ impl WebSession {
         })
     }
 
-    pub fn screenshot(&self, path: &Path, css: Option<&str>, timeout_ms: u64) -> Result<()> {
+    pub fn screenshot(&self, path: &Path, css: Option<&str>, full_page: bool, timeout_ms: u64) -> Result<()> {
         let png = match css {
             Some(css) => self.wait(css, timeout_ms)?.capture_screenshot(Page::CaptureScreenshotFormatOption::Png)?,
+            None if full_page => self.full_page_png()?,
             None => self.tab.capture_screenshot(Page::CaptureScreenshotFormatOption::Png, None, None, true)?,
         };
         if let Some(dir) = path.parent() {
@@ -259,6 +267,85 @@ impl WebSession {
         }
         std::fs::write(path, png).with_context(|| format!("save {}", path.display()))?;
         Ok(())
+    }
+
+    /// PNG of the whole document, including the parts scrolled out of view.
+    fn full_page_png(&self) -> Result<Vec<u8>> {
+        use base64::Engine as _;
+        use headless_chrome::protocol::cdp::Emulation;
+        // Height of everything: the document, or (for apps that scroll inside a
+        // container instead of the page) the window plus the container's hidden part.
+        let size = self.eval(
+            r#"(function () {
+                const de = document.documentElement, b = document.body;
+                const docH = Math.max(de.scrollHeight, b ? b.scrollHeight : 0);
+                let extra = 0;
+                for (const el of document.querySelectorAll('body *')) {
+                  const oy = getComputedStyle(el).overflowY;
+                  if ((oy === 'auto' || oy === 'scroll') && el.scrollHeight > el.clientHeight + 10 && el.clientHeight > 100)
+                    extra = Math.max(extra, el.scrollHeight - el.clientHeight);
+                }
+                return JSON.stringify([Math.max(de.scrollWidth, innerWidth), Math.max(docH, innerHeight + extra)]);
+            })()"#,
+        )?;
+        // Objects/arrays only come back by value as JSON text.
+        let size: Value = size.as_str().and_then(|s| serde_json::from_str(s).ok()).unwrap_or(size);
+        let num = |i: usize, d: f64| size.get(i).and_then(Value::as_f64).unwrap_or(d);
+        let (w, h) = (num(0, 1280.0).min(16_000.0), num(1, 900.0).min(16_000.0));
+        // Make the viewport as tall as the content so inner scroll containers expand too.
+        self.tab.call_method(Emulation::SetDeviceMetricsOverride {
+            width: w as u32,
+            height: h as u32,
+            device_scale_factor: 0.0,
+            mobile: false,
+            scale: None,
+            screen_width: None,
+            screen_height: None,
+            position_x: None,
+            position_y: None,
+            dont_set_visible_size: None,
+            screen_orientation: None,
+            viewport: None,
+            display_feature: None,
+            device_posture: None,
+        })?;
+        std::thread::sleep(Duration::from_millis(400));
+        let shot = self.tab.call_method(Page::CaptureScreenshot {
+            format: Some(Page::CaptureScreenshotFormatOption::Png),
+            quality: None,
+            clip: Some(Page::Viewport { x: 0.0, y: 0.0, width: w, height: h, scale: 1.0 }),
+            from_surface: Some(true),
+            capture_beyond_viewport: Some(true),
+            optimize_for_speed: None,
+        });
+        let _ = self.tab.call_method(Emulation::ClearDeviceMetricsOverride(None));
+        Ok(base64::engine::general_purpose::STANDARD.decode(shot?.data)?)
+    }
+
+    /// Wait until `text` appears in the page (or in one element). Returns the
+    /// element's / page's text at that moment.
+    pub fn wait_text(&self, text: &str, css: Option<&str>, ignore_case: bool, timeout_ms: u64, cancel: &dyn Fn() -> bool) -> Result<String> {
+        let target = match css {
+            Some(c) => format!("document.querySelector({})", serde_json::to_string(c)?),
+            None => "document.body".to_string(),
+        };
+        let script = format!("(function(){{ const e = {target}; return e ? (e.innerText || e.value || '') : ''; }})()");
+        let want = if ignore_case { text.to_lowercase() } else { text.to_string() };
+        let start = std::time::Instant::now();
+        loop {
+            let got = self.eval(&script).map(|v| crate::vars::to_text(&v)).unwrap_or_default();
+            let hay = if ignore_case { got.to_lowercase() } else { got.clone() };
+            if hay.contains(&want) {
+                return Ok(got);
+            }
+            if start.elapsed() >= Duration::from_millis(timeout_ms) {
+                bail!("text \"{text}\" did not appear{} within {timeout_ms} ms", css.map(|c| format!(" in {c}")).unwrap_or_default());
+            }
+            if cancel() {
+                bail!("cancelled");
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
     }
 
     pub fn eval(&self, script: &str) -> Result<Value> {
@@ -276,6 +363,92 @@ impl WebSession {
 
     pub fn close(mut self) {
         self.keep_open = false;
+    }
+}
+
+/// An element chosen with the web picker.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct PickedElement {
+    /// The element's id attribute ("" when it has none).
+    pub id: String,
+    /// A CSS selector that finds it (uses the id when there is one).
+    pub selector: String,
+    pub tag: String,
+    pub name: String,
+    pub text: String,
+    /// Page the element was picked on.
+    pub url: String,
+}
+
+const PICKER_JS: &str = r#"(function () {
+  if (window.__afmPick) return 'ok';
+  window.__afmPick = { result: null };
+  function cssPath(el) {
+    if (el.id) return '#' + CSS.escape(el.id);
+    const parts = [];
+    while (el && el.nodeType === 1 && el !== document.documentElement) {
+      if (el.id) { parts.unshift('#' + CSS.escape(el.id)); break; }
+      let sel = el.tagName.toLowerCase();
+      const same = el.parentElement ? Array.from(el.parentElement.children).filter(c => c.tagName === el.tagName) : [];
+      if (same.length > 1) sel += ':nth-of-type(' + (same.indexOf(el) + 1) + ')';
+      parts.unshift(sel);
+      el = el.parentElement;
+    }
+    return parts.join(' > ');
+  }
+  function describe(el) {
+    return { id: el.id || '', selector: cssPath(el), tag: el.tagName.toLowerCase(), name: el.getAttribute('name') || '',
+             text: (el.innerText || el.value || el.alt || el.placeholder || '').trim().slice(0, 80), url: location.href };
+  }
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;pointer-events:none;z-index:2147483647;border:2px solid #7c3aed;background:rgba(124,58,237,.12);border-radius:3px;display:none';
+  const tip = document.createElement('div');
+  tip.style.cssText = 'position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:2147483647;background:#3b2fb0;color:#fff;font:14px Segoe UI,sans-serif;padding:8px 14px;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.3);pointer-events:none;max-width:90vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+  tip.textContent = 'AutoFlowMate: hold Ctrl and click the element you want (normal clicks still work)';
+  document.documentElement.appendChild(box); document.documentElement.appendChild(tip);
+  document.addEventListener('mouseover', function (e) {
+    const r = e.target.getBoundingClientRect();
+    box.style.display = 'block'; box.style.left = r.left + 'px'; box.style.top = r.top + 'px';
+    box.style.width = r.width + 'px'; box.style.height = r.height + 'px';
+    const d = describe(e.target);
+    tip.textContent = 'Ctrl+click to pick: <' + d.tag + '> ' + (d.id ? 'id="' + d.id + '"' : d.selector);
+  }, true);
+  document.addEventListener('click', function (e) {
+    if (!e.ctrlKey) return;
+    e.preventDefault(); e.stopPropagation();
+    window.__afmPick.result = describe(e.target);
+    tip.textContent = 'Picked - you can close this window';
+    tip.style.background = '#15803d';
+  }, true);
+  return 'installed';
+})()"#;
+
+/// Open `url` in a visible browser and let the user Ctrl+click an element.
+pub fn pick_element(url: &str, which: &str, timeout_ms: u64, cancel: &dyn Fn() -> bool) -> Result<PickedElement> {
+    let session = WebSession::open(which, false, (1280, 900), false)?;
+    if !url.trim().is_empty() {
+        session.navigate(url, 60_000)?;
+    }
+    let start = std::time::Instant::now();
+    loop {
+        let state = session
+            .eval("window.__afmPick ? (window.__afmPick.result ? JSON.stringify(window.__afmPick.result) : '') : 'NOINSTALL'")
+            .unwrap_or(Value::Null);
+        match state.as_str() {
+            Some("NOINSTALL") | None => {
+                // New page (navigation) or not ready yet: (re)install the picker.
+                let _ = session.eval(PICKER_JS);
+            }
+            Some("") => {}
+            Some(json) => return Ok(serde_json::from_str(json)?),
+        }
+        if start.elapsed() >= Duration::from_millis(timeout_ms) {
+            bail!("no element picked within {} s", timeout_ms / 1000);
+        }
+        if cancel() {
+            bail!("cancelled");
+        }
+        std::thread::sleep(Duration::from_millis(300));
     }
 }
 

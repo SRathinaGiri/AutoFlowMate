@@ -109,6 +109,18 @@ enum Cmd {
         #[arg(long)]
         once: bool,
     },
+    /// Open a web page and Ctrl+click an element to get its element_id / selector
+    /// (no developer tools needed).
+    WebPick {
+        /// Page to open (URL or local .html file).
+        url: String,
+        /// "edge" (default) or "chrome".
+        #[arg(long, default_value = "edge")]
+        browser: String,
+        /// Give up after this many seconds.
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+    },
     /// Find an image on screen and print the matches (to test image_* steps).
     Locate {
         image: PathBuf,
@@ -327,6 +339,14 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
                 std::io::stdout().flush().ok();
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
+        }
+        Cmd::WebPick { url, browser, timeout } => {
+            let url = autoflow_core::web::to_url(&url, &std::env::current_dir()?);
+            eprintln!("Opening {url} - hold Ctrl and click the element you want…");
+            let p = autoflow_core::web::pick_element(&url, &browser, timeout * 1000, &|| false)?;
+            let target = if p.id.is_empty() { json!({"selector": p.selector}) } else { json!({"element_id": p.id}) };
+            println!("{}", serde_json::to_string_pretty(&json!({"element": p, "use_in_step": target}))?);
+            Ok(ExitCode::SUCCESS)
         }
         Cmd::Locate { image, confidence, all } => {
             let t = autoflow_core::vision::load_template(&image)?;

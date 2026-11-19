@@ -96,6 +96,10 @@ fn path_kind(action: &str, key: &str) -> Option<PathKind> {
         ("screenshot" | "browser_screenshot", "path") => PathKind::Save("PNG image", &["png"]),
         (a, "image") if a.starts_with("image_") => PathKind::Open("Images", &["png", "jpg", "jpeg", "bmp"]),
         ("browser_open" | "browser_navigate", "url") => PathKind::Open("Web pages", &["html", "htm"]),
+        ("read_excel", "path") => PathKind::Open("Workbooks", &["xlsx", "xlsm", "xls", "xlsb", "ods"]),
+        ("read_csv", "path") => PathKind::Open("CSV / text tables", &["csv", "tsv", "txt"]),
+        ("read_pdf", "path") => PathKind::Open("PDF", &["pdf"]),
+        ("input_box", "image") => PathKind::Open("Images", &["png", "jpg", "jpeg", "bmp"]),
         _ => return None,
     })
 }
@@ -111,6 +115,8 @@ fn pretty(key: &str) -> String {
         "exit_code_var" => Some("Exit code → variable"),
         "width_var" => Some("Width → variable"),
         "height_var" => Some("Height → variable"),
+        "count_var" => Some("Count → variable"),
+        "page_count_var" => Some("Page count → variable"),
         "item_var" => Some("Item variable"),
         "index_var" => Some("Index variable"),
         "element_id" => Some("Element id"),
@@ -155,6 +161,16 @@ pub struct Form<'a> {
     pub flow_dir: Option<&'a Path>,
     /// Set when the user asks for a new variable: (suggested name, type).
     pub new_var: Option<(String, VarType)>,
+    /// Sheets and column headers of the file a read_excel/read_csv step points at.
+    pub table: Option<&'a TableInfo>,
+}
+
+/// What the editor knows about a data file (for the sheet / column dropdowns).
+#[derive(Clone, Default)]
+pub struct TableInfo {
+    pub sheets: Vec<String>,
+    pub headers: Vec<String>,
+    pub error: Option<String>,
 }
 
 impl Form<'_> {
@@ -376,7 +392,31 @@ impl Form<'_> {
         let mut s = v.as_str().unwrap_or("").to_string();
         let mut changed = false;
         let pk = path_kind(&self.action, key);
-        if key == "control_type" {
+        let table_list: Option<(Vec<String>, &str)> = match (self.table, key) {
+            (Some(t), "sheet") if !t.sheets.is_empty() => Some((t.sheets.clone(), "first sheet")),
+            (Some(t), "column") if !t.headers.is_empty() => Some((t.headers.clone(), "all columns")),
+            _ => None,
+        };
+        if let Some((items, empty_label)) = table_list {
+            // Sheet / column picked from the actual file.
+            egui::ComboBox::from_id_salt(format!("{path}#tbl"))
+                .width(200.0)
+                .selected_text(if s.is_empty() { format!("({empty_label})") } else { s.clone() })
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(s.is_empty(), format!("({empty_label})")).clicked() {
+                        s.clear();
+                        changed = true;
+                    }
+                    for it in &items {
+                        let label = if it.is_empty() { "(blank)".to_string() } else { it.clone() };
+                        if ui.selectable_label(s == *it, label).clicked() {
+                            s = it.clone();
+                            changed = true;
+                        }
+                    }
+                });
+            changed |= self.insert_var_menu(ui, path, &mut s, key);
+        } else if key == "control_type" {
             changed |= ui.add(egui::TextEdit::singleline(&mut s).desired_width(140.0)).changed();
             egui::ComboBox::from_id_salt(path).selected_text("▾").width(24.0).show_ui(ui, |ui| {
                 for c in CONTROL_TYPES {

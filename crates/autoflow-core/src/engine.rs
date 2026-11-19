@@ -578,6 +578,35 @@ impl<'a> Context<'a> {
                 self.set_var(&a.output_var, json!(out))?;
             }
 
+            // ---------------- data import
+            Action::ReadExcel(a) => {
+                let p = self.path(&a.path)?;
+                let (sheet, range, column) = (self.text(&a.sheet)?, self.text(&a.range)?, self.text(&a.column)?);
+                let (used, raw) = crate::data::read_excel_raw(&p, &sheet, &range)?;
+                let v = crate::data::shape(raw, a.has_header, &column, a.skip_empty)?;
+                let n = v.as_array().map(Vec::len).unwrap_or(0);
+                self.log(LogLevel::Info, format!("read {n} {} from {} [{used}]", if column.is_empty() { "row(s)" } else { "value(s)" }, p.display()));
+                self.set_var(&a.output_var, v)?;
+                self.set_var(&a.count_var, json!(n))?;
+            }
+            Action::ReadCsv(a) => {
+                let p = self.path(&a.path)?;
+                let (delim, column) = (self.text(&a.delimiter)?, self.text(&a.column)?);
+                let raw = crate::data::read_csv_raw(&p, &delim)?;
+                let v = crate::data::shape(raw, a.has_header, &column, a.skip_empty)?;
+                let n = v.as_array().map(Vec::len).unwrap_or(0);
+                self.log(LogLevel::Info, format!("read {n} {} from {}", if column.is_empty() { "row(s)" } else { "value(s)" }, p.display()));
+                self.set_var(&a.output_var, v)?;
+                self.set_var(&a.count_var, json!(n))?;
+            }
+            Action::ReadPdf(a) => {
+                let p = self.path(&a.path)?;
+                let (text, pages) = crate::data::read_pdf(&p, &self.text(&a.pages)?)?;
+                self.log(LogLevel::Info, format!("read {} characters from {} ({pages} pages)", text.chars().count(), p.display()));
+                self.set_var(&a.output_var, json!(text))?;
+                self.set_var(&a.page_count_var, json!(pages))?;
+            }
+
             // ---------------- programs
             Action::RunProgram(a) => self.run_program(a)?,
             Action::KillProgram(a) => {
@@ -936,7 +965,19 @@ impl<'a> Context<'a> {
                 let css = if id.trim().is_empty() && sel.trim().is_empty() { None } else { Some(crate::web::css(&id, &sel)?) };
                 if !self.dry(format!("save page screenshot to {}", p.display())) {
                     let timeout = if a.timeout_ms == 0 { 10_000 } else { a.timeout_ms };
-                    self.web()?.screenshot(&p, css.as_deref(), timeout)?;
+                    self.web()?.screenshot(&p, css.as_deref(), a.full_page, timeout)?;
+                }
+            }
+            Action::BrowserWaitText(a) => {
+                let text = self.text(&a.text)?;
+                let (id, sel) = (self.text(&a.element_id)?, self.text(&a.selector)?);
+                let css = if id.trim().is_empty() && sel.trim().is_empty() { None } else { Some(crate::web::css(&id, &sel)?) };
+                if self.dry(format!("wait for text \"{text}\"")) {
+                    self.set_var(&a.output_var, json!(""))?;
+                } else {
+                    let stop = self.opts.stop.clone();
+                    let got = self.web()?.wait_text(&text, css.as_deref(), a.ignore_case, a.timeout_ms, &|| stop.load(Ordering::Relaxed))?;
+                    self.set_var(&a.output_var, json!(got))?;
                 }
             }
             Action::BrowserEval(a) => {
@@ -972,7 +1013,8 @@ impl<'a> Context<'a> {
                 if self.dry(format!("ask \"{prompt}\"")) {
                     self.set_var(&a.output_var, json!(default))?;
                 } else {
-                    match crate::dialogs::input_box(&title, &prompt, &default, a.password)? {
+                    let image = if a.image.trim().is_empty() { None } else { Some(self.path(&a.image)?) };
+                    match crate::dialogs::input_box(&title, &prompt, &default, a.password, image.as_deref())? {
                         Some(v) => self.set_var(&a.output_var, json!(v))?,
                         None if a.fail_on_cancel => bail!("cancelled by the user"),
                         None => self.set_var(&a.output_var, json!(""))?,

@@ -1,0 +1,40 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Data import: Excel, CSV and PDF",
+  "description": "Reads the GSTIN list from an Excel sheet (one column as a list), the whole CSV table as records, and the text of a PDF; loops over the records and checks the PDF text. No mouse or keyboard involved.",
+  "version": 1,
+  "variables": {
+    "workbook": "data/gstins.xlsx",
+    "table_csv": "data/gstins.csv",
+    "report_pdf": "data/gstins.pdf"
+  },
+  "variable_types": {
+    "workbook": "file",
+    "table_csv": "file",
+    "report_pdf": "file"
+  },
+  "steps": [
+    { "id": "sheet_column", "action": "read_excel", "path": "${workbook}", "sheet": "GSTINs", "column": "GSTIN",
+      "output_var": "gstins", "count_var": "gstin_count",
+      "comment": "One column -> a plain list, ready for for_each" },
+    { "id": "show_list", "action": "log", "message": "Excel: ${gstin_count} GSTINs: ${gstins}" },
+
+    { "id": "whole_csv", "action": "read_csv", "path": "${table_csv}", "output_var": "companies",
+      "comment": "Header row -> records {GSTIN, Company, State}" },
+    { "id": "each_row", "action": "for_each", "items": "${companies}", "item_var": "row", "index_var": "i",
+      "steps": [
+        { "id": "row_log", "action": "log", "message": "CSV row ${i}: ${row.Company} (${row.State}) = ${row.GSTIN}" }
+      ] },
+
+    { "id": "notes", "action": "read_excel", "path": "${workbook}", "sheet": "Notes", "has_header": false, "output_var": "notes" },
+    { "id": "notes_log", "action": "log", "message": "Notes sheet: ${notes.0.0}" },
+
+    { "id": "pdf", "action": "read_pdf", "path": "${report_pdf}", "output_var": "pdf_text", "page_count_var": "pdf_pages" },
+    {
+      "id": "pdf_check", "action": "if",
+      "condition": { "left": "${pdf_text}", "op": "contains", "right": "33AAACH7409R1Z8" },
+      "then": [ { "id": "pdf_ok", "action": "log", "message": "PDF (${pdf_pages} page) mentions 33AAACH7409R1Z8" } ],
+      "else": [ { "id": "pdf_bad", "action": "stop", "success": false, "message": "GSTIN not found in the PDF text" } ]
+    }
+  ]
+}

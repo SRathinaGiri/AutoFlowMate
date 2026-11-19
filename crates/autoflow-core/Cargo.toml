@@ -17,6 +17,10 @@ enigo.workspace = true
 arboard.workspace = true
 xcap.workspace = true
 headless_chrome.workspace = true
+base64 = "0.22"
+calamine.workspace = true
+csv.workspace = true
+pdf-extract.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 uiautomation.workspace = true

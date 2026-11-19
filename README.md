@@ -12,12 +12,13 @@ so you can build them in a GUI, write them by hand, or have an **AI agent** gene
 - **AI skill** ([skills/autoflowmate/SKILL.md](skills/autoflowmate/SKILL.md)): teaches agents such
   as Claude Code to author, validate and run flows.
 
-## What it can automate (68 actions)
+## What it can automate (72 actions)
 
 | Category | Actions |
 |---|---|
 | Flow | set_variable, increment, log, wait, if, repeat, while, for_each, break, stop, run_flow |
 | File | file_copy, file_move, file_delete, file_write, file_read, file_exists, file_info, dir_create, dir_delete, dir_list |
+| Data | read_excel (sheet or one column), read_csv, read_pdf |
 | Program | run_program (with output capture/timeout), kill_program, open (file/folder/URL) |
 | Window | window_activate, window_wait, window_wait_close, window_close, window_set_state, window_exists |
 | Mouse | mouse_move (duration + easing), mouse_click, mouse_down, mouse_up, mouse_scroll, mouse_drag, mouse_position |
@@ -25,7 +26,7 @@ so you can build them in a GUI, write them by hand, or have an **AI agent** gene
 | UI Element | ui_click, ui_set_text, ui_get_text, ui_wait, ui_exists (Windows UI Automation selectors) |
 | Image | image_find, image_find_all, image_click, image_wait, image_wait_vanish (find a picture on screen) |
 | Screen | screenshot (monitor, window or region), screen_size, pixel_get, pixel_matches |
-| Web | browser_open, browser_navigate, browser_type, browser_click, browser_wait, browser_get_text, browser_screenshot, browser_eval, browser_close (Edge/Chrome; elements by **element id** or CSS selector) |
+| Web | browser_open, browser_navigate, browser_type, browser_click, browser_wait, browser_wait_text, browser_get_text, browser_screenshot (page, full page or element), browser_eval, browser_close (Edge/Chrome; elements by **element id** or CSS selector) |
 | Dialog | message_box (alert/confirm), input_box (prompt/password) |
 | Clipboard | clipboard_set, clipboard_get |
 
@@ -84,7 +85,8 @@ Full reference: [skills/autoflowmate/references/actions.md](skills/autoflowmate/
 More in [examples/](examples): `file_organizer.json`, `calculator_uia.json`, `notepad_keyboard.json`,
 `pyautogui_tour.json`, `tally_balance_sheet_export.json` (keyboard-driven TallyPrime export),
 `excel_sales_sheet.json` (Excel: type a table with formulas, check the total, save) and
-`web_form_demo.json` (fill a web form by element id, read the result, take screenshots).
+`web_form_demo.json` (fill a web form by element id, read the result, take screenshots) and
+`gst_search.json` (GST taxpayer search with a CAPTCHA you type; saves each result page).
 
 ## Build
 
@@ -171,6 +173,21 @@ after 3 seconds and fills the selected `ui_*` or mouse step, or adds a new `ui_c
 `image_*` steps, **📷 Snip image** opens the Windows snipping tool and saves the picture next to the
 flow. F5 runs, Ctrl+S saves.
 
+## Reading Excel, CSV and PDF files
+
+| Action | What you get |
+|---|---|
+| `read_excel` | A sheet (chosen by name, or the first one), or just one **column**, from .xlsx, .xlsm, .xls, .xlsb or .ods |
+| `read_csv` | A CSV or TSV table; the delimiter is detected automatically |
+| `read_pdf` | The text of all pages, or of selected pages such as `1-3,5` |
+
+With a header row, every row becomes a record that you use in a loop as `${row.Company}`. Set
+`column` to "GSTIN", "B" or "2" to get one column as a plain list for `for_each`. In Studio,
+**Sheet** and **Column** are dropdowns filled from the file, and **👁 Preview data** shows the
+rows the flow will get. Text files work with `file_read`, and `for_each` loops over the lines.
+Example: `examples/data_import_demo.json`. The GST example reads its GSTINs from
+`examples/data/gstins.xlsx`.
+
 ## Web automation
 
 The **Web** actions drive Microsoft Edge (or Chrome) through the DevTools protocol. Address any
@@ -186,6 +203,16 @@ mouse movement is involved, so web steps are not affected by screen layout.
 { "id": "read",  "action": "browser_get_text", "element_id": "confirmation", "output_var": "msg" },
 { "id": "shot",  "action": "browser_screenshot", "path": "result.png" }
 ```
+
+- **Finding element ids without developer tools:** run `autoflow web-pick https://…`, or use
+  **🎯 Pick on page** on a web step in Studio. A browser opens and outlines whatever you hover;
+  **Ctrl+click** the field or button and you get its `element_id`, or a CSS `selector` if it has
+  no id.
+- `browser_wait_text` waits for text that a page loads in place, such as search results.
+  `browser_screenshot` with `full_page: true` captures the entire page.
+- **CAPTCHAs** are always typed by you. The flow can show the CAPTCHA picture inside an
+  `input_box` (`image` field) and type your answer. See `examples/gst_search.json`, which
+  looks up GSTINs on the GST portal and saves each result page.
 
 Try it offline with `examples/web_form_demo.json` and the bundled `examples/web/contact_form.html`.
 The browser runs with a private temporary profile, which is deleted afterwards, and it closes

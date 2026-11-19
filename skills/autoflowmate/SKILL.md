@@ -21,6 +21,7 @@ AutoFlowMate runs **flows**: JSON files listing steps such as `file_copy`, `wind
 | `autoflow inspect --at X Y` / `autoflow inspect --delay 3` | Describe the UI element at a point, plus a ready selector |
 | `autoflow mouse [--once]` | Live mouse X/Y and pixel colour (PyAutoGUI displayMousePosition) |
 | `autoflow locate image.png [--confidence 0.9] [--all]` | Test whether an image is found on screen right now |
+| `autoflow web-pick <url>` | Open a page, Ctrl+click an element, get its `element_id` / `selector` |
 | `autoflow schedule add flow.json --when "daily 09:00"` | Run a flow automatically (Windows Task Scheduler) |
 | `autoflow schedule list` / `run NAME` / `remove NAME` | See next/last run and result, start now, delete |
 | `autoflow run flow.json --log run.log` | Also append a timestamped log of the run |
@@ -316,6 +317,31 @@ Prefer, in this order (most robust first):
    `mouse_drag`, `mouse_down`/`mouse_up`) — last resort; breaks when windows move or DPI changes.
    Use `window_set_state` maximized first to stabilise layouts. `screen_size` gives the resolution.
 
+### Data files (Excel, CSV, PDF, text)
+
+Use these instead of opening Excel/PDF in their apps whenever the task is only to *read* data:
+
+| Action | Gives `output_var` |
+|---|---|
+| `read_excel` (`path`, `sheet` = name or empty for the first, optional `range` like `A1:D50`) | rows of the sheet |
+| `read_csv` (`path`, `delimiter` empty = auto-detect `,` `;` tab `|`) | rows of the file |
+| `read_pdf` (`path`, `pages` like `1-3,5`, empty = all) | the text |
+| `file_read` + `for_each` (items = the text) | text files, one item per line |
+
+For tables: with `has_header: true` (default) each row is a record — loop with
+`for_each items: "${rows}"` and use `${row.Company}`, `${row.Legal Name}`. Set **`column`**
+(`"GSTIN"`, a letter `"B"`, or a number `"2"`) to get just that column as a plain list, the usual
+input for a `for_each`. `skip_empty` drops blank rows/cells; `count_var` receives the count.
+Excel numbers stay numbers, dates become `YYYY-MM-DD`; CSV values are text (leading zeros and
+codes are kept). In Studio, Sheet/Column are dropdowns read from the file and **👁 Preview
+data** shows the result.
+
+```json
+{ "id": "list", "action": "read_excel", "path": "${flow_dir}\\gstins.xlsx", "sheet": "GSTINs",
+  "column": "GSTIN", "output_var": "gstins", "count_var": "n" },
+{ "id": "each", "action": "for_each", "items": "${gstins}", "item_var": "gstin", "steps": [ … ] }
+```
+
 ### Web pages (browser_*)
 
 For web applications use the **Web** actions — they drive Edge (default) or Chrome through the
@@ -339,7 +365,24 @@ without moving the mouse, and are far more reliable than clicking screen coordin
   closed automatically when the flow ends.
 - `browser_type` clears the field first (`clear`) and can `press_enter`. `browser_get_text`
   reads visible text, `attribute: "value"` (inputs), `"html"`, or any attribute (`href`).
-- `browser_wait` for the element that proves the next page/state arrived before reading it.
+- `browser_wait` for the element that proves the next page/state arrived before reading it;
+  for results that load in place (AJAX), `browser_wait_text` waits until some text (e.g.
+  "Legal Name") appears, optionally inside one element, and can return the text.
+- `browser_type` fires key/change events after inserting text, so Angular/React pages react
+  (e.g. a CAPTCHA that only appears after a value is typed).
+- `browser_screenshot` with `full_page: true` saves the whole page, not just the visible part
+  (also for apps that scroll inside a container).
+- **Finding element ids:** run `autoflow web-pick <url>` (or Studio's **🎯 Pick on page** on a
+  web step): a browser opens, the user hovers (outline shows) and **Ctrl+clicks** the element;
+  you get its `element_id`, or a `selector` when it has no id. No developer tools needed.
+- **CAPTCHAs are always solved by the user, never by the flow or you.** Pattern: screenshot the
+  CAPTCHA element, show it in `input_box` with `image`, type the user's answer:
+  ```json
+  { "id": "shot", "action": "browser_screenshot", "element_id": "imgCaptcha", "path": "${flow_dir}\\captcha.png" },
+  { "id": "ask",  "action": "input_box", "title": "CAPTCHA", "prompt": "Type the characters shown", "image": "${flow_dir}\\captcha.png", "output_var": "captcha" },
+  { "id": "fill", "action": "browser_type", "element_id": "fo-captcha", "text": "${captcha}" }
+  ```
+  Such flows need a person present: don't schedule them.
 - `<select>` and anything else unusual: `browser_eval` runs JavaScript and returns its value,
   e.g. `"document.getElementById('topic').value = 'Support'"` or `"document.title"`.
 - `browser_screenshot` saves the visible page, or one element with `element_id`/`selector`.
@@ -439,3 +482,10 @@ the file-name box with `window: "Excel"`, `automation_id: "1001"`, `name: "File 
 `web_form_demo.json` (with `web/contact_form.html`): open a page, type into fields by
 `element_id`, set a `<select>` via `browser_eval`, submit, wait for and read the confirmation,
 verify it, screenshot the page and one element.
+
+`data_import_demo.json`: one Excel column as a list, a CSV as records in a loop, a second sheet
+by name, and PDF text checked with `contains` (files in `examples/data/`).
+
+`gst_search.json`: read the GSTINs from `data/gstins.xlsx`, then for each GSTIN open the GST "Search Taxpayer" page, type the
+GSTIN, show the CAPTCHA picture to the user in an `input_box` (up to 3 attempts), search, wait
+for "Legal Name" with `browser_wait_text`, and save a full-page screenshot named after the GSTIN.

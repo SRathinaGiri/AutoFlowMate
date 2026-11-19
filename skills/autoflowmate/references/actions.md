@@ -290,6 +290,60 @@ List files/folders matching a pattern into an array variable.
 {"action":"dir_list","path":"","pattern":"*","recursive":false,"include_files":true,"include_dirs":false,"output_var":"files"}
 ```
 
+## Data
+
+### `read_excel`
+
+Read a sheet (or one column) of an Excel workbook into a list variable.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | Workbook file (.xlsx, .xlsm, .xls, .xlsb, .ods). |
+| `sheet` | `""` | Sheet name; empty = the first sheet. |
+| `range` | `""` | Only this cell range, e.g. `A1:D50`; empty = the whole used area. |
+| `has_header` | `true` | The first row holds column names. |
+| `column` | `""` | Return only this column as a list: header name (e.g. `GSTIN`), letter (`B`) or number (`2`). Empty = all columns. |
+| `skip_empty` | `true` | Leave out empty rows (and empty cells when reading one column). |
+| `output_var` | `"rows"` | Variable receiving the data: a list of values (column), of records {header: value}, or of rows. |
+| `count_var` | `""` | Variable receiving the number of rows (optional). |
+
+```json
+{"action":"read_excel","path":"","sheet":"","range":"","has_header":true,"column":"","skip_empty":true,"output_var":"rows","count_var":""}
+```
+
+### `read_csv`
+
+Read a CSV/TSV table (or one column) into a list variable.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | CSV / TSV / text table file. |
+| `delimiter` | `""` | Separator character: `,` `;` `\|` or `tab`; empty = detect automatically. |
+| `has_header` | `true` | The first row holds column names. |
+| `column` | `""` | Return only this column as a list: header name, letter (`B`) or number (`2`). Empty = all columns. |
+| `skip_empty` | `true` | Leave out empty rows (and empty cells when reading one column). |
+| `output_var` | `"rows"` | Variable receiving the data: a list of values (column), of records {header: value}, or of rows. |
+| `count_var` | `""` | Variable receiving the number of rows (optional). |
+
+```json
+{"action":"read_csv","path":"","delimiter":"","has_header":true,"column":"","skip_empty":true,"output_var":"rows","count_var":""}
+```
+
+### `read_pdf`
+
+Read the text of a PDF (all or some pages) into a variable.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | PDF file. |
+| `pages` | `""` | Pages to read, e.g. `1`, `2-4`, `1,3,5-`; empty = all pages. |
+| `output_var` | `"pdf_text"` | Variable receiving the text (pages separated by a blank line). |
+| `page_count_var` | `""` | Variable receiving the number of pages in the PDF (optional). |
+
+```json
+{"action":"read_pdf","path":"","pages":"","output_var":"pdf_text","page_count_var":""}
+```
+
 ## Program
 
 ### `run_program`
@@ -935,6 +989,23 @@ Wait until a page element exists.
 {"action":"browser_wait","element_id":"","selector":"","timeout_ms":10000}
 ```
 
+### `browser_wait_text`
+
+Wait until some text appears on the page (e.g. after a search).
+
+| field | default | description |
+|---|---|---|
+| `text` | `""` | Text to wait for (interpolated), e.g. a heading that only the result page shows. |
+| `element_id` | `""` | Look only inside this element (by id); empty = the whole page. |
+| `selector` | `""` | Look only inside this element (by CSS selector); empty = the whole page. |
+| `ignore_case` | `true` | Compare case-insensitively. |
+| `timeout_ms` | `30000` | How long to wait, in ms. |
+| `output_var` | `""` | Variable receiving the page/element text once found (optional). |
+
+```json
+{"action":"browser_wait_text","text":"","element_id":"","selector":"","ignore_case":true,"timeout_ms":30000,"output_var":""}
+```
+
 ### `browser_get_text`
 
 Read a page element's text, value or attribute into a variable.
@@ -960,10 +1031,11 @@ Save a PNG of the page or of one element.
 | `path` | `""` | PNG path to write. |
 | `element_id` | `""` | Only this element (by its id attribute); empty = the visible page. |
 | `selector` | `""` | Only this element (by CSS selector); empty = the visible page. |
+| `full_page` | `false` | Capture the whole page including the parts below the fold (ignored for an element). |
 | `timeout_ms` | `0` | How long to wait for the element, in ms. |
 
 ```json
-{"action":"browser_screenshot","path":"","element_id":"","selector":"","timeout_ms":0}
+{"action":"browser_screenshot","path":"","element_id":"","selector":"","full_page":false,"timeout_ms":0}
 ```
 
 ### `browser_eval`
@@ -1015,9 +1087,10 @@ Ask the user to type a value (optionally masked).
 | `prompt` | `""` | Question shown above the text box (interpolated). |
 | `default` | `""` | Initial text. |
 | `password` | `false` | Mask the input (for passwords). The value is never written to the log. |
+| `image` | `""` | Picture to show above the text box (PNG/JPG path), e.g. a CAPTCHA captured with browser_screenshot. |
 | `output_var` | `"input"` | Variable receiving the text. |
 | `fail_on_cancel` | `true` | Fail the step when the user presses Cancel (otherwise the variable is set to ""). |
 
 ```json
-{"action":"input_box","title":"AutoFlowMate","prompt":"","default":"","password":false,"output_var":"input","fail_on_cancel":true}
+{"action":"input_box","title":"AutoFlowMate","prompt":"","default":"","password":false,"image":"","output_var":"input","fail_on_cancel":true}
 ```
