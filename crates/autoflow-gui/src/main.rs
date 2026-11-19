@@ -5,6 +5,7 @@ mod flowchart;
 mod icons;
 mod form;
 mod tree;
+mod variables;
 
 use autoflow_core::{catalog, run_flow, validate_json, Action, ActionInfo, Event, Flow, RunOptions, Severity, Step};
 use eframe::egui::{self, Color32, RichText};
@@ -77,6 +78,16 @@ struct Studio {
     /// Splash screen is shown until this time (seconds since start), or until clicked.
     splash_until: Option<f64>,
     show_about: bool,
+    right_tab: RightTab,
+    last_sel: Selection,
+    vars_ui: variables::VarsUi,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+enum RightTab {
+    Step,
+    Variables,
+    Flow,
 }
 
 const ICON_PNG: &[u8] = include_bytes!("../../../assets/autoflowmate.png");
@@ -127,6 +138,9 @@ impl Studio {
             icon_tex: None,
             splash_until: Some(-1.0),
             show_about: false,
+            right_tab: RightTab::Flow,
+            last_sel: Selection::None,
+            vars_ui: variables::VarsUi::default(),
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -655,14 +669,56 @@ impl Studio {
     }
 
     fn properties(&mut self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical().id_salt("props").show(ui, |ui| match self.sel.clone() {
-            Selection::Step(p) => self.step_properties(ui, &p),
-            Selection::List(_) | Selection::Gap(..) => {
-                ui.heading("Insertion point");
-                ui.label("Click an action in the palette to insert it here, or drag one onto any connector.");
+        // Selecting a step jumps to the Step tab.
+        if self.sel != self.last_sel {
+            if matches!(self.sel, Selection::Step(_)) {
+                self.right_tab = RightTab::Step;
             }
-            Selection::None => self.flow_properties(ui),
+            self.last_sel = self.sel.clone();
+        }
+        ui.horizontal(|ui| {
+            let n_vars = self.flow.variables.len();
+            ui.selectable_value(&mut self.right_tab, RightTab::Step, RichText::new("⚙ Step").strong());
+            ui.selectable_value(&mut self.right_tab, RightTab::Variables, RichText::new(format!("𝑥 Variables ({n_vars})")).strong());
+            ui.selectable_value(&mut self.right_tab, RightTab::Flow, RichText::new("📄 Flow").strong());
         });
+        ui.separator();
+        egui::ScrollArea::vertical().id_salt("props").auto_shrink([false, false]).show(ui, |ui| match self.right_tab {
+            RightTab::Step => match self.sel.clone() {
+                Selection::Step(p) => self.step_properties(ui, &p),
+                Selection::List(_) | Selection::Gap(..) => {
+                    ui.heading("Insertion point");
+                    ui.label("Click an action in the palette to insert it here, or drag one onto any connector.");
+                }
+                Selection::None => {
+                    ui.add_space(20.0);
+                    ui.weak("Select a step in the flowchart to edit it here.");
+                }
+            },
+            RightTab::Variables => {
+                let dir = self.flow_dir();
+                if variables::show(ui, &mut self.flow, &mut self.vars_ui, dir.as_deref()) {
+                    self.dirty = true;
+                    self.buffers_for = None;
+                }
+            }
+            RightTab::Flow => self.flow_properties(ui),
+        });
+    }
+
+    fn flow_dir(&self) -> Option<PathBuf> {
+        self.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    }
+
+    /// Variables a field can use: declared ones (with types) and those created by steps.
+    fn var_infos(&self) -> Vec<form::VarInfo> {
+        autoflow_core::validate::defined_variables(&self.flow)
+            .into_iter()
+            .map(|n| {
+                let t = self.flow.variable_types.get(&n).copied().or_else(|| self.flow.variables.get(&n).map(autoflow_core::flow::VarType::guess));
+                (n, t)
+            })
+            .collect()
     }
 
     fn step_properties(&mut self, ui: &mut egui::Ui, p: &StepPath) {
@@ -684,13 +740,21 @@ impl Studio {
         let mut v = serde_json::to_value(step).unwrap();
         // Make sure common fields are always visible.
         if let Some(o) = v.as_object_mut() {
-            for (k, d) in [("id", Value::from("")), ("comment", Value::from("")), ("on_error", Value::from("stop")), ("retries", Value::from(0)), ("retry_delay_ms", Value::from(1000))] {
+            for (k, d) in [
+                ("id", Value::from("")),
+                ("comment", Value::from("")),
+                ("on_error", Value::from("stop")),
+                ("retries", Value::from(0)),
+                ("retry_delay_ms", Value::from(1000)),
+                ("delay_before_ms", Value::from(0)),
+                ("delay_after_ms", Value::from(0)),
+            ] {
                 o.entry(k).or_insert(d);
             }
         }
         let obj = v.as_object_mut().unwrap();
         // Action fields first, common fields after.
-        let common = ["id", "enabled", "comment", "on_error", "retries", "retry_delay_ms"];
+        let common = ["id", "enabled", "comment", "on_error", "retries", "retry_delay_ms", "delay_before_ms", "delay_after_ms"];
         let mut action_part: Map<String, Value> = obj.iter().filter(|(k, _)| !common.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
         let mut common_part: Map<String, Value> = obj.iter().filter(|(k, _)| common.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
 
@@ -702,12 +766,28 @@ impl Studio {
         for (k, v) in &self.help {
             help.entry(k.clone()).or_insert_with(|| v.clone());
         }
-        let mut form = form::Form { help: &help, json_buffers: &mut self.json_buffers, action: name.to_string() };
+        let vars = self.var_infos();
+        let dir = self.flow_dir();
+        let mut form = form::Form {
+            help: &help,
+            json_buffers: &mut self.json_buffers,
+            action: name.to_string(),
+            vars: &vars,
+            flow_dir: dir.as_deref(),
+            new_var: None,
+        };
         let mut changed = form.object(ui, "a", &mut action_part);
         ui.add_space(8.0);
-        egui::CollapsingHeader::new("Step settings").default_open(false).show(ui, |ui| {
+        egui::CollapsingHeader::new("Step settings (id, errors, retries, delays)").default_open(false).show(ui, |ui| {
             changed |= form.object(ui, "c", &mut common_part);
         });
+        // "➕ New variable…" chosen in a field: declare it now.
+        if let Some((vname, vtype)) = form.new_var.take() {
+            variables::add_variable(&mut self.flow, &vname, vtype);
+            self.vars_ui.highlight = Some(vname.clone());
+            self.info(LogKind::Ok, format!("created variable `{vname}` ({}) - set its value in the Variables tab", vtype.label()));
+            self.dirty = true;
+        }
 
         if changed {
             let mut merged = common_part;
@@ -773,20 +853,9 @@ impl Studio {
             self.dirty |= ui.add(egui::TextEdit::multiline(&mut self.flow.description).desired_rows(3)).changed();
             ui.end_row();
         });
-        ui.add_space(8.0);
-        ui.label(RichText::new("Variables (JSON object)").strong());
-        ui.weak("Use them as ${name}. Built-ins: ${now} ${now:dd-MM-yyyy} ${date} ${time} ${timestamp} ${flow_dir} ${env.USERPROFILE} ${newline}");
-        let resp = ui.add(egui::TextEdit::multiline(&mut self.flow_vars_buf).code_editor().desired_rows(8).desired_width(f32::INFINITY));
-        match serde_json::from_str::<Map<String, Value>>(&self.flow_vars_buf) {
-            Ok(m) => {
-                if resp.changed() {
-                    self.flow.variables = m;
-                    self.dirty = true;
-                }
-            }
-            Err(e) => {
-                ui.colored_label(Color32::from_rgb(220, 80, 80), format!("JSON: {e}"));
-            }
+        ui.add_space(4.0);
+        if ui.link(format!("𝑥 {} variable(s) — edit in the Variables tab", self.flow.variables.len())).clicked() {
+            self.right_tab = RightTab::Variables;
         }
         ui.add_space(10.0);
         ui.label(RichText::new("Run settings").strong());
@@ -798,7 +867,14 @@ impl Studio {
                 .and_then(Value::as_object)
                 .map(|p| p.iter().filter_map(|(k, x)| x.get("description").and_then(Value::as_str).map(|d| (k.clone(), d.to_string()))).collect())
                 .unwrap_or_default();
-            let mut f = form::Form { help: &help, json_buffers: &mut self.settings_buf, action: String::new() };
+            let mut f = form::Form {
+                help: &help,
+                json_buffers: &mut self.settings_buf,
+                action: String::new(),
+                vars: &[],
+                flow_dir: None,
+                new_var: None,
+            };
             if f.object(ui, "settings", o) {
                 if let Ok(s) = serde_json::from_value(v) {
                     self.flow.settings = s;

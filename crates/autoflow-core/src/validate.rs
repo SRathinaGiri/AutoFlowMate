@@ -123,6 +123,23 @@ fn check_flow(flow: &Flow, issues: &mut Vec<Issue>) {
     if !s.failsafe && s.abort_hotkey.trim().is_empty() {
         issues.push(warn("settings", "fail-safe and abort hotkey are both off: a runaway flow can only be stopped from Studio/Task Manager".into()));
     }
+    for (name, ty) in &flow.variable_types {
+        match flow.variables.get(name) {
+            None => issues.push(warn(&format!("variable_types.{name}"), format!("type given for `{name}`, which is not in variables"))),
+            Some(v) => {
+                if let Some(msg) = ty.check(v) {
+                    issues.push(warn(&format!("variables.{name}"), msg));
+                }
+            }
+        }
+    }
+    for name in flow.variables.keys() {
+        let ok = name.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false)
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+        if !ok {
+            issues.push(warn(&format!("variables.{name}"), format!("`{name}`: use letters, digits and _ only (no spaces or dots)")));
+        }
+    }
     if s.key_delay_ms > 2000 {
         issues.push(warn("settings.key_delay_ms", format!("{} ms per keystroke is very slow", s.key_delay_ms)));
     }
@@ -131,6 +148,42 @@ fn check_flow(flow: &Flow, issues: &mut Vec<Issue>) {
     defined.insert("last_error".into());
     collect_defined(&flow.steps, &mut defined);
     walk(&flow.steps, "steps", 0, &mut ids, &defined, issues);
+}
+
+/// Every variable name a flow can use: declared variables first, then the ones
+/// steps create (set_variable/increment names and *_var outputs), in flow order.
+/// Built-ins are not included (see `vars::BUILTINS`).
+pub fn defined_variables(flow: &Flow) -> Vec<String> {
+    let mut out: Vec<String> = flow.variables.keys().cloned().collect();
+    fn walk(steps: &[Step], out: &mut Vec<String>) {
+        for s in steps {
+            let mut add = |n: &str| {
+                let n = n.trim();
+                if !n.is_empty() && !n.contains("${") && !out.iter().any(|x| x == n) {
+                    out.push(n.to_string());
+                }
+            };
+            match &s.action {
+                Action::SetVariable(a) => add(&a.name),
+                Action::Increment(a) => add(&a.name),
+                _ => {}
+            }
+            if let Ok(Value::Object(o)) = serde_json::to_value(&s.action) {
+                for (k, v) in o {
+                    if k.ends_with("_var") {
+                        if let Some(n) = v.as_str() {
+                            add(n);
+                        }
+                    }
+                }
+            }
+            for c in s.action.children() {
+                walk(c, out);
+            }
+        }
+    }
+    walk(&flow.steps, &mut out);
+    out
 }
 
 fn collect_defined(steps: &[Step], out: &mut HashSet<String>) {

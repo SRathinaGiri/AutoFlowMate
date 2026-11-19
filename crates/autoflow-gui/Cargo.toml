@@ -16,6 +16,9 @@ serde_json.workspace = true
 eframe.workspace = true
 rfd.workspace = true
 arboard.workspace = true
+egui_extras = { version = "0.37", default-features = false, features = ["datepicker"] }
+chrono.workspace = true
+jiff = "0.2"
 
 [dev-dependencies]
 tiny-skia = "0.12"

@@ -31,6 +31,9 @@ pub struct Flow {
     /// Initial variables. Can be overridden at run time (`--var name=value`).
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub variables: Map<String, Value>,
+    /// Optional type of each variable (used by the editor and for validation).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub variable_types: std::collections::BTreeMap<String, VarType>,
     /// Steps executed in order.
     #[serde(default)]
     pub steps: Vec<Step>,
@@ -49,6 +52,7 @@ impl Default for Flow {
             version: FORMAT_VERSION,
             settings: Settings::default(),
             variables: Map::new(),
+            variable_types: Default::default(),
             steps: Vec::new(),
         }
     }
@@ -126,6 +130,117 @@ impl Default for Settings {
             failsafe: true,
             abort_hotkey: "ctrl+alt+q".into(),
         }
+    }
+}
+
+/// Type of a flow variable. Values are stored as plain JSON in `variables`;
+/// the type tells the editor which input to show and lets `validate` check the value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VarType {
+    /// Any text (may contain ${other} variables).
+    #[default]
+    Text,
+    /// Whole number.
+    Integer,
+    /// Decimal number.
+    Number,
+    /// true / false.
+    Boolean,
+    /// Date as YYYY-MM-DD.
+    Date,
+    /// Time as HH:MM or HH:MM:SS (24 h).
+    Time,
+    /// Date and time as YYYY-MM-DD HH:MM[:SS].
+    Datetime,
+    /// Web address.
+    Url,
+    /// Path of a file.
+    File,
+    /// Path of a folder.
+    Folder,
+    /// JSON array, e.g. ["a", "b"].
+    List,
+}
+
+impl VarType {
+    pub const ALL: [VarType; 11] = [
+        VarType::Text, VarType::Integer, VarType::Number, VarType::Boolean, VarType::Date, VarType::Time,
+        VarType::Datetime, VarType::Url, VarType::File, VarType::Folder, VarType::List,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            VarType::Text => "Text",
+            VarType::Integer => "Integer",
+            VarType::Number => "Number",
+            VarType::Boolean => "Yes/No",
+            VarType::Date => "Date",
+            VarType::Time => "Time",
+            VarType::Datetime => "Date + time",
+            VarType::Url => "URL",
+            VarType::File => "File",
+            VarType::Folder => "Folder",
+            VarType::List => "List",
+        }
+    }
+
+    /// A sensible starting value.
+    pub fn default_value(self) -> Value {
+        let now = chrono::Local::now();
+        match self {
+            VarType::Integer => Value::from(0),
+            VarType::Number => Value::from(0.0),
+            VarType::Boolean => Value::Bool(false),
+            VarType::Date => Value::from(now.format("%Y-%m-%d").to_string()),
+            VarType::Time => Value::from(now.format("%H:%M").to_string()),
+            VarType::Datetime => Value::from(now.format("%Y-%m-%d %H:%M").to_string()),
+            VarType::Url => Value::from("https://"),
+            VarType::List => Value::Array(vec![]),
+            _ => Value::from(""),
+        }
+    }
+
+    /// Guess a type from an existing value (for flows written without types).
+    pub fn guess(v: &Value) -> VarType {
+        match v {
+            Value::Bool(_) => VarType::Boolean,
+            Value::Number(n) if n.is_i64() || n.is_u64() => VarType::Integer,
+            Value::Number(_) => VarType::Number,
+            Value::Array(_) => VarType::List,
+            Value::String(s) if s.starts_with("http://") || s.starts_with("https://") => VarType::Url,
+            Value::String(s) if chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok() => VarType::Date,
+            _ => VarType::Text,
+        }
+    }
+
+    /// Why `v` is not a valid value of this type (None = fine). Values containing
+    /// `${…}` are not checked, since they are filled in at run time.
+    pub fn check(self, v: &Value) -> Option<String> {
+        if let Value::String(s) = v {
+            if s.contains("${") {
+                return None;
+            }
+        }
+        let text = crate::vars::to_text(v);
+        let t = text.trim();
+        let ok = match self {
+            VarType::Integer => v.is_i64() || v.is_u64() || t.parse::<i64>().is_ok(),
+            VarType::Number => v.is_number() || t.parse::<f64>().is_ok(),
+            VarType::Boolean => v.is_boolean() || matches!(t, "true" | "false"),
+            VarType::Date => chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok(),
+            VarType::Time => {
+                chrono::NaiveTime::parse_from_str(t, "%H:%M").is_ok() || chrono::NaiveTime::parse_from_str(t, "%H:%M:%S").is_ok()
+            }
+            VarType::Datetime => {
+                chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M").is_ok()
+                    || chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").is_ok()
+            }
+            VarType::Url => t.is_empty() || t.contains("://") || t.starts_with("about:"),
+            VarType::List => v.is_array(),
+            VarType::Text | VarType::File | VarType::Folder => true,
+        };
+        (!ok).then(|| format!("`{text}` is not a valid {}", self.label().to_lowercase()))
     }
 }
 

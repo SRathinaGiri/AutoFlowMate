@@ -106,6 +106,15 @@ trigger slow screens.
   `mm` = minutes. Timestamps are evaluated when used; to reuse one value, store it once in
   `variables` (`"stamp": "${now:yyyyMMdd_HHmmss}"`) and refer to `${stamp}`.
 - Flow `variables` are resolved in order, so later ones may use earlier ones and built-ins.
+- Optionally declare each variable's type in `variable_types` (same names): `text`, `integer`,
+  `number`, `boolean`, `date` (YYYY-MM-DD), `time` (HH:MM), `datetime`, `url`, `file`, `folder`,
+  `list`. Studio then shows a matching editor (date picker, Browse buttons, …) and offers the
+  variable in fields of that kind; `validate` warns when a value does not fit its type. Use
+  names made of letters, digits and `_`.
+  ```json
+  "variables":      { "report_date": "2026-11-19", "input_file": "D:\\data\\sales.xlsx", "retries": 3 },
+  "variable_types": { "report_date": "date", "input_file": "file", "retries": "integer" }
+  ```
 - Steps that produce values take an `output_var` (`file_read`, `dir_list`, `ui_get_text`, ...).
   `file_exists` / `window_exists` / `ui_exists` store `"true"`/`"false"`; test with `op: is_true`.
 - After a step fails with `on_error: continue`, `${last_error}` holds the message.

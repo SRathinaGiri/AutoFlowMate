@@ -148,6 +148,20 @@ push to `main`. To build the same zip locally, run `scripts\package.ps1`.
 
 Other commands: `actions`, `template <action>`, `windows`, `mouse`, `locate <image>`, `schedule`, `schema`, `docs`, `new`.
 
+The right-hand panel has three tabs:
+
+- **Step**: the selected step's fields, each with a suitable editor. File and folder fields have
+  📄/💾/📁 Browse buttons; a choice inside the flow's folder is stored relative to it. Numeric
+  fields have a **Value | Variable** switch with a list of existing variables. Text fields have a
+  **𝑥** menu that inserts `${variable}` (yours, step outputs, or built-ins such as
+  `${timestamp}`). Output fields suggest existing names. Every variable list includes
+  **➕ New variable…**.
+- **Variables**: declare the flow's variables with a type (Text, Integer, Number, Yes/No, Date
+  with a calendar, Time, Date + time, URL, File, Folder, List) and edit each value with the
+  matching editor. Renaming a variable updates every `${old}` reference. The tab also lists the
+  variables that steps create and the built-ins.
+- **Flow**: name, description and run settings.
+
 In Studio, the **Flowchart** view shows the flow as a diagram. **Drag** an action from the palette
 onto any connector to insert it there, drag a node onto another connector to move it, and
 right-click a node to enable/disable, duplicate or delete it. Clicking a connector's ⊕ makes it the
