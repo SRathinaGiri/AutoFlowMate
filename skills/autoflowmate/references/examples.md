@@ -42,3 +42,19 @@ stored in SQLite and an Excel sheet; each PDF in its own `try`.
 `gst_search.json`: read the GSTINs from `data/gstins.xlsx`, then for each GSTIN open the GST "Search Taxpayer" page, type the
 GSTIN, show the CAPTCHA picture to the user in an `input_box` (up to 3 attempts), search, wait
 for "Legal Name" with `browser_wait_text`, and save a full-page screenshot named after the GSTIN.
+
+`documents_demo.json` (offline): the item table of `data/invoice_items.pdf` via `read_pdf_table`,
+totalled, a payment letter from the Word template `data/payment_letter_template.docx`
+(`word_fill`), a Word report with the table (`word_write`), both zipped and unzipped again, and
+the letter read back with `word_read` to check it.
+
+`invoice_folder_watch.json`: a file trigger on `inbox/invoices`; each PDF dropped there is read
+(invoice number + item table), logged to `output/invoice_log.csv` and moved to `done` or `failed`.
+Run `autoflow watch invoice_folder_watch.json`.
+
+Recorded flows: `autoflow record new.json` (or ⏺ Record in Studio) writes the user's clicks as
+`ui_click` steps where the control has an id or name, else `mouse_click`, plus `type_text`,
+`key_press`, `window_activate` and `wait`. Review a recording before running it: add
+`window_wait` / `ui_wait` for slow screens, replace fixed waits where possible, and remove
+stray clicks.
+

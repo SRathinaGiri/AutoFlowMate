@@ -52,6 +52,41 @@ enum Cmd {
         #[arg(long)]
         scheduled: bool,
     },
+    /// Keep running and start the flow for each new file / e-mail listed in its "triggers".
+    /// Stop with Ctrl+C. To start it at log-on: `autoflow schedule add flow.json --when logon --watch`.
+    Watch {
+        flow: PathBuf,
+        /// Check once and exit (files already there count as new); for a task that runs every N minutes.
+        #[arg(long)]
+        once: bool,
+        /// Variables passed to every run: --var name=value (repeatable).
+        #[arg(long = "var", value_name = "NAME=VALUE")]
+        vars: Vec<String>,
+        /// How often to look at watched folders, in seconds.
+        #[arg(long, default_value_t = 2)]
+        poll_seconds: u64,
+        /// Append a timestamped log to this file.
+        #[arg(long, value_name = "FILE")]
+        log: Option<PathBuf>,
+        /// Mode used by scheduled tasks: hide the console and log to <flow folder>\logs\<flow name>.log.
+        #[arg(long)]
+        scheduled: bool,
+    },
+    /// Record your clicks and typing as a new flow. Press Ctrl+Alt+R to stop.
+    /// Clicks on named controls become ui_click steps; typing into password boxes is never saved.
+    Record {
+        /// Flow file to write.
+        out: PathBuf,
+        /// Do not add wait steps for pauses.
+        #[arg(long)]
+        no_waits: bool,
+        /// Replace OUT if it exists.
+        #[arg(long)]
+        force: bool,
+        /// Seconds to wait before recording starts (time to switch to the app).
+        #[arg(long, default_value_t = 3)]
+        delay: u64,
+    },
     /// Store passwords (e.g. a Gmail App Password) in Windows Credential Manager for send_email.
     Secret {
         #[command(subcommand)]
@@ -190,6 +225,10 @@ enum ScheduleCmd {
         /// Print the task XML instead of creating the task.
         #[arg(long)]
         print_xml: bool,
+        /// Run `autoflow watch` (the flow's triggers) instead of the flow itself. With --when logon
+        /// the watcher runs all day; with "every 30m" it checks once each time.
+        #[arg(long)]
+        watch: bool,
     },
     /// List AutoFlowMate tasks with next/last run and result.
     List {
@@ -320,6 +359,92 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
                 }
             }
             Ok(if result.success { ExitCode::SUCCESS } else { ExitCode::from(1) })
+        }
+        Cmd::Watch { flow, once, vars, poll_seconds, log, scheduled } => {
+            if scheduled {
+                hide_console();
+            }
+            let log_file = log.or_else(|| scheduled.then(|| autoflow_core::schedule::log_path(&abs(&flow))));
+            let mut logger = match &log_file {
+                Some(p) => Some(RunLog::open(p, &flow, scheduled)?),
+                None => None,
+            };
+            let text = std::fs::read_to_string(&flow)?;
+            let (parsed, issues) = validate_json(&text);
+            for i in &issues {
+                eprintln!("{:?} {}: {}", i.severity, i.location, i.message);
+                if let Some(l) = logger.as_mut() {
+                    l.line(&format!("{:?} {}: {}", i.severity, i.location, i.message));
+                }
+            }
+            let Some(mut flow_doc) = parsed.filter(|_| !issues.iter().any(|i| i.severity == Severity::Error)) else {
+                return Ok(ExitCode::from(2));
+            };
+            flow_doc.assign_ids();
+            let mut base = Map::new();
+            for v in vars {
+                let (k, val) = autoflow_core::vars::parse_override(&v)?;
+                base.insert(k, val);
+            }
+            let dir = flow_dir(&flow);
+            let opts = autoflow_core::watch::WatchOptions {
+                once,
+                stop: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                poll: std::time::Duration::from_secs(poll_seconds.max(1)),
+            };
+            let logger = std::cell::RefCell::new(logger);
+            let say = |s: String| {
+                println!("[watch] {s}");
+                if let Some(l) = logger.borrow_mut().as_mut() {
+                    l.line(&format!("WATCH {s}"));
+                }
+            };
+            let (mut runs, mut failures) = (0u32, 0u32);
+            let mut log_fn = |s: String| say(s);
+            let mut run_fn = |ev: &autoflow_core::watch::WatchEvent| {
+                let mut overrides = base.clone();
+                overrides.insert(ev.variable.clone(), ev.value.clone());
+                let ropts = RunOptions { flow_dir: dir.clone(), ..RunOptions::default() };
+                let mut sink = |e: Event| {
+                    print_event(&e, false);
+                    if let Some(l) = logger.borrow_mut().as_mut() {
+                        l.event(&e);
+                    }
+                };
+                let r = run_flow(&flow_doc, overrides, &ropts, &mut sink);
+                runs += 1;
+                if !r.success {
+                    failures += 1;
+                }
+                r.success
+            };
+            let result = autoflow_core::watch::watch(&flow_doc.triggers, &dir, &opts, &mut log_fn, &mut run_fn);
+            say(format!("stopped after {runs} run(s), {failures} failed"));
+            result?;
+            Ok(if failures > 0 { ExitCode::from(1) } else { ExitCode::SUCCESS })
+        }
+        Cmd::Record { out, no_waits, force, delay } => {
+            if out.exists() && !force {
+                bail!("{} exists; use --force to replace it", out.display());
+            }
+            for s in (1..=delay).rev() {
+                eprintln!("recording starts in {s}...");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            eprintln!("recording: use the app as usual; press Ctrl+Alt+R to stop");
+            let opts = autoflow_core::recorder::RecordOptions { min_wait_ms: if no_waits { 0 } else { 1500 }, ..Default::default() };
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let steps = autoflow_core::recorder::record(opts, stop, &mut |s| eprintln!("  + {s}"))?;
+            let mut flow = Flow {
+                name: format!("Recorded {}", autoflow_core::vars::Vars::default().interpolate("${now:dd-MM-yyyy HH:mm}").unwrap_or_default()),
+                description: "Recorded with `autoflow record`. Check the steps, add waits for slow screens, and validate before running.".into(),
+                steps,
+                ..Flow::default()
+            };
+            flow.assign_ids();
+            flow.save(&out)?;
+            eprintln!("saved {} step(s) to {}", flow.steps.len(), out.display());
+            Ok(ExitCode::SUCCESS)
         }
         Cmd::Validate { flow, json } => {
             let text = std::fs::read_to_string(&flow)?;
@@ -562,7 +687,7 @@ fn hide_console() {
 fn schedule_cmd(cmd: ScheduleCmd) -> Result<ExitCode> {
     use autoflow_core::schedule::{self, TaskSpec, Trigger};
     match cmd {
-        ScheduleCmd::Add { flow, when, name, vars, time_limit_minutes, print_xml } => {
+        ScheduleCmd::Add { flow, when, name, vars, time_limit_minutes, print_xml, watch } => {
             let flow = abs(&flow);
             // Refuse to schedule a broken flow.
             let (parsed, issues) = validate_json(&std::fs::read_to_string(&flow)?);
@@ -586,6 +711,7 @@ fn schedule_cmd(cmd: ScheduleCmd) -> Result<ExitCode> {
                 exe: abs(&std::env::current_exe()?),
                 extra_args: extra,
                 time_limit_minutes,
+                watch,
             };
             if print_xml {
                 print!("{}", schedule::task_xml(&spec));

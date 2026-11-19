@@ -1,0 +1,35 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Invoice folder watcher",
+  "description": "Start it with `autoflow watch invoice_folder_watch.json` (or schedule it at log-on with --watch). Every PDF dropped into inbox/invoices is read: the invoice number and the item table are taken out, the total is added up and a line is appended to output/invoice_log.csv. The PDF is then moved to inbox/invoices/done (or failed).",
+  "version": 1,
+  "variables": {
+    "file": "data/invoice_items.pdf",
+    "total": 0,
+    "invoice_no": ""
+  },
+  "variable_types": {
+    "file": "file",
+    "total": "number"
+  },
+  "triggers": [
+    { "kind": "file", "folder": "inbox/invoices", "pattern": "*.pdf", "variable": "file",
+      "move_to": "done", "move_failed_to": "failed", "include_existing": true }
+  ],
+  "steps": [
+    { "id": "text", "action": "read_pdf", "path": "${file}", "output_var": "pdf_text" },
+    { "id": "inv", "action": "text_extract", "input": "${pdf_text}", "pattern": "Invoice No[.:]?\\s*(\\S+)", "group": 1,
+      "output_var": "invoice_no", "found_var": "has_no" },
+    { "id": "need_no", "action": "if", "condition": { "left": "${has_no}", "op": "is_false" },
+      "then": [ { "id": "stop_no", "action": "stop", "success": false, "message": "no invoice number in ${file}" } ] },
+    { "id": "items", "action": "read_pdf_table", "path": "${file}", "min_columns": 5, "output_var": "items", "count_var": "n" },
+    { "id": "sum", "action": "for_each", "items": "${items}", "item_var": "item", "steps": [
+        { "id": "clean", "action": "text_replace", "input": "${item.Amount}", "find": ",", "replace_with": "", "output_var": "amount" },
+        { "id": "add", "action": "calculate", "expression": "${total} + ${amount}", "decimals": 2, "output_var": "total" }
+    ] },
+    { "id": "record", "action": "list_append", "name": "row",
+      "value": { "Received": "${now}", "File": "${file}", "Invoice": "${invoice_no}", "Items": "${n}", "Total": "${total}" } },
+    { "id": "csv", "action": "write_csv", "path": "output/invoice_log.csv", "data": "${row}", "append": true, "escape_formulas": true },
+    { "id": "done", "action": "log", "message": "${invoice_no}: ${n} items, total ${total}" }
+  ]
+}

@@ -1,6 +1,6 @@
 ---
 name: autoflowmate
-description: Automate Windows desktop and web tasks (files, programs, windows, mouse, keyboard, UI elements, web pages by element id, image recognition, on-screen text via OCR, dialogs, clipboard, screenshots), data work (Excel/CSV/PDF in, CSV/Excel out, SQLite and ODBC databases, text/date/maths helpers), e-mail (send, read and save attachments), web APIs and AI models (LM Studio, Ollama, OpenAI, Gemini, Claude — e.g. classify comments) by writing AutoFlowMate flow JSON and running it with the `autoflow` CLI — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image or text on screen, process files, mail or database rows in bulk, or edit/debug an existing AutoFlowMate `.json` flow.
+description: Automate Windows desktop and web tasks (files, programs, windows, mouse, keyboard, UI elements, web pages by element id, image recognition, on-screen text via OCR, dialogs, clipboard, screenshots), data work (Excel/CSV/PDF and PDF tables in, CSV/Excel/Word out, Word templates, zip, SQLite and ODBC databases, text/date/maths helpers), e-mail (send, read and save attachments), web APIs and AI models (LM Studio, Ollama, OpenAI, Gemini, Claude — e.g. classify comments) by writing AutoFlowMate flow JSON (or recording it with `autoflow record`) and running it with the `autoflow` CLI, on a schedule or whenever a file or e-mail arrives, — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image or text on screen, process files, mail or database rows in bulk, or edit/debug an existing AutoFlowMate `.json` flow.
 ---
 
 # AutoFlowMate (Windows RPA)
@@ -24,7 +24,9 @@ AutoFlowMate runs **flows**: JSON files listing steps such as `file_copy`, `wind
 | `autoflow web-pick <url>` | Open a page, Ctrl+click an element, get its `element_id` / `selector` |
 | `autoflow ocr [--window T] [--image P] [--find TEXT]` | What Windows OCR reads on screen / in a window / in a picture (to test `ocr_*`); `--languages` lists OCR languages |
 | `autoflow secret set NAME` / `check NAME` / `delete NAME` | Store a password or API key (hidden prompt) in Windows Credential Manager (`password_secret`, `api_key_secret`, `bearer_secret`) |
-| `autoflow schedule add flow.json --when "daily 09:00"` | Run a flow automatically (Windows Task Scheduler) |
+| `autoflow record new.json` | Record the user's clicks and typing as a flow (Ctrl+Alt+R stops); passwords are never recorded |
+| `autoflow watch flow.json [--once]` | Run the flow for each new file / e-mail listed in its `triggers` |
+| `autoflow schedule add flow.json --when "daily 09:00"` | Run a flow automatically (Windows Task Scheduler); `--when logon --watch` starts the watcher at log-on |
 | `autoflow schedule list` / `run NAME` / `remove NAME` | See next/last run and result, start now, delete |
 | `autoflow run flow.json --log run.log` | Also append a timestamped log of the run |
 | `autoflow schema` | JSON Schema for flow files |
@@ -179,9 +181,10 @@ The details for each area are in `references/`. Read the matching file before wr
 | `ai_prompt` (classify, summarise, extract), `http_request` | [references/ai-and-apis.md](references/ai-and-apis.md) |
 | Sending or reading e-mail, attachments | [references/email.md](references/email.md) |
 | SQLite / ODBC (SQL Server, Access, Excel, Tally) | [references/databases.md](references/databases.md) |
+| Tables in PDFs, Word read / templates / reports, zip | [references/documents.md](references/documents.md) |
 | `ocr_*`: text on screen | [references/ocr.md](references/ocr.md) |
 | Web pages: `browser_*`, element ids, CAPTCHAs | [references/web.md](references/web.md) |
-| Running a flow on a schedule | [references/scheduling.md](references/scheduling.md) |
+| Running a flow on a schedule, or when a file / e-mail arrives (`triggers`, `autoflow watch`) | [references/scheduling.md](references/scheduling.md) |
 | Ready-made example flows to copy from | [references/examples.md](references/examples.md) |
 | Every action and field | [references/actions.md](references/actions.md) |
 

@@ -27,6 +27,9 @@ enum View {
 /// Result of a "Snip image" request: saved file path relative to the flow folder.
 type SnipResult = Result<String, String>;
 
+/// Steps from a finished recording.
+type RecordResult = Result<Vec<Step>, String>;
+
 /// Result of "Pick element": screen position and, when found, a UI Automation selector.
 type PickResult = Result<(i32, i32, Option<String>), String>;
 
@@ -114,6 +117,8 @@ struct Studio {
     breakpoints: HashSet<String>,
     pending: Option<Pending>,
     allow_close: bool,
+    /// A recording in progress: its stop flag and where the steps arrive.
+    recording: Option<(Arc<AtomicBool>, Receiver<RecordResult>)>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -124,6 +129,8 @@ enum RightTab {
 }
 
 const ICON_PNG: &[u8] = include_bytes!("../../../assets/autoflowmate.png");
+/// Banner shown on the splash screen and in About (made by scripts/brand_assets.py).
+const SPLASH_PNG: &[u8] = include_bytes!("../../../assets/splash.png");
 const GITHUB_URL: &str = "https://github.com/SRathinaGiri/AutoFlowMate";
 const SPLASH_SECONDS: f64 = 2.5;
 
@@ -146,6 +153,10 @@ struct SchedUi {
     minutes: u32,
     tasks: Vec<autoflow_core::schedule::TaskInfo>,
     message: Option<(bool, String)>,
+    /// Run the flow's triggers (autoflow watch) instead of the flow.
+    watch: bool,
+    /// The flow has triggers, so the watch option is offered.
+    has_triggers: bool,
 }
 
 const SCHED_KINDS: [&str; 7] = ["Daily", "Weekdays (Mon-Fri)", "Weekly", "Monthly", "Once", "Every N minutes", "At log-on"];
@@ -190,6 +201,7 @@ impl Studio {
             breakpoints: HashSet::new(),
             pending: None,
             allow_close: false,
+            recording: None,
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -334,6 +346,46 @@ impl Studio {
         }
         if let Some(r) = &self.running {
             *r.debug.breakpoints.lock().unwrap() = self.breakpoints.clone();
+        }
+    }
+
+    /// Start recording clicks and keys; the window is minimised until Ctrl+Alt+R.
+    fn start_record(&mut self, ctx: &egui::Context) {
+        if self.recording.is_some() || self.running.is_some() {
+            return;
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = channel();
+        let s2 = stop.clone();
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            // Give the window time to minimise first.
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            let r = autoflow_core::recorder::record(Default::default(), s2, &mut |_| {}).map_err(|e| format!("{e:#}"));
+            let _ = tx.send(r);
+            repaint.request_repaint();
+        });
+        self.recording = Some((stop, rx));
+        self.info(LogKind::Info, "recording: use the app as usual, then press Ctrl+Alt+R to stop");
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    }
+
+    fn poll_record(&mut self, ctx: &egui::Context) {
+        let Some((_, rx)) = &self.recording else { return };
+        let Ok(result) = rx.try_recv() else { return };
+        self.recording = None;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        match result {
+            Ok(steps) if steps.is_empty() => self.info(LogKind::Warn, "nothing was recorded"),
+            Ok(steps) => {
+                let n = steps.len();
+                for s in steps {
+                    self.add_step(s);
+                }
+                self.info(LogKind::Ok, format!("recorded {n} step(s); check them, then Validate"));
+            }
+            Err(e) => self.info(LogKind::Error, format!("recording failed: {e}")),
         }
     }
 
@@ -792,6 +844,19 @@ impl Studio {
             if ui.add_enabled(running, egui::Button::new(RichText::new("■ Stop").color(Color32::from_rgb(220, 80, 80)))).clicked() {
                 self.stop();
             }
+            let recording = self.recording.is_some();
+            if ui
+                .add_enabled(
+                    !running && !recording,
+                    egui::Button::new(RichText::new(if recording { "⏺ Recording…" } else { "⏺ Record" }).color(Color32::from_rgb(220, 70, 70))),
+                )
+                .on_hover_text(
+                    "Record your clicks and typing as steps (inserted at the selection). Press Ctrl+Alt+R to stop. Typing in password boxes is never saved.",
+                )
+                .clicked()
+            {
+                self.start_record(&ctx);
+            }
             ui.checkbox(&mut self.dry_run, "Dry run");
             ui.checkbox(&mut self.minimize_on_run, "Minimize while running");
             ui.separator();
@@ -1221,29 +1286,107 @@ impl Studio {
                 }
             }
         }
+        ui.add_space(10.0);
+        self.triggers_ui(ui);
         ui.add_space(8.0);
         ui.label(format!("File: {}", self.path.as_ref().map(|p| p.display().to_string()).unwrap_or("(not saved)".into())));
     }
 
+    /// Triggers: new files in a folder or new e-mail start the flow while `autoflow watch` runs.
+    fn triggers_ui(&mut self, ui: &mut egui::Ui) {
+        use autoflow_core::watch::{EmailTrigger, FileTrigger, Trigger};
+        ui.label(RichText::new("Triggers").strong());
+        ui.weak("Start this flow automatically for each new file or e-mail. Run `autoflow watch flow.json`, or tick “Watch the flow's triggers” in ⏰ Schedule… (at log-on).");
+        let schema = autoflow_core::flow::json_schema();
+        let help_for = |def: &str| -> HashMap<String, String> {
+            schema
+                .pointer(&format!("/$defs/{def}/properties"))
+                .and_then(Value::as_object)
+                .map(|p| p.iter().filter_map(|(k, x)| x.get("description").and_then(Value::as_str).map(|d| (k.clone(), d.to_string()))).collect())
+                .unwrap_or_default()
+        };
+        let dir = self.flow_dir();
+        let mut remove = None;
+        let mut secret = None;
+        for i in 0..self.flow.triggers.len() {
+            let (title, def) = match &self.flow.triggers[i] {
+                Trigger::File(_) => ("📂 New file", "FileTrigger"),
+                Trigger::Email(_) => ("📨 New e-mail", "EmailTrigger"),
+            };
+            let help = help_for(def);
+            egui::CollapsingHeader::new(RichText::new(format!("{title} (trigger {})", i + 1)).strong()).id_salt(("trigger", i)).default_open(true).show(
+                ui,
+                |ui| {
+                    let mut v = serde_json::to_value(&self.flow.triggers[i]).unwrap_or_default();
+                    let Some(o) = v.as_object_mut() else { return };
+                    let kind = o.remove("kind").unwrap_or_default();
+                    let mut f = form::Form {
+                        help: &help,
+                        json_buffers: &mut self.settings_buf,
+                        action: format!("trigger_{}", kind.as_str().unwrap_or("")),
+                        vars: &[],
+                        flow_dir: dir.as_deref(),
+                        new_var: None,
+                        table: None,
+                        secret_request: None,
+                    };
+                    if f.object(ui, &format!("triggers.{i}"), o) {
+                        o.insert("kind".into(), kind);
+                        if let Ok(t) = serde_json::from_value(v) {
+                            self.flow.triggers[i] = t;
+                            self.dirty = true;
+                        }
+                    }
+                    if let Some(n) = f.secret_request.take() {
+                        secret.get_or_insert(n);
+                    }
+                    if ui.small_button("🗑 Remove trigger").clicked() {
+                        remove = Some(i);
+                    }
+                },
+            );
+        }
+        if let Some(i) = remove {
+            self.flow.triggers.remove(i);
+            self.settings_buf.clear();
+            self.dirty = true;
+        }
+        if let Some(name) = secret {
+            self.secret_dialog = Some(SecretDialog { name, first: String::new(), second: String::new(), error: None });
+        }
+        ui.horizontal(|ui| {
+            if ui.button("➕ File trigger").clicked() {
+                self.flow.triggers.push(Trigger::File(FileTrigger { folder: "inbox".into(), ..FileTrigger::default() }));
+                self.dirty = true;
+            }
+            if ui.button("➕ E-mail trigger").clicked() {
+                self.flow.triggers.push(Trigger::Email(EmailTrigger::default()));
+                self.dirty = true;
+            }
+        });
+    }
+
     // ---------------------------------------------------------------- branding
 
-    fn icon(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
+    /// The banner image (splash and About), loaded once.
+    fn banner(&mut self, ctx: &egui::Context) -> egui::TextureHandle {
         self.icon_tex
             .get_or_insert_with(|| {
-                let img = eframe::icon_data::from_png_bytes(ICON_PNG)
+                let img = eframe::icon_data::from_png_bytes(SPLASH_PNG)
                     .map(|i| egui::ColorImage::from_rgba_unmultiplied([i.width as usize, i.height as usize], &i.rgba))
                     .unwrap_or_else(|_| egui::ColorImage::new([1, 1], vec![Color32::TRANSPARENT]));
-                ctx.load_texture("app_icon", img, egui::TextureOptions::LINEAR)
+                ctx.load_texture("banner", img, egui::TextureOptions::LINEAR)
             })
             .clone()
     }
 
-    /// Icon, name, version, tagline and GitHub link (splash and About).
-    fn brand(ui: &mut egui::Ui, tex: &egui::TextureHandle, icon_px: f32) {
+    /// Banner, version, tagline and GitHub link (splash and About).
+    fn brand(ui: &mut egui::Ui, tex: &egui::TextureHandle, width: f32) {
         ui.vertical_centered(|ui| {
-            ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(icon_px, icon_px)));
+            let [w, h] = tex.size();
+            let img = egui::Image::new(tex).fit_to_exact_size(egui::vec2(width, width * h as f32 / w.max(1) as f32)).corner_radius(10.0);
+            ui.add(img);
             ui.add_space(8.0);
-            ui.label(RichText::new("AutoFlowMate").size(30.0).strong());
             ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).weak());
             ui.add_space(6.0);
             ui.label("Windows desktop & web automation (RPA) — flows as JSON");
@@ -1272,7 +1415,7 @@ impl Studio {
             self.splash_until = None;
             return;
         }
-        let tex = self.icon(ctx);
+        let tex = self.banner(ctx);
         // Dim the editor behind the splash.
         let screen = ctx.content_rect();
         ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::NULL.with("splash_dim"))).rect_filled(
@@ -1282,8 +1425,8 @@ impl Studio {
         );
         egui::Area::new(egui::Id::NULL.with("splash")).order(egui::Order::Tooltip).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(ctx, |ui| {
             egui::Frame::window(ui.style()).inner_margin(egui::Margin::same(28)).corner_radius(16.0).show(ui, |ui| {
-                ui.set_width(460.0);
-                Self::brand(ui, &tex, 128.0);
+                ui.set_width(720.0);
+                Self::brand(ui, &tex, 720.0);
                 ui.add_space(10.0);
                 ui.vertical_centered(|ui| ui.label(RichText::new("click anywhere to start").small().weak()));
             });
@@ -1295,20 +1438,23 @@ impl Studio {
         if !self.show_about {
             return;
         }
-        let tex = self.icon(ctx);
+        let tex = self.banner(ctx);
         let mut open = true;
         egui::Window::new("About AutoFlowMate").open(&mut open).resizable(false).collapsible(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
             ctx,
             |ui| {
-                ui.set_width(440.0);
-                Self::brand(ui, &tex, 96.0);
+                ui.set_width(480.0);
+                Self::brand(ui, &tex, 480.0);
                 ui.separator();
                 ui.label(RichText::new("Shortcuts").strong());
-                ui.label("F5 run · Ctrl+S save · Ctrl+O open · Ctrl+wheel zoom flowchart");
+                ui.label("F5 run / continue · F10 step · F9 breakpoint · Ctrl+Z / Ctrl+Y undo / redo");
+                ui.label("Ctrl+S save · Ctrl+O open · Ctrl+wheel zoom flowchart");
                 ui.label("Abort a run: move the mouse into a screen corner, or press the abort hotkey (default Ctrl+Alt+Q)");
                 ui.add_space(6.0);
                 ui.label(RichText::new("Built with").strong());
-                ui.label(RichText::new("Rust · egui/eframe · enigo · uiautomation · headless_chrome · xcap · arboard").weak());
+                ui.label(RichText::new("Rust · egui/eframe · enigo · uiautomation · headless_chrome · xcap · calamine · rust_xlsxwriter · lettre · imap · ureq · rusqlite · odbc-api · Windows OCR").weak());
+                ui.add_space(6.0);
+                ui.label(RichText::new("MIT licence: free to use, change and share, without warranty.").weak());
             },
         );
         self.show_about = open;
@@ -1337,6 +1483,8 @@ impl Studio {
             minutes: 30,
             tasks: vec![],
             message: None,
+            watch: !self.flow.triggers.is_empty(),
+            has_triggers: !self.flow.triggers.is_empty(),
         };
         refresh_tasks(&mut s, &path);
         self.sched = Some(s);
@@ -1401,6 +1549,10 @@ impl Studio {
                 .small()
                 .weak(),
             );
+            if s.has_triggers {
+                ui.checkbox(&mut s.watch, "Watch the flow's triggers (new files / e-mail)")
+                    .on_hover_text("Runs `autoflow watch`: at log-on it keeps watching all day; on other schedules it checks once each time.");
+            }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if ui.button(RichText::new("Create / replace task").strong()).clicked() {
@@ -1593,7 +1745,7 @@ impl Studio {
             }
             Action::ReadPdf(a) => {
                 let path = self.resolve_path(&a.path).ok_or("set the PDF path first")?;
-                let (text, n) = autoflow_core::data::read_pdf(&path, &txt(&a.pages)).map_err(|e| e.to_string())?;
+                let (text, n) = autoflow_core::data::read_pdf(&path, &txt(&a.pages), a.stream_order).map_err(|e| e.to_string())?;
                 Ok((format!("{} ({n} pages)", path.display()), Value::String(text)))
             }
             _ => Err("not a data step".into()),
@@ -1844,6 +1996,7 @@ impl eframe::App for Studio {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.poll_run(&ctx);
+        self.poll_record(&ctx);
         self.poll_pick();
         self.poll_snip();
         self.poll_web_pick();
@@ -2074,6 +2227,7 @@ fn cat_color(cat: &str) -> Color32 {
         "Email" => Color32::from_rgb(200, 80, 60),
         "Internet" => Color32::from_rgb(70, 130, 200),
         "Database" => Color32::from_rgb(120, 140, 90),
+        "Documents" => Color32::from_rgb(70, 110, 200),
         "AI" => Color32::from_rgb(160, 90, 230),
         "Text" => Color32::from_rgb(190, 150, 90),
         "Date & Math" => Color32::from_rgb(80, 170, 200),
@@ -2118,7 +2272,15 @@ fn create_task(s: &SchedUi, flow: &std::path::Path) -> (bool, String) {
     };
     // The task runs the CLI that sits next to Studio.
     let exe = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("autoflow.exe"))).unwrap_or_default();
-    let spec = TaskSpec { name: schedule::sanitize_name(&s.name), flow: flow.to_path_buf(), trigger, exe, extra_args: vec![], time_limit_minutes: 120 };
+    let spec = TaskSpec {
+        name: schedule::sanitize_name(&s.name),
+        flow: flow.to_path_buf(),
+        trigger,
+        exe,
+        extra_args: vec![],
+        time_limit_minutes: 120,
+        watch: s.watch,
+    };
     match schedule::create(&spec) {
         Ok(()) => (true, format!("scheduled \"{}\": {}", spec.name, spec.trigger.describe())),
         Err(e) => (false, e.to_string()),

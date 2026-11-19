@@ -196,6 +196,11 @@ impl Uia {
     }
 
     /// Describe the element at a screen position (for building selectors).
+    /// Whether the control that has the keyboard focus is a password box.
+    pub fn focused_is_password(&self) -> bool {
+        self.auto.get_focused_element().ok().and_then(|e| e.is_password().ok()).unwrap_or(false)
+    }
+
     pub fn inspect_point(&self, x: i32, y: i32) -> Result<ElementInfo> {
         let e = self.auto.element_from_point(Point::new(x, y)).map_err(|e| anyhow!("{e}"))?;
         let walker = self.auto.get_control_view_walker().map_err(|e| anyhow!("{e}"))?;

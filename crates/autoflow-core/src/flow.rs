@@ -34,6 +34,10 @@ pub struct Flow {
     /// Optional type of each variable (used by the editor and for validation).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub variable_types: std::collections::BTreeMap<String, VarType>,
+    /// What starts the flow automatically while `autoflow watch` runs: new files in a folder,
+    /// new e-mail. Each event runs the flow once with the file / mail in a variable.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub triggers: Vec<crate::watch::Trigger>,
     /// Steps executed in order.
     #[serde(default)]
     pub steps: Vec<Step>,
@@ -53,6 +57,7 @@ impl Default for Flow {
             settings: Settings::default(),
             variables: Map::new(),
             variable_types: Default::default(),
+            triggers: Vec::new(),
             steps: Vec::new(),
         }
     }

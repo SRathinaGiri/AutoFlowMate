@@ -1,4 +1,11 @@
-# AutoFlowMate
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/wordmark-dark.png">
+    <img src="assets/wordmark.png" alt="AutoFlowMate" width="560">
+  </picture>
+</p>
+<p align="center"><b>RPA for a more productive you.</b> Automate your flow, with a friendly mate.</p>
+
 
 A Robotic Process Automation (RPA) tool for Windows, written in Rust. It automates desktop
 applications, web pages, files, Excel, CSV and PDF data, databases, e-mail, web APIs and AI
@@ -16,13 +23,14 @@ an **AI agent** generate them.
 - **AI skill** ([skills/autoflowmate/SKILL.md](skills/autoflowmate/SKILL.md)): teaches agents such
   as Claude Code to author, validate and run flows.
 
-## What it can automate (94 actions)
+## What it can automate (100 actions)
 
 | Category | Actions |
 |---|---|
 | Flow | set_variable, increment, log, wait, if, repeat, while, for_each, break, stop, run_flow, **try** (catch / finally) |
 | File | file_copy, file_move, file_delete, file_write, file_read, file_exists, file_info, dir_create, dir_delete, dir_list |
 | Data | read_excel (sheet or one column), read_csv, read_pdf, list_append, write_csv, write_excel |
+| Documents | read_pdf_table (invoice lines, statements), word_read, word_fill (templates with {{placeholders}}), word_write, zip_create, zip_extract |
 | Text | text_transform, text_replace, text_extract (regular expressions), text_split, text_join |
 | Date & Math | date_calc (format, add, difference, parts), calculate (expressions with rounding) |
 | Database | db_query, db_execute (SQLite built in; SQL Server, MySQL, Access, Excel, TallyPrime and others through ODBC) |
@@ -276,6 +284,33 @@ Windows 10/11, so it is offline and adds almost nothing to the download. See wha
 .\target\release\autoflow.exe ocr --window "Notepad" --find "File"
 ```
 
+## Documents: PDF tables, Word, zip
+
+`read_pdf_table` reads a table from a PDF, such as invoice lines or a bank statement, as records
+(`${item.Amount}`). `word_fill` turns a Word template with `{{customer}}`, `{{total}}` placeholders
+into a finished letter: you design the letter in Word, and the flow fills it for every row of an
+Excel sheet. `word_read` gets the text and tables out of a .docx; `word_write` makes a simple
+report with a table. `zip_create` / `zip_extract` pack and unpack archives. See
+`examples/documents_demo.json`, which runs offline.
+
+## Triggers: run when a file or e-mail arrives
+
+Add `triggers` to a flow and run `autoflow watch flow.json`. Each PDF dropped into a folder, or
+each new e-mail that matches, starts the flow once, with the file path or the mail in a variable.
+Handled files are moved to a `done` or `failed` folder. To watch all day from log-on:
+
+```powershell
+.\target\release\autoflow.exe schedule add examples\invoice_folder_watch.json --when logon --watch
+```
+
+## Recording
+
+`autoflow record new.json`, or **⏺ Record** in Studio, turns your clicks and typing into steps.
+A click on a button or menu that Windows can identify becomes a `ui_click` on that control, so the
+recording still works when the window moves; other clicks keep their screen position. Typing in
+a password box is never recorded: the flow asks for the password when it runs. Press
+**Ctrl+Alt+R** to stop.
+
 ## Sending and reading e-mail
 
 | Action | How it sends |
@@ -393,6 +428,8 @@ examples/              sample flows
 schema/                generated JSON Schema
 skills/autoflowmate/   AI agent skill + generated action reference
 docs/                  architecture and roadmap
+assets/                icon, splash and logo images (assets/brand/ holds the source art;
+                       rebuild with `python scripts/brand_assets.py`)
 ```
 
 Built on [enigo](https://crates.io/crates/enigo) (mouse/keyboard),

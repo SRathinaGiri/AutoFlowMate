@@ -175,6 +175,13 @@ fn path_kind(action: &str, key: &str) -> Option<PathKind> {
         ("read_csv", "path") => PathKind::Open("CSV / text tables", &["csv", "tsv", "txt"]),
         ("read_pdf", "path") => PathKind::Open("PDF", &["pdf"]),
         (_, "save_attachments_to") => PathKind::Folder,
+        ("trigger_file", "folder" | "move_to" | "move_failed_to") => PathKind::Folder,
+        ("read_pdf_table", "path") => PathKind::Open("PDF", &["pdf"]),
+        ("word_read", "path") | ("word_fill", "template") => PathKind::Open("Word", &["docx"]),
+        ("word_fill" | "word_write", "path") => PathKind::Save("Word", &["docx"]),
+        ("zip_create", "path") => PathKind::Save("Zip", &["zip"]),
+        ("zip_extract", "path") => PathKind::Open("Zip", &["zip"]),
+        ("zip_extract", "destination") => PathKind::Folder,
         ("write_csv", "path") => PathKind::Save("CSV", &["csv", "tsv", "txt"]),
         ("write_excel", "path") => PathKind::Save("Excel workbook", &["xlsx"]),
         ("http_request", "save_to") => PathKind::Save("Files", ANY),
@@ -385,12 +392,13 @@ impl Form<'_> {
                 }
                 changed
             }
-            Value::Array(a) if a.iter().all(Value::is_string) && matches!(key, "args" | "labels" | "columns" | "params") => {
+            Value::Array(a) if a.iter().all(Value::is_string) && matches!(key, "args" | "labels" | "columns" | "params" | "sources") => {
                 let buf = self.json_buffers.entry(path.to_string()).or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
                 let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(300.0).hint_text(match key {
                     "labels" => "one label per line, e.g. Fav",
                     "columns" => "one column per line (empty = all)",
                     "params" => "one value per ? placeholder, in order",
+                    "sources" => "one file or folder per line (wildcards allowed)",
                     _ => "one argument per line",
                 }));
                 if resp.changed() {

@@ -1,0 +1,44 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Documents: PDF table to Word letter, report and zip",
+  "description": "Runs offline. Reads the item table from data/invoice_items.pdf, totals the amounts, fills the Word template data/payment_letter_template.docx ({{customer}}, {{total}}...), writes a Word report with the item table, zips both into output/invoice_pack.zip, unpacks the zip again and reads the letter back to check it.",
+  "version": 1,
+  "variables": {
+    "pdf": "data/invoice_items.pdf",
+    "customer": "Hindustan Copper Ltd",
+    "gstin": "33AAACH7409R1Z8",
+    "total": 0
+  },
+  "variable_types": {
+    "pdf": "file",
+    "customer": "text",
+    "gstin": "text",
+    "total": "number"
+  },
+  "steps": [
+    { "id": "table", "action": "read_pdf_table", "path": "${pdf}", "min_columns": 5, "output_var": "items", "count_var": "n",
+      "comment": "min_columns 5 keeps only the table lines; the header row gives the field names Sl, Description, HSN, Qty, Rate, Amount" },
+    { "id": "text", "action": "read_pdf", "path": "${pdf}", "output_var": "pdf_text" },
+    { "id": "inv", "action": "text_extract", "input": "${pdf_text}", "pattern": "Invoice No:\\s*(\\S+)", "group": 1, "output_var": "invoice_no" },
+    {
+      "id": "sum", "action": "for_each", "items": "${items}", "item_var": "item",
+      "steps": [
+        { "id": "clean", "action": "text_replace", "input": "${item.Amount}", "find": ",", "replace_with": "", "output_var": "amount" },
+        { "id": "add", "action": "calculate", "expression": "${total} + ${amount}", "decimals": 2, "output_var": "total" }
+      ]
+    },
+    { "id": "due", "action": "date_calc", "operation": "add", "date": "today", "amount": 15, "unit": "days", "format": "dd-MM-yyyy", "output_var": "due_date" },
+    { "id": "letter", "action": "word_fill", "template": "data/payment_letter_template.docx", "path": "output/payment_letter_${invoice_no}.docx",
+      "values": { "date": "${now:dd-MM-yyyy}", "customer": "${customer}", "gstin": "${gstin}", "invoice_no": "${invoice_no}",
+                  "total": "${total}", "items": "${n}", "due_date": "${due_date}" } },
+    { "id": "report", "action": "word_write", "path": "output/invoice_items_${invoice_no}.docx", "title": "Invoice ${invoice_no}",
+      "text": "Customer: ${customer}\nItems: ${n}\nTotal: Rs. ${total}", "data": "${items}", "columns": ["Sl", "Description", "Qty", "Rate", "Amount"] },
+    { "id": "pack", "action": "zip_create", "path": "output/invoice_pack.zip",
+      "sources": ["output/payment_letter_${invoice_no}.docx", "output/invoice_items_${invoice_no}.docx"], "count_var": "zipped" },
+    { "id": "unpack", "action": "zip_extract", "path": "output/invoice_pack.zip", "destination": "output/invoice_pack", "overwrite": true, "output_var": "files" },
+    { "id": "check", "action": "word_read", "path": "output/invoice_pack/payment_letter_${invoice_no}.docx", "output_var": "letter_text" },
+    { "id": "verify", "action": "if", "condition": { "left": "${letter_text}", "op": "contains", "right": "Rs. ${total}" },
+      "then": [ { "id": "ok", "action": "log", "message": "Letter for ${customer}: invoice ${invoice_no}, Rs. ${total}, due ${due_date}; ${zipped} files zipped" } ],
+      "else": [ { "id": "bad", "action": "stop", "success": false, "message": "the letter does not show the total" } ] }
+  ]
+}

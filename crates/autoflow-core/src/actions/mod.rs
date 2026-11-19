@@ -1057,10 +1057,13 @@ pub struct ReadPdf {
     pub output_var: String,
     /// Variable receiving the number of pages in the PDF (optional).
     pub page_count_var: String,
+    /// Keep the order the text is stored in the PDF instead of reading it line by line from the
+    /// top of the page. Try this for newspaper-style pages with several text columns.
+    pub stream_order: bool,
 }
 impl Default for ReadPdf {
     fn default() -> Self {
-        Self { path: String::new(), pages: String::new(), output_var: "pdf_text".into(), page_count_var: String::new() }
+        Self { path: String::new(), pages: String::new(), output_var: "pdf_text".into(), page_count_var: String::new(), stream_order: false }
     }
 }
 
@@ -1749,6 +1752,116 @@ impl Default for WriteExcel {
     }
 }
 
+// ------------------------------------------------------------------ documents
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ZipCreate {
+    /// The .zip file to create (an existing one is replaced).
+    pub path: String,
+    /// Files and folders to put in it (wildcards allowed, e.g. "output/*.pdf"); folders keep their structure.
+    pub sources: Vec<String>,
+    /// Variable receiving the number of files added (optional).
+    pub count_var: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ZipExtract {
+    /// The .zip file to unpack.
+    pub path: String,
+    /// Folder to unpack into (empty = a folder named after the zip, next to it).
+    pub destination: String,
+    /// Only files matching this pattern, e.g. *.pdf (empty = everything).
+    pub pattern: String,
+    /// Replace files that already exist (otherwise the step fails).
+    pub overwrite: bool,
+    /// Variable receiving the list of unpacked file paths (optional).
+    pub output_var: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WordRead {
+    /// The .docx file to read (old .doc files: save them as .docx first).
+    pub path: String,
+    /// Variable receiving the text, one paragraph per line.
+    pub output_var: String,
+    /// Variable receiving the tables: a list with one entry per table (optional).
+    pub tables_var: String,
+    /// Treat the first row of each table as column names, so rows become records.
+    pub has_header: bool,
+}
+impl Default for WordRead {
+    fn default() -> Self {
+        Self { path: String::new(), output_var: "text".into(), tables_var: String::new(), has_header: true }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WordFill {
+    /// The .docx template containing placeholders such as {{name}} and {{amount}}.
+    pub template: String,
+    /// The .docx file to create (the template is not changed).
+    pub path: String,
+    /// Values for the placeholders, e.g. {"name": "${row.Customer}", "amount": "${total}"}.
+    pub values: Map<String, Value>,
+    /// Leave placeholders that have no value as they are, instead of failing the step.
+    pub missing_ok: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WordWrite {
+    /// The .docx file to create (an existing one is replaced).
+    pub path: String,
+    /// Title at the top (optional).
+    pub title: String,
+    /// Text: one paragraph per line (interpolated).
+    pub text: String,
+    /// A table to add after the text, usually "${rows}" (optional).
+    pub data: Value,
+    /// Columns of the table, in order (empty = every key of the records).
+    pub columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ReadPdfTable {
+    /// The PDF to read. It must contain text (a scanned picture needs OCR: ocr_read with image).
+    pub path: String,
+    /// Pages like 1-3,5 (empty = all).
+    pub pages: String,
+    /// Keep only lines with at least this many cells; this drops headings and notes around the table.
+    pub min_columns: u32,
+    /// Split cells where the space between words is wider than this many times the font size
+    /// (0 = default 0.5). Raise it if cells are split in two; lower it if columns run together.
+    pub gap: f64,
+    /// The first row holds the column names (rows become records).
+    pub has_header: bool,
+    /// Return only this column (name, letter or number) as a plain list.
+    pub column: String,
+    /// Variable receiving the rows.
+    pub output_var: String,
+    /// Variable receiving the number of rows (optional).
+    pub count_var: String,
+}
+impl Default for ReadPdfTable {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            pages: String::new(),
+            min_columns: 2,
+            gap: 0.0,
+            has_header: true,
+            column: String::new(),
+            output_var: "rows".into(),
+            count_var: String::new(),
+        }
+    }
+}
+
 // ------------------------------------------------------------------ database
 
 /// Where the data is. See the db_query description for connection examples.
@@ -1972,6 +2085,13 @@ actions! {
     "Data", "list_append", ListAppend(ListAppend), "Add a value or record to a list variable (collect results).";
     "Data", "write_csv", WriteCsv(WriteCsv), "Write a list of records to a CSV file (Excel-friendly).";
     "Data", "write_excel", WriteExcel(WriteExcel), "Write a list of records to a new Excel workbook.";
+
+    "Documents", "read_pdf_table", ReadPdfTable(ReadPdfTable), "Read a table from a PDF (invoice lines, statements) into records.";
+    "Documents", "word_read", WordRead(WordRead), "Read the text and tables of a Word .docx file.";
+    "Documents", "word_fill", WordFill(WordFill), "Make a .docx from a template, replacing {{placeholders}} (letters, certificates).";
+    "Documents", "word_write", WordWrite(WordWrite), "Create a simple .docx report: title, paragraphs and a table.";
+    "Documents", "zip_create", ZipCreate(ZipCreate), "Put files and folders into a .zip.";
+    "Documents", "zip_extract", ZipExtract(ZipExtract), "Unpack a .zip (all files or those matching a pattern).";
 
     "Text", "text_transform", TextTransform(TextTransform), "Trim, change case, count or URL-encode text.";
     "Text", "text_replace", TextReplace(TextReplace), "Replace text (plain or regular expression).";

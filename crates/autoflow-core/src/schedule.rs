@@ -159,8 +159,10 @@ pub struct TaskSpec {
     pub exe: PathBuf,
     /// Extra arguments for `autoflow run` (e.g. `--var x=1`).
     pub extra_args: Vec<String>,
-    /// Stop the run after this many minutes.
+    /// Stop the run after this many minutes (ignored for a continuous watcher).
     pub time_limit_minutes: u32,
+    /// Run `autoflow watch` (the flow's triggers) instead of `autoflow run`.
+    pub watch: bool,
 }
 
 /// Information about an existing task.
@@ -223,7 +225,17 @@ fn quote(arg: &str) -> String {
 /// The Task Scheduler XML for a spec.
 pub fn task_xml(spec: &TaskSpec) -> String {
     let user = current_user();
-    let mut args = vec!["run".to_string(), quote(&spec.flow.display().to_string()), "--scheduled".into()];
+    // A watcher started at log-on keeps running; on other schedules it checks once per start.
+    let continuous = spec.watch && matches!(spec.trigger, Trigger::Logon { .. });
+    let mut args = if spec.watch {
+        let mut a = vec!["watch".to_string(), quote(&spec.flow.display().to_string()), "--scheduled".into()];
+        if !continuous {
+            a.push("--once".into());
+        }
+        a
+    } else {
+        vec!["run".to_string(), quote(&spec.flow.display().to_string()), "--scheduled".into()]
+    };
     args.extend(spec.extra_args.iter().map(|a| quote(a)));
     let workdir = spec.flow.parent().map(|p| p.display().to_string()).unwrap_or_default();
     format!(
@@ -251,7 +263,7 @@ pub fn task_xml(spec: &TaskSpec) -> String {
     <Enabled>true</Enabled>
     <Hidden>false</Hidden>
     <WakeToRun>false</WakeToRun>
-    <ExecutionTimeLimit>PT{limit}M</ExecutionTimeLimit>
+    <ExecutionTimeLimit>{limit}</ExecutionTimeLimit>
     <Priority>7</Priority>
   </Settings>
   <Actions Context="Author">
@@ -266,7 +278,7 @@ pub fn task_xml(spec: &TaskSpec) -> String {
         desc = esc(&format!("AutoFlowMate | {} | {}", spec.trigger.describe(), spec.flow.display())),
         trigger = spec.trigger.xml(&user),
         user = esc(&user),
-        limit = spec.time_limit_minutes.max(1),
+        limit = if continuous { "PT0S".to_string() } else { format!("PT{}M", spec.time_limit_minutes.max(1)) },
         exe = esc(&spec.exe.display().to_string()),
         args = esc(&args.join(" ")),
         workdir = esc(&workdir),
@@ -391,6 +403,7 @@ mod tests {
             exe: PathBuf::from(r"C:\Program Files\AutoFlowMate\autoflow.exe"),
             extra_args: vec!["--var".into(), "who=A B".into()],
             time_limit_minutes: 60,
+            watch: false,
         };
         let x = task_xml(&spec);
         assert!(x.contains("<Monday/><Tuesday/><Wednesday/><Thursday/><Friday/>"));

@@ -87,6 +87,19 @@
 - **OCR** (`ocr.rs`): Windows.Media.Ocr through the `windows` crate (WinRT). The capture is
   scaled up (default 2x), passed as a BGRA `SoftwareBitmap`, and word boxes are mapped back to
   screen coordinates. Multi-word search narrows the box to the matched characters.
+- **Documents** (`documents.rs`): zip via `zip` (zip-slip protected), Word by editing the
+  .docx XML directly (`quick-xml` for reading; template placeholders split across runs are joined
+  into the first run), a hand-built minimal .docx for reports. PDF tables use pdf-extract's
+  `OutputDev` to collect characters with positions, group them into lines by baseline and split
+  cells on gaps relative to the font size. `read_pdf` uses the same lines, since pdf-extract's own
+  text inserts spaces when a PDF's glyph widths are missing.
+- **Triggers** (`watch.rs`): flows carry `triggers`; `autoflow watch` polls folders (new or
+  changed files that have settled and are not locked) and mailboxes (unread, then marked read),
+  and runs the flow per event with an override variable. Scheduled with a log-on task and no
+  time limit, or `--once` on interval schedules.
+- **Recorder** (`recorder.rs`): `WH_KEYBOARD_LL` / `WH_MOUSE_LL` hooks on their own thread
+  (injected input ignored) feed a `Converter` that looks clicks up with UI Automation and builds
+  steps; password boxes are detected through UIA's IsPassword and never recorded.
 - **Errors and debugging** (`engine.rs`): `try` catches step failures (but never cancellation)
   and always runs `finally`. A shared `Debugger` (breakpoint ids, a stepping flag, a condvar)
   makes `run_step` emit `Event::Paused` with the variables, typed passwords masked, and wait
@@ -114,8 +127,8 @@ The GUI form, palette and CLI pick up the action with no further changes.
 |---|---|---|
 | Web | XPath targets, multiple tabs, file upload/download, cookies, attach to the user's logged-in browser | `headless_chrome` CDP calls |
 | Vision | Multi-scale image search | pyramid matcher |
-| Recorder | Record mouse/keyboard/UIA events into steps | low-level hooks (`rdev`) plus `inspect_point` per click |
-| Documents | Word read/write, PDF tables, zip/unzip | `docx-rs`, `zip` |
-| Triggers | File-arrival / folder-watch trigger (`autoflow watch`, started at log-on by a scheduled task), e-mail trigger | polling or `notify` crate |
+| Recorder | Record web pages (browser events into `browser_*` steps) | CDP event listeners |
+| Documents | Excel formatting, PDF creation | `rust_xlsxwriter` formats, `printpdf` |
+| Triggers | Window-appears and hotkey triggers | UIA events, `RegisterHotKey` |
 | Agents | MCP server exposing run/validate/inspect/windows as tools | `rmcp` |
 | Studio | Edit variable values while paused, run from the selected step | egui |

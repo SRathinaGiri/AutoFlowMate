@@ -354,9 +354,10 @@ Read the text of a PDF (all or some pages) into a variable.
 | `pages` | `""` | Pages to read, e.g. `1`, `2-4`, `1,3,5-`; empty = all pages. |
 | `output_var` | `"pdf_text"` | Variable receiving the text (pages separated by a blank line). |
 | `page_count_var` | `""` | Variable receiving the number of pages in the PDF (optional). |
+| `stream_order` | `false` | Keep the order the text is stored in the PDF instead of reading it line by line from the top of the page. Try this for newspaper-style pages with several text columns. |
 
 ```json
-{"action":"read_pdf","path":"","pages":"","output_var":"pdf_text","page_count_var":""}
+{"action":"read_pdf","path":"","pages":"","output_var":"pdf_text","page_count_var":"","stream_order":false}
 ```
 
 ### `list_append`
@@ -409,6 +410,103 @@ Write a list of records to a new Excel workbook.
 
 ```json
 {"action":"write_excel","path":"","sheet":"Sheet1","data":"","columns":[],"header":true,"autofit":true,"allow_formulas":false,"count_var":""}
+```
+
+## Documents
+
+### `read_pdf_table`
+
+Read a table from a PDF (invoice lines, statements) into records.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | The PDF to read. It must contain text (a scanned picture needs OCR: ocr_read with image). |
+| `pages` | `""` | Pages like 1-3,5 (empty = all). |
+| `min_columns` | `2` | Keep only lines with at least this many cells; this drops headings and notes around the table. |
+| `gap` | `0.0` | Split cells where the space between words is wider than this many times the font size (0 = default 0.5). Raise it if cells are split in two; lower it if columns run together. |
+| `has_header` | `true` | The first row holds the column names (rows become records). |
+| `column` | `""` | Return only this column (name, letter or number) as a plain list. |
+| `output_var` | `"rows"` | Variable receiving the rows. |
+| `count_var` | `""` | Variable receiving the number of rows (optional). |
+
+```json
+{"action":"read_pdf_table","path":"","pages":"","min_columns":2,"gap":0.0,"has_header":true,"column":"","output_var":"rows","count_var":""}
+```
+
+### `word_read`
+
+Read the text and tables of a Word .docx file.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | The .docx file to read (old .doc files: save them as .docx first). |
+| `output_var` | `"text"` | Variable receiving the text, one paragraph per line. |
+| `tables_var` | `""` | Variable receiving the tables: a list with one entry per table (optional). |
+| `has_header` | `true` | Treat the first row of each table as column names, so rows become records. |
+
+```json
+{"action":"word_read","path":"","output_var":"text","tables_var":"","has_header":true}
+```
+
+### `word_fill`
+
+Make a .docx from a template, replacing {{placeholders}} (letters, certificates).
+
+| field | default | description |
+|---|---|---|
+| `template` | `""` | The .docx template containing placeholders such as {{name}} and {{amount}}. |
+| `path` | `""` | The .docx file to create (the template is not changed). |
+| `values` | `{}` | Values for the placeholders, e.g. {"name": "${row.Customer}", "amount": "${total}"}. |
+| `missing_ok` | `false` | Leave placeholders that have no value as they are, instead of failing the step. |
+
+```json
+{"action":"word_fill","template":"","path":"","values":{},"missing_ok":false}
+```
+
+### `word_write`
+
+Create a simple .docx report: title, paragraphs and a table.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | The .docx file to create (an existing one is replaced). |
+| `title` | `""` | Title at the top (optional). |
+| `text` | `""` | Text: one paragraph per line (interpolated). |
+| `data` | `null` | A table to add after the text, usually "${rows}" (optional). |
+| `columns` | `[]` | Columns of the table, in order (empty = every key of the records). |
+
+```json
+{"action":"word_write","path":"","title":"","text":"","data":null,"columns":[]}
+```
+
+### `zip_create`
+
+Put files and folders into a .zip.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | The .zip file to create (an existing one is replaced). |
+| `sources` | `[]` | Files and folders to put in it (wildcards allowed, e.g. "output/*.pdf"); folders keep their structure. |
+| `count_var` | `""` | Variable receiving the number of files added (optional). |
+
+```json
+{"action":"zip_create","path":"","sources":[],"count_var":""}
+```
+
+### `zip_extract`
+
+Unpack a .zip (all files or those matching a pattern).
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | The .zip file to unpack. |
+| `destination` | `""` | Folder to unpack into (empty = a folder named after the zip, next to it). |
+| `pattern` | `""` | Only files matching this pattern, e.g. *.pdf (empty = everything). |
+| `overwrite` | `false` | Replace files that already exist (otherwise the step fails). |
+| `output_var` | `""` | Variable receiving the list of unpacked file paths (optional). |
+
+```json
+{"action":"zip_extract","path":"","destination":"","pattern":"","overwrite":false,"output_var":""}
 ```
 
 ## Text

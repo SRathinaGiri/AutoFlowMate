@@ -112,6 +112,10 @@ fn similar(a: &str, b: &str) -> bool {
 
 /// Semantic checks on the parsed flow.
 fn check_flow(flow: &Flow, issues: &mut Vec<Issue>) {
+    for m in crate::watch::check(&flow.triggers) {
+        let (loc, msg) = m.split_once(": ").unwrap_or(("triggers", &m));
+        issues.push(err(loc, msg.to_string()));
+    }
     let s = &flow.settings;
     if !s.abort_hotkey.trim().is_empty() {
         if let Err(e) = crate::failsafe::parse_hotkey(&s.abort_hotkey) {
@@ -143,6 +147,12 @@ fn check_flow(flow: &Flow, issues: &mut Vec<Issue>) {
     let mut ids = HashSet::new();
     let mut defined: HashSet<String> = flow.variables.keys().cloned().collect();
     defined.insert("last_error".into());
+    for t in &flow.triggers {
+        defined.insert(match t {
+            crate::watch::Trigger::File(f) => f.variable.clone(),
+            crate::watch::Trigger::Email(m) => m.variable.clone(),
+        });
+    }
     collect_defined(&flow.steps, &mut defined);
     walk(&flow.steps, "steps", 0, &mut ids, &defined, issues);
 }
@@ -152,6 +162,16 @@ fn check_flow(flow: &Flow, issues: &mut Vec<Issue>) {
 /// Built-ins are not included (see `vars::BUILTINS`).
 pub fn defined_variables(flow: &Flow) -> Vec<String> {
     let mut out: Vec<String> = flow.variables.keys().cloned().collect();
+    // Variables a trigger sets when the watcher starts the flow.
+    for t in &flow.triggers {
+        let v = match t {
+            crate::watch::Trigger::File(f) => &f.variable,
+            crate::watch::Trigger::Email(m) => &m.variable,
+        };
+        if !v.trim().is_empty() && !out.iter().any(|x| x == v.trim()) {
+            out.push(v.trim().to_string());
+        }
+    }
     fn walk(steps: &[Step], out: &mut Vec<String>) {
         for s in steps {
             let mut add = |n: &str| {
@@ -163,6 +183,7 @@ pub fn defined_variables(flow: &Flow) -> Vec<String> {
             match &s.action {
                 Action::SetVariable(a) => add(&a.name),
                 Action::Increment(a) => add(&a.name),
+                Action::ListAppend(a) => add(&a.name),
                 _ => {}
             }
             if let Ok(Value::Object(o)) = serde_json::to_value(&s.action) {
@@ -190,6 +211,9 @@ fn collect_defined(steps: &[Step], out: &mut HashSet<String>) {
                 out.insert(a.name.clone());
             }
             Action::Increment(a) => {
+                out.insert(a.name.clone());
+            }
+            Action::ListAppend(a) => {
                 out.insert(a.name.clone());
             }
             _ => {}
@@ -409,6 +433,36 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             need(issues, "output_var", &x.output_var);
         }
         Action::ListAppend(x) => need(issues, "name", &x.name),
+        Action::ReadPdfTable(x) => {
+            need(issues, "path", &x.path);
+            need(issues, "output_var", &x.output_var);
+            if !x.pages.contains("${") {
+                if let Err(e) = crate::documents::parse_pages(&x.pages) {
+                    issues.push(err(loc, format!("read_pdf_table: {e}")));
+                }
+            }
+        }
+        Action::WordRead(x) => {
+            need(issues, "path", &x.path);
+            if x.path.to_ascii_lowercase().ends_with(".doc") {
+                issues.push(err(loc, "word_read: old .doc files are not supported; save the file as .docx".into()));
+            }
+        }
+        Action::WordFill(x) => {
+            need(issues, "template", &x.template);
+            need(issues, "path", &x.path);
+            if x.values.is_empty() {
+                issues.push(warn(loc, "word_fill: no values given for the {{placeholders}}".into()));
+            }
+        }
+        Action::WordWrite(x) => need(issues, "path", &x.path),
+        Action::ZipCreate(x) => {
+            need(issues, "path", &x.path);
+            if x.sources.iter().all(|s| s.trim().is_empty()) {
+                issues.push(err(loc, "zip_create: list the files or folders to zip in sources".into()));
+            }
+        }
+        Action::ZipExtract(x) => need(issues, "path", &x.path),
         Action::DbQuery(x) => {
             need(issues, "connection", &x.db.connection);
             need(issues, "sql", &x.sql);

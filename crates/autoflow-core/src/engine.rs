@@ -781,7 +781,7 @@ impl<'a> Context<'a> {
             }
             Action::ReadPdf(a) => {
                 let p = self.path(&a.path)?;
-                let (text, pages) = crate::data::read_pdf(&p, &self.text(&a.pages)?)?;
+                let (text, pages) = crate::data::read_pdf(&p, &self.text(&a.pages)?, a.stream_order)?;
                 self.log(LogLevel::Info, format!("read {} characters from {} ({pages} pages)", text.chars().count(), p.display()));
                 self.set_var(&a.output_var, json!(text))?;
                 self.set_var(&a.page_count_var, json!(pages))?;
@@ -824,6 +824,106 @@ impl<'a> Context<'a> {
                     self.log(LogLevel::Info, format!("wrote {n} row(s) to {} [{sheet}]", p.display()));
                 }
                 self.set_var(&a.count_var, json!(table.rows.len()))?;
+            }
+
+            // ---------------- documents
+            Action::ReadPdfTable(a) => {
+                let p = self.path(&a.path)?;
+                let pages = crate::documents::parse_pages(&self.text(&a.pages)?)?;
+                let raw = crate::documents::pdf_table(&p, &pages, a.gap, a.min_columns as usize)?;
+                let v = crate::data::shape(raw, a.has_header, &self.text(&a.column)?, true)?;
+                let n = v.as_array().map(Vec::len).unwrap_or(0);
+                self.log(LogLevel::Info, format!("read {n} table row(s) from {}", p.display()));
+                self.set_var(&a.count_var, json!(n))?;
+                self.set_var(&a.output_var, v)?;
+            }
+            Action::WordRead(a) => {
+                let p = self.path(&a.path)?;
+                let (text, tables) = crate::documents::word_read(&p)?;
+                let mut shaped = vec![];
+                for t in tables {
+                    let rows = t.into_iter().map(|r| r.into_iter().map(Value::String).collect()).collect();
+                    shaped.push(crate::data::shape(rows, a.has_header, "", true)?);
+                }
+                self.log(LogLevel::Info, format!("read {} characters and {} table(s) from {}", text.chars().count(), shaped.len(), p.display()));
+                self.set_var(&a.tables_var, Value::Array(shaped))?;
+                self.set_var(&a.output_var, json!(text))?;
+            }
+            Action::WordFill(a) => {
+                let (tpl, out) = (self.path(&a.template)?, self.path(&a.path)?);
+                if tpl == out {
+                    bail!("path must differ from the template, so the template stays reusable");
+                }
+                let mut values = Map::new();
+                for (k, v) in &a.values {
+                    values.insert(k.clone(), self.vars.resolve_value(v)?);
+                }
+                if !self.dry(format!("fill {} into {}", tpl.display(), out.display())) {
+                    let missing = crate::documents::word_fill(&tpl, &out, &values)?;
+                    if !missing.is_empty() {
+                        let list = missing.iter().map(|m| format!("{{{{{m}}}}}")).collect::<Vec<_>>().join(", ");
+                        if a.missing_ok {
+                            self.log(LogLevel::Warn, format!("no value for {list}; left as is"));
+                        } else {
+                            std::fs::remove_file(&out).ok();
+                            bail!("no value for {list} (add them to values, or set missing_ok)");
+                        }
+                    }
+                    self.log(LogLevel::Info, format!("wrote {}", out.display()));
+                }
+            }
+            Action::WordWrite(a) => {
+                let p = self.path(&a.path)?;
+                let data = self.vars.resolve_value(&a.data)?;
+                let table = match &data {
+                    Value::Null => None,
+                    Value::String(s) if s.trim().is_empty() => None,
+                    d => {
+                        let cols: Vec<String> = a.columns.iter().map(|c| self.text(c)).collect::<Result<_>>()?;
+                        Some(crate::data::to_table(d, &cols)?)
+                    }
+                };
+                let (title, text) = (self.text(&a.title)?, self.text(&a.text)?);
+                if !self.dry(format!("write {}", p.display())) {
+                    crate::documents::word_write(&p, &title, &text, table.as_ref())?;
+                    self.log(LogLevel::Info, format!("wrote {}", p.display()));
+                }
+            }
+            Action::ZipCreate(a) => {
+                let zip = self.path(&a.path)?;
+                let mut sources = vec![];
+                for s in &a.sources {
+                    let t = self.text(s)?;
+                    if t.trim().is_empty() {
+                        continue;
+                    }
+                    if t.contains('*') || t.contains('?') {
+                        let found = self.expand(s)?;
+                        if found.is_empty() {
+                            bail!("nothing matches {t}");
+                        }
+                        sources.extend(found);
+                    } else {
+                        sources.push(self.path(s)?);
+                    }
+                }
+                if !self.dry(format!("zip {} item(s) into {}", sources.len(), zip.display())) {
+                    let n = crate::documents::zip_create(&zip, &sources)?;
+                    self.log(LogLevel::Info, format!("zipped {n} file(s) into {}", zip.display()));
+                    self.set_var(&a.count_var, json!(n))?;
+                }
+            }
+            Action::ZipExtract(a) => {
+                let zip = self.path(&a.path)?;
+                let dest = match self.text(&a.destination)? {
+                    d if d.trim().is_empty() => zip.with_extension(""),
+                    _ => self.path(&a.destination)?,
+                };
+                if !self.dry(format!("unzip {} into {}", zip.display(), dest.display())) {
+                    let files = crate::documents::zip_extract(&zip, &dest, &self.text(&a.pattern)?, a.overwrite)?;
+                    self.log(LogLevel::Info, format!("unzipped {} file(s) into {}", files.len(), dest.display()));
+                    self.set_var(&a.output_var, json!(files))?;
+                }
             }
 
             // ---------------- database

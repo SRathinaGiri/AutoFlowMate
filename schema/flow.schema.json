@@ -51,6 +51,13 @@
         "$ref": "#/$defs/VarType"
       }
     },
+    "triggers": {
+      "description": "What starts the flow automatically while `autoflow watch` runs: new files in a folder,\nnew e-mail. Each event runs the flow once with the file / mail in a variable.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Trigger"
+      }
+    },
     "steps": {
       "description": "Steps executed in order.",
       "type": "array",
@@ -164,6 +171,171 @@
           "const": "list"
         }
       ]
+    },
+    "Trigger": {
+      "description": "Something that starts the flow.",
+      "oneOf": [
+        {
+          "description": "A new (or changed) file in a folder.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "file"
+            }
+          },
+          "$ref": "#/$defs/FileTrigger",
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "New unread e-mail (IMAP or Outlook).",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "email"
+            }
+          },
+          "$ref": "#/$defs/EmailTrigger",
+          "required": [
+            "kind"
+          ]
+        }
+      ]
+    },
+    "FileTrigger": {
+      "type": "object",
+      "properties": {
+        "folder": {
+          "description": "Folder to watch (relative paths are relative to the flow's folder).",
+          "type": "string",
+          "default": ""
+        },
+        "pattern": {
+          "description": "Which files, e.g. *.pdf or Invoice_*.xlsx.",
+          "type": "string",
+          "default": "*"
+        },
+        "recursive": {
+          "description": "Also watch sub-folders.",
+          "type": "boolean",
+          "default": false
+        },
+        "variable": {
+          "description": "Variable that receives the file's full path when the flow runs.",
+          "type": "string",
+          "default": "file"
+        },
+        "include_existing": {
+          "description": "Also run for files that are already there when watching starts.",
+          "type": "boolean",
+          "default": false
+        },
+        "settle_ms": {
+          "description": "Wait until the file has not changed for this long (it may still be copying).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 2000
+        },
+        "move_to": {
+          "description": "After a successful run, move the file into this folder (e.g. \"done\"); empty = leave it.",
+          "type": "string",
+          "default": ""
+        },
+        "move_failed_to": {
+          "description": "After a failed run, move the file into this folder (e.g. \"failed\"); empty = leave it.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "EmailTrigger": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "description": "\"imap\" (Gmail, Zoho, any IMAP server) or \"outlook\" (the Outlook desktop app).",
+          "type": "string",
+          "default": "imap"
+        },
+        "provider": {
+          "description": "IMAP: gmail, outlook365, yahoo, zoho, zoho.in, or custom with imap_host.",
+          "type": "string",
+          "default": "gmail"
+        },
+        "imap_host": {
+          "description": "IMAP server; empty = the provider's.",
+          "type": "string",
+          "default": ""
+        },
+        "imap_port": {
+          "description": "IMAP port (0 = 993).",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
+        },
+        "username": {
+          "description": "IMAP login, usually the e-mail address.",
+          "type": "string",
+          "default": ""
+        },
+        "password_secret": {
+          "description": "Name of the password stored with `autoflow secret set NAME` (Gmail: an App Password).",
+          "type": "string",
+          "default": ""
+        },
+        "account": {
+          "description": "Outlook: account / mailbox name (empty = default).",
+          "type": "string",
+          "default": ""
+        },
+        "folder": {
+          "description": "Folder to watch (IMAP: INBOX; Outlook: Inbox or Inbox/Sub).",
+          "type": "string",
+          "default": ""
+        },
+        "from": {
+          "description": "Only mail from this sender (address or part of it).",
+          "type": "string",
+          "default": ""
+        },
+        "subject_contains": {
+          "description": "Only mail whose subject contains this text.",
+          "type": "string",
+          "default": ""
+        },
+        "save_attachments_to": {
+          "description": "Save attachments here (each mail's saved paths are in mail.attachments).",
+          "type": "string",
+          "default": ""
+        },
+        "attachment_filter": {
+          "description": "Only attachments matching this pattern, e.g. *.pdf.",
+          "type": "string",
+          "default": ""
+        },
+        "move_to": {
+          "description": "Move handled mail to this folder afterwards (it is always marked read).",
+          "type": "string",
+          "default": ""
+        },
+        "every_minutes": {
+          "description": "Check every this many minutes.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 5
+        },
+        "variable": {
+          "description": "Variable that receives the mail record {from, subject, date, body, attachments, ...}.",
+          "type": "string",
+          "default": "mail"
+        }
+      }
     },
     "Step": {
       "description": "One step of a flow: common settings plus the action (`\"action\": \"...\"`)\nand the action's own fields, all at the same JSON level.",
@@ -599,6 +771,90 @@
             }
           },
           "$ref": "#/$defs/WriteExcel",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Read a table from a PDF (invoice lines, statements) into records.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "read_pdf_table"
+            }
+          },
+          "$ref": "#/$defs/ReadPdfTable",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Read the text and tables of a Word .docx file.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "word_read"
+            }
+          },
+          "$ref": "#/$defs/WordRead",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Make a .docx from a template, replacing {{placeholders}} (letters, certificates).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "word_fill"
+            }
+          },
+          "$ref": "#/$defs/WordFill",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Create a simple .docx report: title, paragraphs and a table.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "word_write"
+            }
+          },
+          "$ref": "#/$defs/WordWrite",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Put files and folders into a .zip.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "zip_create"
+            }
+          },
+          "$ref": "#/$defs/ZipCreate",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Unpack a .zip (all files or those matching a pattern).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "zip_extract"
+            }
+          },
+          "$ref": "#/$defs/ZipExtract",
           "required": [
             "action"
           ]
@@ -2135,6 +2391,11 @@
           "description": "Variable receiving the number of pages in the PDF (optional).",
           "type": "string",
           "default": ""
+        },
+        "stream_order": {
+          "description": "Keep the order the text is stored in the PDF instead of reading it line by line from the\ntop of the page. Try this for newspaper-style pages with several text columns.",
+          "type": "boolean",
+          "default": false
         }
       }
     },
@@ -2247,6 +2508,190 @@
         },
         "count_var": {
           "description": "Variable receiving the number of rows written (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "ReadPdfTable": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The PDF to read. It must contain text (a scanned picture needs OCR: ocr_read with image).",
+          "type": "string",
+          "default": ""
+        },
+        "pages": {
+          "description": "Pages like 1-3,5 (empty = all).",
+          "type": "string",
+          "default": ""
+        },
+        "min_columns": {
+          "description": "Keep only lines with at least this many cells; this drops headings and notes around the table.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 2
+        },
+        "gap": {
+          "description": "Split cells where the space between words is wider than this many times the font size\n(0 = default 0.5). Raise it if cells are split in two; lower it if columns run together.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "has_header": {
+          "description": "The first row holds the column names (rows become records).",
+          "type": "boolean",
+          "default": true
+        },
+        "column": {
+          "description": "Return only this column (name, letter or number) as a plain list.",
+          "type": "string",
+          "default": ""
+        },
+        "output_var": {
+          "description": "Variable receiving the rows.",
+          "type": "string",
+          "default": "rows"
+        },
+        "count_var": {
+          "description": "Variable receiving the number of rows (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "WordRead": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The .docx file to read (old .doc files: save them as .docx first).",
+          "type": "string",
+          "default": ""
+        },
+        "output_var": {
+          "description": "Variable receiving the text, one paragraph per line.",
+          "type": "string",
+          "default": "text"
+        },
+        "tables_var": {
+          "description": "Variable receiving the tables: a list with one entry per table (optional).",
+          "type": "string",
+          "default": ""
+        },
+        "has_header": {
+          "description": "Treat the first row of each table as column names, so rows become records.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "WordFill": {
+      "type": "object",
+      "properties": {
+        "template": {
+          "description": "The .docx template containing placeholders such as {{name}} and {{amount}}.",
+          "type": "string",
+          "default": ""
+        },
+        "path": {
+          "description": "The .docx file to create (the template is not changed).",
+          "type": "string",
+          "default": ""
+        },
+        "values": {
+          "description": "Values for the placeholders, e.g. {\"name\": \"${row.Customer}\", \"amount\": \"${total}\"}.",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "missing_ok": {
+          "description": "Leave placeholders that have no value as they are, instead of failing the step.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "WordWrite": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The .docx file to create (an existing one is replaced).",
+          "type": "string",
+          "default": ""
+        },
+        "title": {
+          "description": "Title at the top (optional).",
+          "type": "string",
+          "default": ""
+        },
+        "text": {
+          "description": "Text: one paragraph per line (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "data": {
+          "description": "A table to add after the text, usually \"${rows}\" (optional).",
+          "default": null
+        },
+        "columns": {
+          "description": "Columns of the table, in order (empty = every key of the records).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
+    "ZipCreate": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The .zip file to create (an existing one is replaced).",
+          "type": "string",
+          "default": ""
+        },
+        "sources": {
+          "description": "Files and folders to put in it (wildcards allowed, e.g. \"output/*.pdf\"); folders keep their structure.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "count_var": {
+          "description": "Variable receiving the number of files added (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "ZipExtract": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The .zip file to unpack.",
+          "type": "string",
+          "default": ""
+        },
+        "destination": {
+          "description": "Folder to unpack into (empty = a folder named after the zip, next to it).",
+          "type": "string",
+          "default": ""
+        },
+        "pattern": {
+          "description": "Only files matching this pattern, e.g. *.pdf (empty = everything).",
+          "type": "string",
+          "default": ""
+        },
+        "overwrite": {
+          "description": "Replace files that already exist (otherwise the step fails).",
+          "type": "boolean",
+          "default": false
+        },
+        "output_var": {
+          "description": "Variable receiving the list of unpacked file paths (optional).",
           "type": "string",
           "default": ""
         }

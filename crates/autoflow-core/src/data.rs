@@ -203,7 +203,12 @@ pub fn headers(rows: &[Vec<Value>]) -> Vec<String> {
 }
 
 /// Text of a PDF; `pages` like "1-3,5" (empty = all). Returns (text, page count).
-pub fn read_pdf(path: &Path, pages: &str) -> Result<(String, usize)> {
+/// Text of a PDF: line by line from the top of each page (default), or in the order the text is
+/// stored in the file (`stream_order`). Pages are separated by a blank line.
+pub fn read_pdf(path: &Path, pages: &str, stream_order: bool) -> Result<(String, usize)> {
+    if !stream_order {
+        return crate::documents::pdf_text(path, &crate::documents::parse_pages(pages)?);
+    }
     let all = pdf_extract::extract_text_by_pages(path).map_err(|e| anyhow!("cannot read PDF {}: {e}", path.display()))?;
     let n = all.len();
     let wanted: Vec<usize> = if pages.trim().is_empty() {

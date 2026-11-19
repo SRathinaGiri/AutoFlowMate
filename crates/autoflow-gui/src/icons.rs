@@ -41,6 +41,13 @@ pub fn action_icon(name: &str) -> &'static str {
         "calculate" => "🧮",
         "write_csv" => "💾",
         "write_excel" => "📗",
+        // Documents
+        "read_pdf_table" => "📑",
+        "word_read" => "📘",
+        "word_fill" => "📝",
+        "word_write" => "📄",
+        "zip_create" => "🗜",
+        "zip_extract" => "📤",
         // Database
         "db_query" => "🗄",
         "db_execute" => "🛢",
@@ -134,6 +141,7 @@ pub fn category_icon(cat: &str) -> &'static str {
         "Email" => "✉",
         "Internet" => "📡",
         "Database" => "🗄",
+        "Documents" => "📘",
         "AI" => "🤖",
         "Text" => "🔤",
         "Date & Math" => "🧮",
