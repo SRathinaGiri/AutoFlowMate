@@ -434,10 +434,12 @@ Move the mouse pointer.
 |---|---|---|
 | `x` | `0` | Screen X in pixels (or offset when relative). |
 | `y` | `0` | Screen Y in pixels (or offset when relative). |
-| `relative` | `false` | Move relative to the current position. |
+| `relative` | `false` | Move relative to the current position (PyAutoGUI moveRel). |
+| `duration_ms` | `null` | Movement time in ms; null = settings.mouse_move_ms (0 = instant). |
+| `tween` | `"linear"` | Easing curve used when duration_ms > 0. |
 
 ```json
-{"action":"mouse_move","x":0,"y":0,"relative":false}
+{"action":"mouse_move","x":0,"y":0,"relative":false,"duration_ms":null,"tween":"linear"}
 ```
 
 ### `mouse_click`
@@ -449,10 +451,13 @@ Click (optionally at a position).
 | `x` | `null` | Screen X; omit (null) to click at the current position. |
 | `y` | `null` | Screen Y; omit (null) to click at the current position. |
 | `button` | `"left"` | left, right or middle. |
-| `clicks` | `1` | 1 = single click, 2 = double click. |
+| `clicks` | `1` | 1 = single click, 2 = double click, 3 = triple click. |
+| `interval_ms` | `60` | Pause between clicks in ms. |
+| `duration_ms` | `null` | Time to move to (x, y) in ms; null = settings.mouse_move_ms. |
+| `tween` | `"linear"` | Easing curve for the move. |
 
 ```json
-{"action":"mouse_click","x":null,"y":null,"button":"left","clicks":1}
+{"action":"mouse_click","x":null,"y":null,"button":"left","clicks":1,"interval_ms":60,"duration_ms":null,"tween":"linear"}
 ```
 
 ### `mouse_scroll`
@@ -462,10 +467,12 @@ Scroll the mouse wheel.
 | field | default | description |
 |---|---|---|
 | `amount` | `3` | Wheel notches; positive = down/right, negative = up/left. |
-| `horizontal` | `false` | Scroll sideways instead of up/down. |
+| `horizontal` | `false` | Scroll sideways instead of up/down (PyAutoGUI hscroll). |
+| `x` | `null` | Screen X to scroll at; null = current position. |
+| `y` | `null` | Screen Y to scroll at; null = current position. |
 
 ```json
-{"action":"mouse_scroll","amount":3,"horizontal":false}
+{"action":"mouse_scroll","amount":3,"horizontal":false,"x":null,"y":null}
 ```
 
 ### `mouse_drag`
@@ -474,14 +481,45 @@ Drag from one point to another.
 
 | field | default | description |
 |---|---|---|
-| `from_x` | `0` | Start X. |
-| `from_y` | `0` | Start Y. |
-| `to_x` | `0` | End X. |
-| `to_y` | `0` | End Y. |
+| `from_x` | `0` | Start X; null = current position. |
+| `from_y` | `0` | Start Y; null = current position. |
+| `to_x` | `0` | End X (or offset when relative). |
+| `to_y` | `0` | End Y (or offset when relative). |
+| `relative` | `false` | Treat to_x/to_y as offsets from the start (PyAutoGUI dragRel). |
 | `button` | `"left"` | Button held during the drag. |
+| `duration_ms` | `500` | Drag time in ms (some apps need a slow drag to register it). |
+| `tween` | `"ease_in_out_quad"` | Easing curve for the drag. |
 
 ```json
-{"action":"mouse_drag","from_x":0,"from_y":0,"to_x":0,"to_y":0,"button":"left"}
+{"action":"mouse_drag","from_x":0,"from_y":0,"to_x":0,"to_y":0,"relative":false,"button":"left","duration_ms":500,"tween":"ease_in_out_quad"}
+```
+
+### `mouse_down`
+
+Press and hold a mouse button.
+
+| field | default | description |
+|---|---|---|
+| `x` | `null` | Screen X; null = current position. |
+| `y` | `null` | Screen Y; null = current position. |
+| `button` | `"left"` | left, right or middle. |
+
+```json
+{"action":"mouse_down","x":null,"y":null,"button":"left"}
+```
+
+### `mouse_up`
+
+Release a held mouse button.
+
+| field | default | description |
+|---|---|---|
+| `x` | `null` | Screen X; null = current position. |
+| `y` | `null` | Screen Y; null = current position. |
+| `button` | `"left"` | left, right or middle. |
+
+```json
+{"action":"mouse_up","x":null,"y":null,"button":"left"}
 ```
 
 ### `mouse_position`
@@ -505,12 +543,12 @@ Type text into the focused control.
 
 | field | default | description |
 |---|---|---|
-| `text` | `""` | Text to type (interpolated). `\n` presses Enter. |
-| `delay_ms` | `20` | Delay between characters in ms (keys mode uses at least 5). |
+| `text` | `""` | Text to type (interpolated). `\n` presses Enter, `\t` presses Tab. |
+| `delay_ms` | `null` | Delay between keystrokes in ms; null = settings.key_delay_ms. |
 | `mode` | `"keys"` | keys (default, most compatible), unicode, or paste (via clipboard). |
 
 ```json
-{"action":"type_text","text":"","delay_ms":20,"mode":"keys"}
+{"action":"type_text","text":"","delay_ms":null,"mode":"keys"}
 ```
 
 ### `key_press`
@@ -521,9 +559,34 @@ Press a key or key combination such as ctrl+s.
 |---|---|---|
 | `keys` | `"enter"` | Key combination, e.g. `enter`, `ctrl+s`, `ctrl+shift+esc`, `alt+f4`, `win+r`, `f5`, `a`. |
 | `times` | `1` | How many times to press it. |
+| `interval_ms` | `null` | Pause between presses in ms; null = settings.key_delay_ms. |
 
 ```json
-{"action":"key_press","keys":"enter","times":1}
+{"action":"key_press","keys":"enter","times":1,"interval_ms":null}
+```
+
+### `key_down`
+
+Press and hold key(s), e.g. shift while clicking.
+
+| field | default | description |
+|---|---|---|
+| `keys` | `""` | Key or combination; key_down presses left to right, key_up releases right to left. |
+
+```json
+{"action":"key_down","keys":""}
+```
+
+### `key_up`
+
+Release key(s) held with key_down.
+
+| field | default | description |
+|---|---|---|
+| `keys` | `""` | Key or combination; key_down presses left to right, key_up releases right to left. |
+
+```json
+{"action":"key_up","keys":""}
 ```
 
 ## UI Element
@@ -653,14 +716,178 @@ Read clipboard text into a variable.
 
 ### `screenshot`
 
-Save a PNG screenshot of a monitor or a window.
+Save a PNG screenshot of a monitor, window or region.
 
 | field | default | description |
 |---|---|---|
 | `path` | `""` | PNG path to write. |
 | `monitor` | `0` | Monitor index (0 = primary). |
 | `window` | `""` | Capture only the window whose title contains this text. |
+| `region` | `null` | Capture only this screen rectangle {x, y, width, height}; null = whole monitor. |
 
 ```json
-{"action":"screenshot","path":"","monitor":0,"window":""}
+{"action":"screenshot","path":"","monitor":0,"window":"","region":null}
+```
+
+### `screen_size`
+
+Store the primary screen width and height.
+
+| field | default | description |
+|---|---|---|
+| `width_var` | `"screen_width"` | Variable receiving the primary screen width. |
+| `height_var` | `"screen_height"` | Variable receiving the primary screen height. |
+
+```json
+{"action":"screen_size","width_var":"screen_width","height_var":"screen_height"}
+```
+
+### `pixel_get`
+
+Store the colour of a screen pixel as #RRGGBB.
+
+| field | default | description |
+|---|---|---|
+| `x` | `0` | Screen X. |
+| `y` | `0` | Screen Y. |
+| `output_var` | `""` | Variable receiving the colour as `#RRGGBB`. |
+
+```json
+{"action":"pixel_get","x":0,"y":0,"output_var":""}
+```
+
+### `pixel_matches`
+
+Store "true"/"false": does a pixel have the expected colour?
+
+| field | default | description |
+|---|---|---|
+| `x` | `0` | Screen X. |
+| `y` | `0` | Screen Y. |
+| `color` | `"#FFFFFF"` | Expected colour `#RRGGBB`. |
+| `tolerance` | `0` | Allowed difference per channel (0-255). |
+| `output_var` | `""` | Variable receiving "true" or "false". |
+
+```json
+{"action":"pixel_matches","x":0,"y":0,"color":"#FFFFFF","tolerance":0,"output_var":""}
+```
+
+## Image
+
+### `image_find`
+
+Look for a picture on screen; store found/x/y (never fails).
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | PNG/JPG file of what to look for (relative paths resolve against the flow folder). Capture it with Studio's "Snip image" button or Win+Shift+S. |
+| `confidence` | `0.9` | Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI. |
+| `region` | `null` | Search only this screen rectangle (much faster); null = all monitors. |
+| `timeout_ms` | `0` | Keep searching for up to this many ms. |
+| `found_var` | `"found"` | Variable receiving "true"/"false" (the step never fails when not found). |
+| `x_var` | `"image_x"` | Variable receiving the centre X of the match. |
+| `y_var` | `"image_y"` | Variable receiving the centre Y of the match. |
+
+```json
+{"action":"image_find","image":"","confidence":0.9,"region":null,"timeout_ms":0,"found_var":"found","x_var":"image_x","y_var":"image_y"}
+```
+
+### `image_find_all`
+
+Store every place a picture appears on screen.
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | PNG/JPG file of what to look for (relative paths resolve against the flow folder). Capture it with Studio's "Snip image" button or Win+Shift+S. |
+| `confidence` | `0.9` | Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI. |
+| `region` | `null` | Search only this screen rectangle (much faster); null = all monitors. |
+| `timeout_ms` | `5000` | Keep searching for up to this many ms. |
+| `output_var` | `""` | Variable receiving an array of matches [{x, y, left, top, width, height, score}]. |
+
+```json
+{"action":"image_find_all","image":"","confidence":0.9,"region":null,"timeout_ms":5000,"output_var":""}
+```
+
+### `image_click`
+
+Wait for a picture on screen and click it.
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | PNG/JPG file of what to look for (relative paths resolve against the flow folder). Capture it with Studio's "Snip image" button or Win+Shift+S. |
+| `confidence` | `0.9` | Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI. |
+| `region` | `null` | Search only this screen rectangle (much faster); null = all monitors. |
+| `timeout_ms` | `5000` | Keep searching for up to this many ms. |
+| `offset_x` | `0` | Click this many pixels right of the image centre (negative = left). |
+| `offset_y` | `0` | Click this many pixels below the image centre (negative = above). |
+| `button` | `"left"` | left, right or middle. |
+| `clicks` | `1` | 1 = single, 2 = double click. |
+
+```json
+{"action":"image_click","image":"","confidence":0.9,"region":null,"timeout_ms":5000,"offset_x":0,"offset_y":0,"button":"left","clicks":1}
+```
+
+### `image_wait`
+
+Wait until a picture appears on screen.
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | PNG/JPG file of what to look for (relative paths resolve against the flow folder). Capture it with Studio's "Snip image" button or Win+Shift+S. |
+| `confidence` | `0.9` | Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI. |
+| `region` | `null` | Search only this screen rectangle (much faster); null = all monitors. |
+| `timeout_ms` | `5000` | Keep searching for up to this many ms. |
+
+```json
+{"action":"image_wait","image":"","confidence":0.9,"region":null,"timeout_ms":5000}
+```
+
+### `image_wait_vanish`
+
+Wait until a picture is no longer on screen.
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | PNG/JPG file of what to look for (relative paths resolve against the flow folder). Capture it with Studio's "Snip image" button or Win+Shift+S. |
+| `confidence` | `0.9` | Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI. |
+| `region` | `null` | Search only this screen rectangle (much faster); null = all monitors. |
+| `timeout_ms` | `5000` | Keep searching for up to this many ms. |
+
+```json
+{"action":"image_wait_vanish","image":"","confidence":0.9,"region":null,"timeout_ms":5000}
+```
+
+## Dialog
+
+### `message_box`
+
+Show a message box and store which button was clicked.
+
+| field | default | description |
+|---|---|---|
+| `title` | `"AutoFlowMate"` | Window title of the dialog. |
+| `text` | `""` | Message text (interpolated). |
+| `buttons` | `"ok"` | ok, ok_cancel, yes_no, yes_no_cancel or retry_cancel. |
+| `icon` | `"info"` | info, warning, error, question or none. |
+| `output_var` | `"answer"` | Variable receiving the clicked button: ok, cancel, yes, no, retry. |
+
+```json
+{"action":"message_box","title":"AutoFlowMate","text":"","buttons":"ok","icon":"info","output_var":"answer"}
+```
+
+### `input_box`
+
+Ask the user to type a value (optionally masked).
+
+| field | default | description |
+|---|---|---|
+| `title` | `"AutoFlowMate"` | Window title of the dialog. |
+| `prompt` | `""` | Question shown above the text box (interpolated). |
+| `default` | `""` | Initial text. |
+| `password` | `false` | Mask the input (for passwords). The value is never written to the log. |
+| `output_var` | `"input"` | Variable receiving the text. |
+| `fail_on_cancel` | `true` | Fail the step when the user presses Cancel (otherwise the variable is set to ""). |
+
+```json
+{"action":"input_box","title":"AutoFlowMate","prompt":"","default":"","password":false,"output_var":"input","fail_on_cancel":true}
 ```

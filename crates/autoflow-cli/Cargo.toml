@@ -14,3 +14,6 @@ autoflow-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+enigo.workspace = true

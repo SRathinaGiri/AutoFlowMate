@@ -435,6 +435,48 @@ pub enum MouseButton {
     Middle,
 }
 
+/// Easing curve for mouse movement (PyAutoGUI "tween" functions).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Tween {
+    #[default]
+    Linear,
+    EaseInQuad,
+    EaseOutQuad,
+    EaseInOutQuad,
+    EaseInCubic,
+    EaseOutCubic,
+    EaseInOutCubic,
+    EaseInOutSine,
+    EaseOutBack,
+    EaseOutBounce,
+}
+
+impl Tween {
+    /// Map progress `t` in 0..=1 to eased progress.
+    pub fn apply(self, t: f64) -> f64 {
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            Tween::Linear => t,
+            Tween::EaseInQuad => t * t,
+            Tween::EaseOutQuad => t * (2.0 - t),
+            Tween::EaseInOutQuad => if t < 0.5 { 2.0 * t * t } else { -1.0 + (4.0 - 2.0 * t) * t },
+            Tween::EaseInCubic => t * t * t,
+            Tween::EaseOutCubic => { let u = t - 1.0; u * u * u + 1.0 }
+            Tween::EaseInOutCubic => if t < 0.5 { 4.0 * t * t * t } else { let u = 2.0 * t - 2.0; 0.5 * u * u * u + 1.0 },
+            Tween::EaseInOutSine => -(std::f64::consts::PI * t).cos() / 2.0 + 0.5,
+            Tween::EaseOutBack => { let c1 = 1.70158; let c3 = c1 + 1.0; let u = t - 1.0; 1.0 + c3 * u * u * u + c1 * u * u }
+            Tween::EaseOutBounce => {
+                let (n1, d1) = (7.5625, 2.75);
+                if t < 1.0 / d1 { n1 * t * t }
+                else if t < 2.0 / d1 { let u = t - 1.5 / d1; n1 * u * u + 0.75 }
+                else if t < 2.5 / d1 { let u = t - 2.25 / d1; n1 * u * u + 0.9375 }
+                else { let u = t - 2.625 / d1; n1 * u * u + 0.984375 }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct MouseMove {
@@ -442,8 +484,12 @@ pub struct MouseMove {
     pub x: Int,
     /// Screen Y in pixels (or offset when relative).
     pub y: Int,
-    /// Move relative to the current position.
+    /// Move relative to the current position (PyAutoGUI moveRel).
     pub relative: bool,
+    /// Movement time in ms; null = settings.mouse_move_ms (0 = instant).
+    pub duration_ms: Option<u64>,
+    /// Easing curve used when duration_ms > 0.
+    pub tween: Tween,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -455,13 +501,31 @@ pub struct MouseClick {
     pub y: Option<Int>,
     /// left, right or middle.
     pub button: MouseButton,
-    /// 1 = single click, 2 = double click.
+    /// 1 = single click, 2 = double click, 3 = triple click.
     pub clicks: u32,
+    /// Pause between clicks in ms.
+    pub interval_ms: u64,
+    /// Time to move to (x, y) in ms; null = settings.mouse_move_ms.
+    pub duration_ms: Option<u64>,
+    /// Easing curve for the move.
+    pub tween: Tween,
 }
 impl Default for MouseClick {
     fn default() -> Self {
-        Self { x: None, y: None, button: MouseButton::Left, clicks: 1 }
+        Self { x: None, y: None, button: MouseButton::Left, clicks: 1, interval_ms: 60, duration_ms: None, tween: Tween::Linear }
     }
+}
+
+/// Press (mouse_down) or release (mouse_up) a button, optionally at a position.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MouseButtonAt {
+    /// Screen X; null = current position.
+    pub x: Option<Int>,
+    /// Screen Y; null = current position.
+    pub y: Option<Int>,
+    /// left, right or middle.
+    pub button: MouseButton,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -469,28 +533,52 @@ impl Default for MouseClick {
 pub struct MouseScroll {
     /// Wheel notches; positive = down/right, negative = up/left.
     pub amount: Int,
-    /// Scroll sideways instead of up/down.
+    /// Scroll sideways instead of up/down (PyAutoGUI hscroll).
     pub horizontal: bool,
+    /// Screen X to scroll at; null = current position.
+    pub x: Option<Int>,
+    /// Screen Y to scroll at; null = current position.
+    pub y: Option<Int>,
 }
 impl Default for MouseScroll {
     fn default() -> Self {
-        Self { amount: Int::Num(3), horizontal: false }
+        Self { amount: Int::Num(3), horizontal: false, x: None, y: None }
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct MouseDrag {
-    /// Start X.
-    pub from_x: Int,
-    /// Start Y.
-    pub from_y: Int,
-    /// End X.
+    /// Start X; null = current position.
+    pub from_x: Option<Int>,
+    /// Start Y; null = current position.
+    pub from_y: Option<Int>,
+    /// End X (or offset when relative).
     pub to_x: Int,
-    /// End Y.
+    /// End Y (or offset when relative).
     pub to_y: Int,
+    /// Treat to_x/to_y as offsets from the start (PyAutoGUI dragRel).
+    pub relative: bool,
     /// Button held during the drag.
     pub button: MouseButton,
+    /// Drag time in ms (some apps need a slow drag to register it).
+    pub duration_ms: u64,
+    /// Easing curve for the drag.
+    pub tween: Tween,
+}
+impl Default for MouseDrag {
+    fn default() -> Self {
+        Self {
+            from_x: Some(Int::Num(0)),
+            from_y: Some(Int::Num(0)),
+            to_x: Int::Num(0),
+            to_y: Int::Num(0),
+            relative: false,
+            button: MouseButton::Left,
+            duration_ms: 500,
+            tween: Tween::EaseInOutQuad,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -520,20 +608,15 @@ pub enum TypeMode {
     Paste,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct TypeText {
-    /// Text to type (interpolated). `\n` presses Enter.
+    /// Text to type (interpolated). `\n` presses Enter, `\t` presses Tab.
     pub text: String,
-    /// Delay between characters in ms (keys mode uses at least 5).
-    pub delay_ms: u64,
+    /// Delay between keystrokes in ms; null = settings.key_delay_ms.
+    pub delay_ms: Option<u64>,
     /// keys (default, most compatible), unicode, or paste (via clipboard).
     pub mode: TypeMode,
-}
-impl Default for TypeText {
-    fn default() -> Self {
-        Self { text: String::new(), delay_ms: 20, mode: TypeMode::Keys }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -543,11 +626,22 @@ pub struct KeyPress {
     pub keys: String,
     /// How many times to press it.
     pub times: u32,
+    /// Pause between presses in ms; null = settings.key_delay_ms.
+    pub interval_ms: Option<u64>,
 }
 impl Default for KeyPress {
     fn default() -> Self {
-        Self { keys: "enter".into(), times: 1 }
+        Self { keys: "enter".into(), times: 1, interval_ms: None }
     }
+}
+
+/// Hold (key_down) or release (key_up) keys, e.g. `shift` or `ctrl+alt`.
+/// Keys still held at the end of the run are released automatically.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct KeyHold {
+    /// Key or combination; key_down presses left to right, key_up releases right to left.
+    pub keys: String,
 }
 
 // --------------------------------------------------------- UI Automation (UIA)
@@ -639,6 +733,16 @@ pub struct OutputVar {
     pub output_var: String,
 }
 
+/// A screen rectangle in pixels.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Region {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Screenshot {
@@ -648,6 +752,196 @@ pub struct Screenshot {
     pub monitor: u32,
     /// Capture only the window whose title contains this text.
     pub window: String,
+    /// Capture only this screen rectangle {x, y, width, height}; null = whole monitor.
+    pub region: Option<Region>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ScreenSize {
+    /// Variable receiving the primary screen width.
+    pub width_var: String,
+    /// Variable receiving the primary screen height.
+    pub height_var: String,
+}
+impl Default for ScreenSize {
+    fn default() -> Self {
+        Self { width_var: "screen_width".into(), height_var: "screen_height".into() }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PixelGet {
+    /// Screen X.
+    pub x: Int,
+    /// Screen Y.
+    pub y: Int,
+    /// Variable receiving the colour as `#RRGGBB`.
+    pub output_var: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PixelMatches {
+    /// Screen X.
+    pub x: Int,
+    /// Screen Y.
+    pub y: Int,
+    /// Expected colour `#RRGGBB`.
+    pub color: String,
+    /// Allowed difference per channel (0-255).
+    pub tolerance: u8,
+    /// Variable receiving "true" or "false".
+    pub output_var: String,
+}
+impl Default for PixelMatches {
+    fn default() -> Self {
+        Self { x: Int::Num(0), y: Int::Num(0), color: "#FFFFFF".into(), tolerance: 0, output_var: String::new() }
+    }
+}
+
+/// Locate a picture on screen (PyAutoGUI locateOnScreen). The match is
+/// tolerant to small rendering differences through `confidence`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ImageTarget {
+    /// PNG/JPG file of what to look for (relative paths resolve against the flow folder).
+    /// Capture it with Studio's "Snip image" button or Win+Shift+S.
+    pub image: String,
+    /// Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI.
+    pub confidence: f64,
+    /// Search only this screen rectangle (much faster); null = all monitors.
+    pub region: Option<Region>,
+    /// Keep searching for up to this many ms.
+    pub timeout_ms: u64,
+}
+impl Default for ImageTarget {
+    fn default() -> Self {
+        Self { image: String::new(), confidence: 0.9, region: None, timeout_ms: 5000 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ImageFind {
+    #[serde(flatten)]
+    pub target: ImageTarget,
+    /// Variable receiving "true"/"false" (the step never fails when not found).
+    pub found_var: String,
+    /// Variable receiving the centre X of the match.
+    pub x_var: String,
+    /// Variable receiving the centre Y of the match.
+    pub y_var: String,
+}
+impl Default for ImageFind {
+    fn default() -> Self {
+        Self { target: ImageTarget { timeout_ms: 0, ..ImageTarget::default() }, found_var: "found".into(), x_var: "image_x".into(), y_var: "image_y".into() }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ImageFindAll {
+    #[serde(flatten)]
+    pub target: ImageTarget,
+    /// Variable receiving an array of matches [{x, y, left, top, width, height, score}].
+    pub output_var: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ImageClick {
+    #[serde(flatten)]
+    pub target: ImageTarget,
+    /// Click this many pixels right of the image centre (negative = left).
+    pub offset_x: i32,
+    /// Click this many pixels below the image centre (negative = above).
+    pub offset_y: i32,
+    /// left, right or middle.
+    pub button: MouseButton,
+    /// 1 = single, 2 = double click.
+    pub clicks: u32,
+}
+impl Default for ImageClick {
+    fn default() -> Self {
+        Self { target: ImageTarget::default(), offset_x: 0, offset_y: 0, button: MouseButton::Left, clicks: 1 }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ImageWait {
+    #[serde(flatten)]
+    pub target: ImageTarget,
+}
+
+// ---------------------------------------------------------------------- dialogs
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogButtons {
+    #[default]
+    Ok,
+    OkCancel,
+    YesNo,
+    YesNoCancel,
+    RetryCancel,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DialogIcon {
+    #[default]
+    Info,
+    Warning,
+    Error,
+    Question,
+    None,
+}
+
+/// A message box (PyAutoGUI alert / confirm). Blocks until the user answers.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MessageBox {
+    /// Window title of the dialog.
+    pub title: String,
+    /// Message text (interpolated).
+    pub text: String,
+    /// ok, ok_cancel, yes_no, yes_no_cancel or retry_cancel.
+    pub buttons: DialogButtons,
+    /// info, warning, error, question or none.
+    pub icon: DialogIcon,
+    /// Variable receiving the clicked button: ok, cancel, yes, no, retry.
+    pub output_var: String,
+}
+impl Default for MessageBox {
+    fn default() -> Self {
+        Self { title: "AutoFlowMate".into(), text: String::new(), buttons: DialogButtons::Ok, icon: DialogIcon::Info, output_var: "answer".into() }
+    }
+}
+
+/// Ask the user to type a value (PyAutoGUI prompt / password).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct InputBox {
+    /// Window title of the dialog.
+    pub title: String,
+    /// Question shown above the text box (interpolated).
+    pub prompt: String,
+    /// Initial text.
+    pub default: String,
+    /// Mask the input (for passwords). The value is never written to the log.
+    pub password: bool,
+    /// Variable receiving the text.
+    pub output_var: String,
+    /// Fail the step when the user presses Cancel (otherwise the variable is set to "").
+    pub fail_on_cancel: bool,
+}
+impl Default for InputBox {
+    fn default() -> Self {
+        Self { title: "AutoFlowMate".into(), prompt: String::new(), default: String::new(), password: false, output_var: "input".into(), fail_on_cancel: true }
+    }
 }
 
 // ---------------------------------------------------------------- registration
@@ -734,10 +1028,14 @@ actions! {
     "Mouse", "mouse_click", MouseClick(MouseClick), "Click (optionally at a position).";
     "Mouse", "mouse_scroll", MouseScroll(MouseScroll), "Scroll the mouse wheel.";
     "Mouse", "mouse_drag", MouseDrag(MouseDrag), "Drag from one point to another.";
+    "Mouse", "mouse_down", MouseDown(MouseButtonAt), "Press and hold a mouse button.";
+    "Mouse", "mouse_up", MouseUp(MouseButtonAt), "Release a held mouse button.";
     "Mouse", "mouse_position", MousePosition(MousePosition), "Store the current pointer position.";
 
     "Keyboard", "type_text", TypeText(TypeText), "Type text into the focused control.";
     "Keyboard", "key_press", KeyPress(KeyPress), "Press a key or key combination such as ctrl+s.";
+    "Keyboard", "key_down", KeyDown(KeyHold), "Press and hold key(s), e.g. shift while clicking.";
+    "Keyboard", "key_up", KeyUp(KeyHold), "Release key(s) held with key_down.";
 
     "UI Element", "ui_click", UiClick(UiClick), "Find a UI element (UI Automation) and click it.";
     "UI Element", "ui_set_text", UiSetText(UiSetText), "Find an input element and set its text.";
@@ -748,7 +1046,19 @@ actions! {
     "Clipboard", "clipboard_set", ClipboardSet(ClipboardSet), "Put text on the clipboard.";
     "Clipboard", "clipboard_get", ClipboardGet(OutputVar), "Read clipboard text into a variable.";
 
-    "Screen", "screenshot", Screenshot(Screenshot), "Save a PNG screenshot of a monitor or a window.";
+    "Screen", "screenshot", Screenshot(Screenshot), "Save a PNG screenshot of a monitor, window or region.";
+    "Screen", "screen_size", ScreenSize(ScreenSize), "Store the primary screen width and height.";
+    "Screen", "pixel_get", PixelGet(PixelGet), "Store the colour of a screen pixel as #RRGGBB.";
+    "Screen", "pixel_matches", PixelMatches(PixelMatches), "Store \"true\"/\"false\": does a pixel have the expected colour?";
+
+    "Image", "image_find", ImageFind(ImageFind), "Look for a picture on screen; store found/x/y (never fails).";
+    "Image", "image_find_all", ImageFindAll(ImageFindAll), "Store every place a picture appears on screen.";
+    "Image", "image_click", ImageClick(ImageClick), "Wait for a picture on screen and click it.";
+    "Image", "image_wait", ImageWait(ImageWait), "Wait until a picture appears on screen.";
+    "Image", "image_wait_vanish", ImageWaitVanish(ImageWait), "Wait until a picture is no longer on screen.";
+
+    "Dialog", "message_box", MessageBox(MessageBox), "Show a message box and store which button was clicked.";
+    "Dialog", "input_box", InputBox(InputBox), "Ask the user to type a value (optionally masked).";
 }
 
 impl Action {
@@ -784,9 +1094,7 @@ impl Action {
 
     /// True for actions that move the mouse or press keys (fail-safe applies).
     pub fn uses_input(&self) -> bool {
-        matches!(
-            self.category(),
-            "Mouse" | "Keyboard"
-        ) || matches!(self, Action::UiClick(_))
+        (matches!(self.category(), "Mouse" | "Keyboard") && !matches!(self, Action::MousePosition(_)))
+            || matches!(self, Action::UiClick(_) | Action::UiSetText(_) | Action::ImageClick(_))
     }
 }

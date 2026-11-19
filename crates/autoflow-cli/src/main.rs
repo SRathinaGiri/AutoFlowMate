@@ -29,10 +29,16 @@ enum Cmd {
         /// Print events as JSON lines (for agents/tools).
         #[arg(long)]
         json: bool,
-        /// Pause after each step, in ms.
-        #[arg(long, default_value_t = 0)]
-        step_delay: u64,
-        /// Disable the fail-safe (moving the mouse to the top-left corner aborts the run).
+        /// Override settings.step_delay_ms (pause after every step).
+        #[arg(long, value_name = "MS")]
+        step_delay: Option<u64>,
+        /// Override settings.key_delay_ms (delay between keystrokes).
+        #[arg(long, value_name = "MS")]
+        key_delay: Option<u64>,
+        /// Override settings.input_pause_ms (pause after every mouse/keyboard action).
+        #[arg(long, value_name = "MS")]
+        input_pause: Option<u64>,
+        /// Disable the corner fail-safe for this run (the abort hotkey still works).
         #[arg(long)]
         no_failsafe: bool,
         /// Skip validation before running.
@@ -85,9 +91,27 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Live mouse position and pixel colour (PyAutoGUI displayMousePosition). Ctrl+C to quit.
+    Mouse {
+        /// Print one reading and exit.
+        #[arg(long)]
+        once: bool,
+    },
+    /// Find an image on screen and print the matches (to test image_* steps).
+    Locate {
+        image: PathBuf,
+        #[arg(long, default_value_t = 0.9)]
+        confidence: f64,
+        /// Report every match, not just the best.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 fn main() -> ExitCode {
+    // Physical-pixel coordinates everywhere (mouse, screenshots, UI Automation, image search).
+    #[cfg(windows)]
+    let _ = enigo::set_dpi_awareness();
     let cli = Cli::parse();
     match real_main(cli) {
         Ok(code) => code,
@@ -100,7 +124,7 @@ fn main() -> ExitCode {
 
 fn real_main(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
-        Cmd::Run { flow, vars, dry_run, json, step_delay, no_failsafe, no_validate } => {
+        Cmd::Run { flow, vars, dry_run, json, step_delay, key_delay, input_pause, no_failsafe, no_validate } => {
             let text = std::fs::read_to_string(&flow)?;
             let (parsed, issues) = validate_json(&text);
             let has_errors = issues.iter().any(|i| i.severity == Severity::Error);
@@ -126,7 +150,9 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
             let opts = RunOptions {
                 dry_run,
                 step_delay_ms: step_delay,
-                failsafe: !no_failsafe,
+                key_delay_ms: key_delay,
+                input_pause_ms: input_pause,
+                failsafe: if no_failsafe { Some(false) } else { None },
                 flow_dir: flow_dir(&flow),
                 ..RunOptions::default()
             };
@@ -207,6 +233,28 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
         }
         Cmd::Inspect { delay, at } => inspect(delay, at),
         Cmd::Windows { json } => windows(json),
+        Cmd::Mouse { once } => {
+            use std::io::Write;
+            loop {
+                let (x, y) = autoflow_core::failsafe::cursor().unwrap_or((0, 0));
+                let color = autoflow_core::vision::pixel(x, y).map(autoflow_core::vision::hex).unwrap_or_else(|_| "?".into());
+                let corner = if autoflow_core::failsafe::corner_hit(x, y) { "  <- fail-safe corner" } else { "" };
+                if once {
+                    println!("{}", json!({"x": x, "y": y, "color": color}));
+                    return Ok(ExitCode::SUCCESS);
+                }
+                print!("\rX: {x:>5}  Y: {y:>5}  RGB: {color}{corner}            ");
+                std::io::stdout().flush().ok();
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+        Cmd::Locate { image, confidence, all } => {
+            let t = autoflow_core::vision::load_template(&image)?;
+            let started = std::time::Instant::now();
+            let found = autoflow_core::vision::locate(&t, None, confidence, all)?;
+            println!("{}", serde_json::to_string_pretty(&json!({"found": !found.is_empty(), "matches": found, "millis": started.elapsed().as_millis() as u64}))?);
+            Ok(if found.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS })
+        }
     }
 }
 

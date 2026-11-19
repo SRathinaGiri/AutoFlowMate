@@ -13,7 +13,7 @@ fn tmpdir(name: &str) -> PathBuf {
 
 fn run(flow: serde_json::Value, dir: &PathBuf) -> (autoflow_core::RunResult, Vec<Event>) {
     let flow: Flow = serde_json::from_value(flow).unwrap();
-    let opts = RunOptions { flow_dir: dir.clone(), failsafe: false, ..Default::default() };
+    let opts = RunOptions { flow_dir: dir.clone(), failsafe: Some(false), ..Default::default() };
     let mut events = vec![];
     let r = run_flow(&flow, Map::new(), &opts, &mut |e| events.push(e));
     (r, events)
@@ -135,4 +135,57 @@ fn dry_run_touches_nothing() {
     let r = run_flow(&flow, Map::new(), &opts, &mut |_| {});
     assert!(r.success, "{}", r.message);
     assert!(!dir.join("x.txt").exists());
+}
+
+#[test]
+fn step_and_flow_delays() {
+    let dir = tmpdir("delays");
+    let started = std::time::Instant::now();
+    let (r, _) = run(
+        json!({"name":"t","settings":{"step_delay_ms":50,"failsafe":false,"abort_hotkey":""},"steps":[
+            {"action":"set_variable","name":"a","value":1,"delay_before_ms":100},
+            {"action":"set_variable","name":"b","value":2,"delay_after_ms":100}
+        ]}),
+        &dir,
+    );
+    assert!(r.success, "{}", r.message);
+    // 100 before + 100 after + 2 x 50 step delay
+    assert!(started.elapsed() >= std::time::Duration::from_millis(300), "{:?}", started.elapsed());
+}
+
+#[test]
+fn stop_flag_cancels_long_wait() {
+    let flow: Flow = serde_json::from_value(json!({"name":"t","settings":{"failsafe":false,"abort_hotkey":""},"steps":[
+        {"action":"wait","ms":10000}
+    ]}))
+    .unwrap();
+    let opts = RunOptions { flow_dir: std::env::temp_dir(), ..Default::default() };
+    let stop = opts.stop.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+    let started = std::time::Instant::now();
+    let r = run_flow(&flow, Map::new(), &opts, &mut |_| {});
+    assert!(!r.success);
+    assert!(r.message.contains("cancelled"), "{}", r.message);
+    assert!(started.elapsed() < std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn tweens_hit_endpoints() {
+    use autoflow_core::actions::Tween::*;
+    for t in [Linear, EaseInQuad, EaseOutQuad, EaseInOutQuad, EaseInCubic, EaseOutCubic, EaseInOutCubic, EaseInOutSine, EaseOutBack, EaseOutBounce] {
+        assert!((t.apply(0.0)).abs() < 1e-9, "{t:?}");
+        assert!((t.apply(1.0) - 1.0).abs() < 1e-9, "{t:?}");
+    }
+}
+
+#[test]
+fn settings_default_and_roundtrip() {
+    let f: Flow = serde_json::from_value(json!({"name":"t","steps":[]})).unwrap();
+    assert_eq!(f.settings.key_delay_ms, 100);
+    assert!(f.settings.failsafe);
+    let back: Flow = serde_json::from_str(&f.to_json()).unwrap();
+    assert_eq!(back.settings, f.settings);
 }

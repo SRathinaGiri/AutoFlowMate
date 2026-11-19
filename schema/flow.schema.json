@@ -27,6 +27,18 @@
       "minimum": 0,
       "default": 1
     },
+    "settings": {
+      "description": "Run-wide timing and safety settings.",
+      "$ref": "#/$defs/Settings",
+      "default": {
+        "key_delay_ms": 100,
+        "input_pause_ms": 100,
+        "step_delay_ms": 0,
+        "mouse_move_ms": 0,
+        "failsafe": true,
+        "abort_hotkey": "ctrl+alt+q"
+      }
+    },
     "variables": {
       "description": "Initial variables. Can be overridden at run time (`--var name=value`).",
       "type": "object",
@@ -42,6 +54,50 @@
     }
   },
   "$defs": {
+    "Settings": {
+      "description": "Run-wide timing and safety settings (the PyAutoGUI `PAUSE` / `FAILSAFE`\nequivalents). Command-line flags can override them for one run.",
+      "type": "object",
+      "properties": {
+        "key_delay_ms": {
+          "description": "Delay between keystrokes in ms for type_text and repeated key_press.\nRaise it (150-250) for slow applications such as Tally.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 100
+        },
+        "input_pause_ms": {
+          "description": "Pause after every mouse/keyboard action in ms (like PyAutoGUI's PAUSE).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 100
+        },
+        "step_delay_ms": {
+          "description": "Pause after every step in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "mouse_move_ms": {
+          "description": "Default duration of mouse movements in ms (0 = jump instantly).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 0
+        },
+        "failsafe": {
+          "description": "Abort the run when the mouse is pushed into any screen corner (like PyAutoGUI's FAILSAFE).",
+          "type": "boolean",
+          "default": true
+        },
+        "abort_hotkey": {
+          "description": "Key combination that aborts the run at any time, e.g. `ctrl+alt+q`. Empty = none.",
+          "type": "string",
+          "default": "ctrl+alt+q"
+        }
+      }
+    },
     "Step": {
       "description": "One step of a flow: common settings plus the action (`\"action\": \"...\"`)\nand the action's own fields, all at the same JSON level.",
       "type": "object",
@@ -70,6 +126,18 @@
         },
         "retry_delay_ms": {
           "description": "Delay between retries in milliseconds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "delay_before_ms": {
+          "description": "Wait this many ms before the step runs.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "delay_after_ms": {
+          "description": "Wait this many ms after the step succeeds (in addition to settings.step_delay_ms).",
           "type": "integer",
           "format": "uint64",
           "minimum": 0
@@ -553,6 +621,34 @@
           ]
         },
         {
+          "description": "Press and hold a mouse button.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "mouse_down"
+            }
+          },
+          "$ref": "#/$defs/MouseButtonAt",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Release a held mouse button.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "mouse_up"
+            }
+          },
+          "$ref": "#/$defs/MouseButtonAt",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Store the current pointer position.",
           "type": "object",
           "properties": {
@@ -590,6 +686,34 @@
             }
           },
           "$ref": "#/$defs/KeyPress",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Press and hold key(s), e.g. shift while clicking.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "key_down"
+            }
+          },
+          "$ref": "#/$defs/KeyHold",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Release key(s) held with key_down.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "key_up"
+            }
+          },
+          "$ref": "#/$defs/KeyHold",
           "required": [
             "action"
           ]
@@ -693,7 +817,7 @@
           ]
         },
         {
-          "description": "Save a PNG screenshot of a monitor or a window.",
+          "description": "Save a PNG screenshot of a monitor, window or region.",
           "type": "object",
           "properties": {
             "action": {
@@ -702,6 +826,146 @@
             }
           },
           "$ref": "#/$defs/Screenshot",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Store the primary screen width and height.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "screen_size"
+            }
+          },
+          "$ref": "#/$defs/ScreenSize",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Store the colour of a screen pixel as #RRGGBB.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "pixel_get"
+            }
+          },
+          "$ref": "#/$defs/PixelGet",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Store \"true\"/\"false\": does a pixel have the expected colour?",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "pixel_matches"
+            }
+          },
+          "$ref": "#/$defs/PixelMatches",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Look for a picture on screen; store found/x/y (never fails).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "image_find"
+            }
+          },
+          "$ref": "#/$defs/ImageFind",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Store every place a picture appears on screen.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "image_find_all"
+            }
+          },
+          "$ref": "#/$defs/ImageFindAll",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Wait for a picture on screen and click it.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "image_click"
+            }
+          },
+          "$ref": "#/$defs/ImageClick",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Wait until a picture appears on screen.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "image_wait"
+            }
+          },
+          "$ref": "#/$defs/ImageWait",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Wait until a picture is no longer on screen.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "image_wait_vanish"
+            }
+          },
+          "$ref": "#/$defs/ImageWait",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Show a message box and store which button was clicked.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "message_box"
+            }
+          },
+          "$ref": "#/$defs/MessageBox",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Ask the user to type a value (optionally masked).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "input_box"
+            }
+          },
+          "$ref": "#/$defs/InputBox",
           "required": [
             "action"
           ]
@@ -1331,6 +1595,22 @@
         }
       }
     },
+    "Tween": {
+      "description": "Easing curve for mouse movement (PyAutoGUI \"tween\" functions).",
+      "type": "string",
+      "enum": [
+        "linear",
+        "ease_in_quad",
+        "ease_out_quad",
+        "ease_in_out_quad",
+        "ease_in_cubic",
+        "ease_out_cubic",
+        "ease_in_out_cubic",
+        "ease_in_out_sine",
+        "ease_out_back",
+        "ease_out_bounce"
+      ]
+    },
     "MouseMove": {
       "type": "object",
       "properties": {
@@ -1345,9 +1625,24 @@
           "default": 0
         },
         "relative": {
-          "description": "Move relative to the current position.",
+          "description": "Move relative to the current position (PyAutoGUI moveRel).",
           "type": "boolean",
           "default": false
+        },
+        "duration_ms": {
+          "description": "Movement time in ms; null = settings.mouse_move_ms (0 = instant).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "tween": {
+          "description": "Easing curve used when duration_ms > 0.",
+          "$ref": "#/$defs/Tween",
+          "default": "linear"
         }
       }
     },
@@ -1392,11 +1687,33 @@
           "default": "left"
         },
         "clicks": {
-          "description": "1 = single click, 2 = double click.",
+          "description": "1 = single click, 2 = double click, 3 = triple click.",
           "type": "integer",
           "format": "uint32",
           "minimum": 0,
           "default": 1
+        },
+        "interval_ms": {
+          "description": "Pause between clicks in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 60
+        },
+        "duration_ms": {
+          "description": "Time to move to (x, y) in ms; null = settings.mouse_move_ms.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        },
+        "tween": {
+          "description": "Easing curve for the move.",
+          "$ref": "#/$defs/Tween",
+          "default": "linear"
         }
       }
     },
@@ -1409,9 +1726,33 @@
           "default": 3
         },
         "horizontal": {
-          "description": "Scroll sideways instead of up/down.",
+          "description": "Scroll sideways instead of up/down (PyAutoGUI hscroll).",
           "type": "boolean",
           "default": false
+        },
+        "x": {
+          "description": "Screen X to scroll at; null = current position.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Int"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "y": {
+          "description": "Screen Y to scroll at; null = current position.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Int"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       }
     },
@@ -1419,27 +1760,93 @@
       "type": "object",
       "properties": {
         "from_x": {
-          "description": "Start X.",
-          "$ref": "#/$defs/Int",
+          "description": "Start X; null = current position.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Int"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": 0
         },
         "from_y": {
-          "description": "Start Y.",
-          "$ref": "#/$defs/Int",
+          "description": "Start Y; null = current position.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Int"
+            },
+            {
+              "type": "null"
+            }
+          ],
           "default": 0
         },
         "to_x": {
-          "description": "End X.",
+          "description": "End X (or offset when relative).",
           "$ref": "#/$defs/Int",
           "default": 0
         },
         "to_y": {
-          "description": "End Y.",
+          "description": "End Y (or offset when relative).",
           "$ref": "#/$defs/Int",
           "default": 0
         },
+        "relative": {
+          "description": "Treat to_x/to_y as offsets from the start (PyAutoGUI dragRel).",
+          "type": "boolean",
+          "default": false
+        },
         "button": {
           "description": "Button held during the drag.",
+          "$ref": "#/$defs/MouseButton",
+          "default": "left"
+        },
+        "duration_ms": {
+          "description": "Drag time in ms (some apps need a slow drag to register it).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 500
+        },
+        "tween": {
+          "description": "Easing curve for the drag.",
+          "$ref": "#/$defs/Tween",
+          "default": "ease_in_out_quad"
+        }
+      }
+    },
+    "MouseButtonAt": {
+      "description": "Press (mouse_down) or release (mouse_up) a button, optionally at a position.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Screen X; null = current position.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Int"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "y": {
+          "description": "Screen Y; null = current position.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Int"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "button": {
+          "description": "left, right or middle.",
           "$ref": "#/$defs/MouseButton",
           "default": "left"
         }
@@ -1484,16 +1891,19 @@
       "type": "object",
       "properties": {
         "text": {
-          "description": "Text to type (interpolated). `\\n` presses Enter.",
+          "description": "Text to type (interpolated). `\\n` presses Enter, `\\t` presses Tab.",
           "type": "string",
           "default": ""
         },
         "delay_ms": {
-          "description": "Delay between characters in ms (keys mode uses at least 5).",
-          "type": "integer",
+          "description": "Delay between keystrokes in ms; null = settings.key_delay_ms.",
+          "type": [
+            "integer",
+            "null"
+          ],
           "format": "uint64",
           "minimum": 0,
-          "default": 20
+          "default": null
         },
         "mode": {
           "description": "keys (default, most compatible), unicode, or paste (via clipboard).",
@@ -1516,6 +1926,27 @@
           "format": "uint32",
           "minimum": 0,
           "default": 1
+        },
+        "interval_ms": {
+          "description": "Pause between presses in ms; null = settings.key_delay_ms.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0,
+          "default": null
+        }
+      }
+    },
+    "KeyHold": {
+      "description": "Hold (key_down) or release (key_up) keys, e.g. `shift` or `ctrl+alt`.\nKeys still held at the end of the run are released automatically.",
+      "type": "object",
+      "properties": {
+        "keys": {
+          "description": "Key or combination; key_down presses left to right, key_up releases right to left.",
+          "type": "string",
+          "default": ""
         }
       }
     },
@@ -1731,6 +2162,34 @@
         }
       }
     },
+    "Region": {
+      "description": "A screen rectangle in pixels.",
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "y": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        }
+      }
+    },
     "Screenshot": {
       "type": "object",
       "properties": {
@@ -1750,6 +2209,361 @@
           "description": "Capture only the window whose title contains this text.",
           "type": "string",
           "default": ""
+        },
+        "region": {
+          "description": "Capture only this screen rectangle {x, y, width, height}; null = whole monitor.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      }
+    },
+    "ScreenSize": {
+      "type": "object",
+      "properties": {
+        "width_var": {
+          "description": "Variable receiving the primary screen width.",
+          "type": "string",
+          "default": "screen_width"
+        },
+        "height_var": {
+          "description": "Variable receiving the primary screen height.",
+          "type": "string",
+          "default": "screen_height"
+        }
+      }
+    },
+    "PixelGet": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Screen X.",
+          "$ref": "#/$defs/Int",
+          "default": 0
+        },
+        "y": {
+          "description": "Screen Y.",
+          "$ref": "#/$defs/Int",
+          "default": 0
+        },
+        "output_var": {
+          "description": "Variable receiving the colour as `#RRGGBB`.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "PixelMatches": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "description": "Screen X.",
+          "$ref": "#/$defs/Int",
+          "default": 0
+        },
+        "y": {
+          "description": "Screen Y.",
+          "$ref": "#/$defs/Int",
+          "default": 0
+        },
+        "color": {
+          "description": "Expected colour `#RRGGBB`.",
+          "type": "string",
+          "default": "#FFFFFF"
+        },
+        "tolerance": {
+          "description": "Allowed difference per channel (0-255).",
+          "type": "integer",
+          "format": "uint8",
+          "minimum": 0,
+          "maximum": 255,
+          "default": 0
+        },
+        "output_var": {
+          "description": "Variable receiving \"true\" or \"false\".",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "ImageFind": {
+      "description": "Locate a picture on screen (PyAutoGUI locateOnScreen). The match is\ntolerant to small rendering differences through `confidence`.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "description": "PNG/JPG file of what to look for (relative paths resolve against the flow folder).\nCapture it with Studio's \"Snip image\" button or Win+Shift+S.",
+          "type": "string",
+          "default": ""
+        },
+        "confidence": {
+          "description": "Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI.",
+          "type": "number",
+          "format": "double",
+          "default": 0.9
+        },
+        "region": {
+          "description": "Search only this screen rectangle (much faster); null = all monitors.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout_ms": {
+          "description": "Keep searching for up to this many ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5000
+        },
+        "found_var": {
+          "description": "Variable receiving \"true\"/\"false\" (the step never fails when not found).",
+          "type": "string",
+          "default": "found"
+        },
+        "x_var": {
+          "description": "Variable receiving the centre X of the match.",
+          "type": "string",
+          "default": "image_x"
+        },
+        "y_var": {
+          "description": "Variable receiving the centre Y of the match.",
+          "type": "string",
+          "default": "image_y"
+        }
+      }
+    },
+    "ImageFindAll": {
+      "description": "Locate a picture on screen (PyAutoGUI locateOnScreen). The match is\ntolerant to small rendering differences through `confidence`.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "description": "PNG/JPG file of what to look for (relative paths resolve against the flow folder).\nCapture it with Studio's \"Snip image\" button or Win+Shift+S.",
+          "type": "string",
+          "default": ""
+        },
+        "confidence": {
+          "description": "Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI.",
+          "type": "number",
+          "format": "double",
+          "default": 0.9
+        },
+        "region": {
+          "description": "Search only this screen rectangle (much faster); null = all monitors.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout_ms": {
+          "description": "Keep searching for up to this many ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5000
+        },
+        "output_var": {
+          "description": "Variable receiving an array of matches [{x, y, left, top, width, height, score}].",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "ImageClick": {
+      "description": "Locate a picture on screen (PyAutoGUI locateOnScreen). The match is\ntolerant to small rendering differences through `confidence`.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "description": "PNG/JPG file of what to look for (relative paths resolve against the flow folder).\nCapture it with Studio's \"Snip image\" button or Win+Shift+S.",
+          "type": "string",
+          "default": ""
+        },
+        "confidence": {
+          "description": "Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI.",
+          "type": "number",
+          "format": "double",
+          "default": 0.9
+        },
+        "region": {
+          "description": "Search only this screen rectangle (much faster); null = all monitors.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout_ms": {
+          "description": "Keep searching for up to this many ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5000
+        },
+        "offset_x": {
+          "description": "Click this many pixels right of the image centre (negative = left).",
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "offset_y": {
+          "description": "Click this many pixels below the image centre (negative = above).",
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "button": {
+          "description": "left, right or middle.",
+          "$ref": "#/$defs/MouseButton",
+          "default": "left"
+        },
+        "clicks": {
+          "description": "1 = single, 2 = double click.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        }
+      }
+    },
+    "ImageWait": {
+      "description": "Locate a picture on screen (PyAutoGUI locateOnScreen). The match is\ntolerant to small rendering differences through `confidence`.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "description": "PNG/JPG file of what to look for (relative paths resolve against the flow folder).\nCapture it with Studio's \"Snip image\" button or Win+Shift+S.",
+          "type": "string",
+          "default": ""
+        },
+        "confidence": {
+          "description": "Required similarity 0.0-1.0 (1.0 = pixel-perfect). 0.9 suits most UI.",
+          "type": "number",
+          "format": "double",
+          "default": 0.9
+        },
+        "region": {
+          "description": "Search only this screen rectangle (much faster); null = all monitors.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout_ms": {
+          "description": "Keep searching for up to this many ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5000
+        }
+      }
+    },
+    "DialogButtons": {
+      "type": "string",
+      "enum": [
+        "ok",
+        "ok_cancel",
+        "yes_no",
+        "yes_no_cancel",
+        "retry_cancel"
+      ]
+    },
+    "DialogIcon": {
+      "type": "string",
+      "enum": [
+        "info",
+        "warning",
+        "error",
+        "question",
+        "none"
+      ]
+    },
+    "MessageBox": {
+      "description": "A message box (PyAutoGUI alert / confirm). Blocks until the user answers.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Window title of the dialog.",
+          "type": "string",
+          "default": "AutoFlowMate"
+        },
+        "text": {
+          "description": "Message text (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "buttons": {
+          "description": "ok, ok_cancel, yes_no, yes_no_cancel or retry_cancel.",
+          "$ref": "#/$defs/DialogButtons",
+          "default": "ok"
+        },
+        "icon": {
+          "description": "info, warning, error, question or none.",
+          "$ref": "#/$defs/DialogIcon",
+          "default": "info"
+        },
+        "output_var": {
+          "description": "Variable receiving the clicked button: ok, cancel, yes, no, retry.",
+          "type": "string",
+          "default": "answer"
+        }
+      }
+    },
+    "InputBox": {
+      "description": "Ask the user to type a value (PyAutoGUI prompt / password).",
+      "type": "object",
+      "properties": {
+        "title": {
+          "description": "Window title of the dialog.",
+          "type": "string",
+          "default": "AutoFlowMate"
+        },
+        "prompt": {
+          "description": "Question shown above the text box (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "default": {
+          "description": "Initial text.",
+          "type": "string",
+          "default": ""
+        },
+        "password": {
+          "description": "Mask the input (for passwords). The value is never written to the log.",
+          "type": "boolean",
+          "default": false
+        },
+        "output_var": {
+          "description": "Variable receiving the text.",
+          "type": "string",
+          "default": "input"
+        },
+        "fail_on_cancel": {
+          "description": "Fail the step when the user presses Cancel (otherwise the variable is set to \"\").",
+          "type": "boolean",
+          "default": true
         }
       }
     }

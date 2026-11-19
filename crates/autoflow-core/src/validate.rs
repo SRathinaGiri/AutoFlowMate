@@ -23,7 +23,9 @@ pub struct Issue {
     pub message: String,
 }
 
-const COMMON_KEYS: &[&str] = &["action", "id", "enabled", "comment", "on_error", "retries", "retry_delay_ms"];
+const COMMON_KEYS: &[&str] = &[
+    "action", "id", "enabled", "comment", "on_error", "retries", "retry_delay_ms", "delay_before_ms", "delay_after_ms",
+];
 
 /// Validate flow JSON text. Returns the parsed flow (if it parses) and all issues found.
 pub fn validate_json(text: &str) -> (Option<Flow>, Vec<Issue>) {
@@ -112,6 +114,18 @@ fn similar(a: &str, b: &str) -> bool {
 
 /// Semantic checks on the parsed flow.
 fn check_flow(flow: &Flow, issues: &mut Vec<Issue>) {
+    let s = &flow.settings;
+    if !s.abort_hotkey.trim().is_empty() {
+        if let Err(e) = crate::failsafe::parse_hotkey(&s.abort_hotkey) {
+            issues.push(err("settings.abort_hotkey", e.to_string()));
+        }
+    }
+    if !s.failsafe && s.abort_hotkey.trim().is_empty() {
+        issues.push(warn("settings", "fail-safe and abort hotkey are both off: a runaway flow can only be stopped from Studio/Task Manager".into()));
+    }
+    if s.key_delay_ms > 2000 {
+        issues.push(warn("settings.key_delay_ms", format!("{} ms per keystroke is very slow", s.key_delay_ms)));
+    }
     let mut ids = HashSet::new();
     let mut defined: HashSet<String> = flow.variables.keys().cloned().collect();
     defined.insert("last_error".into());
@@ -265,6 +279,34 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
         }
         Action::UiWait(x) => check_selector(&x.target, loc, issues),
         Action::ClipboardGet(x) => need(issues, "output_var", &x.output_var),
+        Action::KeyDown(x) | Action::KeyUp(x) => {
+            need(issues, "keys", &x.keys);
+            if !x.keys.contains("${") && !x.keys.trim().is_empty() {
+                if let Err(e) = crate::input::parse_combo(&x.keys) {
+                    issues.push(err(loc, format!("{}: {e}", a.name())));
+                }
+            }
+        }
+        Action::MouseDown(x) | Action::MouseUp(x) if x.x.is_some() != x.y.is_some() => {
+            issues.push(err(loc, format!("{}: set both x and y, or neither", a.name())))
+        }
+        Action::PixelGet(x) => need(issues, "output_var", &x.output_var),
+        Action::PixelMatches(x) => {
+            need(issues, "output_var", &x.output_var);
+            if !x.color.contains("${") {
+                if let Err(e) = crate::vision::parse_hex(&x.color) {
+                    issues.push(err(loc, format!("pixel_matches: {e}")));
+                }
+            }
+        }
+        Action::ImageFind(x) => check_image(&x.target, loc, issues),
+        Action::ImageFindAll(x) => {
+            check_image(&x.target, loc, issues);
+            need(issues, "output_var", &x.output_var);
+        }
+        Action::ImageClick(x) => check_image(&x.target, loc, issues),
+        Action::ImageWait(x) | Action::ImageWaitVanish(x) => check_image(&x.target, loc, issues),
+        Action::InputBox(x) => need(issues, "output_var", &x.output_var),
         Action::Screenshot(x) => need(issues, "path", &x.path),
         Action::Break(_) if loop_depth == 0 => issues.push(err(loc, "break used outside of a loop".into())),
         Action::MouseClick(x) if x.x.is_some() != x.y.is_some() => issues.push(err(loc, "mouse_click: set both x and y, or neither".into())),
@@ -272,6 +314,22 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             issues.push(err(loc, "for_each: \"items\" is required".into()))
         }
         _ => {}
+    }
+}
+
+fn check_image(t: &crate::actions::ImageTarget, loc: &str, issues: &mut Vec<Issue>) {
+    if t.image.trim().is_empty() {
+        issues.push(err(loc, "\"image\" is required (a PNG of what to find)".into()));
+    }
+    if !(0.0..=1.0).contains(&t.confidence) {
+        issues.push(err(loc, "confidence must be between 0.0 and 1.0".into()));
+    } else if t.confidence < 0.7 {
+        issues.push(warn(loc, format!("confidence {} is low; expect false matches", t.confidence)));
+    }
+    if let Some(r) = t.region {
+        if r.width == 0 || r.height == 0 {
+            issues.push(err(loc, "region width and height must be > 0".into()));
+        }
     }
 }
 

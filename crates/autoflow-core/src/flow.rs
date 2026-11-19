@@ -25,6 +25,9 @@ pub struct Flow {
     /// Flow format version. Currently 1.
     #[serde(default = "default_version")]
     pub version: u32,
+    /// Run-wide timing and safety settings.
+    #[serde(default)]
+    pub settings: Settings,
     /// Initial variables. Can be overridden at run time (`--var name=value`).
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub variables: Map<String, Value>,
@@ -44,6 +47,7 @@ impl Default for Flow {
             name: "New flow".into(),
             description: String::new(),
             version: FORMAT_VERSION,
+            settings: Settings::default(),
             variables: Map::new(),
             steps: Vec::new(),
         }
@@ -92,6 +96,39 @@ impl Flow {
     }
 }
 
+/// Run-wide timing and safety settings (the PyAutoGUI `PAUSE` / `FAILSAFE`
+/// equivalents). Command-line flags can override them for one run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Settings {
+    /// Delay between keystrokes in ms for type_text and repeated key_press.
+    /// Raise it (150-250) for slow applications such as Tally.
+    pub key_delay_ms: u64,
+    /// Pause after every mouse/keyboard action in ms (like PyAutoGUI's PAUSE).
+    pub input_pause_ms: u64,
+    /// Pause after every step in ms.
+    pub step_delay_ms: u64,
+    /// Default duration of mouse movements in ms (0 = jump instantly).
+    pub mouse_move_ms: u64,
+    /// Abort the run when the mouse is pushed into any screen corner (like PyAutoGUI's FAILSAFE).
+    pub failsafe: bool,
+    /// Key combination that aborts the run at any time, e.g. `ctrl+alt+q`. Empty = none.
+    pub abort_hotkey: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            key_delay_ms: 100,
+            input_pause_ms: 100,
+            step_delay_ms: 0,
+            mouse_move_ms: 0,
+            failsafe: true,
+            abort_hotkey: "ctrl+alt+q".into(),
+        }
+    }
+}
+
 /// Error handling policy for a step.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -125,6 +162,12 @@ pub struct Step {
     /// Delay between retries in milliseconds.
     #[serde(default = "default_retry_delay", skip_serializing_if = "is_default_retry_delay")]
     pub retry_delay_ms: u64,
+    /// Wait this many ms before the step runs.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub delay_before_ms: u64,
+    /// Wait this many ms after the step succeeds (in addition to settings.step_delay_ms).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub delay_after_ms: u64,
     #[serde(flatten)]
     pub action: Action,
 }
@@ -138,6 +181,8 @@ impl Step {
             on_error: OnError::Stop,
             retries: 0,
             retry_delay_ms: default_retry_delay(),
+            delay_before_ms: 0,
+            delay_after_ms: 0,
             action,
         }
     }

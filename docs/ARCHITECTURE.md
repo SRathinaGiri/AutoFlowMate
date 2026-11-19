@@ -38,6 +38,20 @@
   actions with suggestions, unknown or misspelled fields with the valid list, per-step type errors,
   required fields, bad key combos and control types, `break` outside loops, and undefined
   variables. The messages are written for agents to act on.
+- **Settings and fail-safe** (`flow.rs` `Settings`, `failsafe.rs`). A watcher thread polls the
+  cursor and the abort hotkey every 20 ms (`GetCursorPos` / `GetAsyncKeyState`) and sets the
+  run's stop flag with a reason. Typing, smooth moves, drags and waits check that flag between
+  keystrokes and slices, so an abort takes effect within about 20 ms. A corner or hotkey that is
+  already active when the run starts is ignored until it is released.
+- **Vision** (`vision.rs`). Screen capture goes through xcap, per monitor or region. Template
+  matching is zero-mean NCC (OpenCV `TM_CCOEFF_NORMED`): a coarse pass on a ¼–½ scale pyramid
+  level, then refinement at full resolution around the candidates. It uses integral images for
+  window statistics and splits rows across threads. The process is per-monitor DPI-aware, so
+  mouse, screenshots, UIA and image coordinates are all physical pixels.
+- **Flowchart** (`autoflow-gui/src/flowchart.rs`). It is a structured layout of the step tree, not
+  a free-form node graph: every flow stays valid JSON, with no dangling edges. Sizes are measured
+  recursively. `if` lays out two branch columns that merge, and loops get a frame with a
+  loop-back arrow. Connectors are egui drag-and-drop targets carrying `(list path, index)`.
 - **Windows specifics** are behind `cfg(windows)` (`uia.rs`, window and `ui_*` actions), so the
   core still compiles elsewhere. That leaves room for Linux/macOS backends later.
 
@@ -58,9 +72,9 @@ The GUI form, palette and CLI pick up the action with no further changes.
 | Area | Idea | Likely crate/approach |
 |---|---|---|
 | Web | `browser_open`, `browser_click` (CSS/XPath), `browser_type`, `browser_get_text`, `browser_eval` | `chromiumoxide` (CDP) or `fantoccini` (WebDriver) as a new action category |
-| Vision | `image_wait` / `image_click` (find a bitmap on screen), OCR text | template matching on `xcap` captures; Windows.Media.Ocr |
+| Vision | OCR (`ocr_read`, `text_click`), multi-scale image search | Windows.Media.Ocr via `windows` crate |
 | Recorder | Record mouse/keyboard/UIA events into steps | low-level hooks (`rdev`) plus `inspect_point` per click |
 | Data | `excel_read/write`, `csv_read`, JSON/regex helpers, arithmetic expressions | `calamine`, `rust_xlsxwriter`, `csv`, `evalexpr` |
 | Scheduling | Run flows on a timer or trigger | Windows Task Scheduler wrapper (`autoflow schedule`) |
 | Agents | MCP server exposing run/validate/inspect/windows as tools | `rmcp` |
-| Studio | Drag-and-drop reordering, undo/redo, breakpoints, variable watch | egui `dnd` |
+| Studio | Undo/redo, unsaved-changes prompt on close, breakpoints and step-through, variable watch | egui |

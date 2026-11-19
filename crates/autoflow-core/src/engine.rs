@@ -8,11 +8,11 @@ use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::actions::*;
-use crate::flow::{Flow, OnError, Step};
+use crate::flow::{Flow, OnError, Settings, Step};
 use crate::input::Input;
 use crate::vars::Vars;
 
@@ -26,16 +26,21 @@ pub enum Event {
     Finished { success: bool, message: String },
 }
 
+/// How to run a flow. `None` fields use the flow's own `settings`.
 #[derive(Debug, Clone)]
 pub struct RunOptions {
     /// Log side-effecting actions instead of performing them.
     pub dry_run: bool,
     /// Set to true from another thread to cancel the run.
     pub stop: Arc<AtomicBool>,
-    /// Pause after every step (useful to watch a flow).
-    pub step_delay_ms: u64,
-    /// Abort when the mouse is pushed into the top-left screen corner.
-    pub failsafe: bool,
+    /// Override settings.step_delay_ms.
+    pub step_delay_ms: Option<u64>,
+    /// Override settings.key_delay_ms.
+    pub key_delay_ms: Option<u64>,
+    /// Override settings.input_pause_ms.
+    pub input_pause_ms: Option<u64>,
+    /// Override settings.failsafe.
+    pub failsafe: Option<bool>,
     /// Folder used for `${flow_dir}` and relative paths. Usually the flow file's folder.
     pub flow_dir: PathBuf,
 }
@@ -45,10 +50,32 @@ impl Default for RunOptions {
         Self {
             dry_run: false,
             stop: Arc::new(AtomicBool::new(false)),
-            step_delay_ms: 0,
-            failsafe: true,
+            step_delay_ms: None,
+            key_delay_ms: None,
+            input_pause_ms: None,
+            failsafe: None,
             flow_dir: std::env::current_dir().unwrap_or_default(),
         }
+    }
+}
+
+impl RunOptions {
+    /// The flow's settings with this run's overrides applied.
+    pub fn effective(&self, s: &Settings) -> Settings {
+        let mut s = s.clone();
+        if let Some(v) = self.step_delay_ms {
+            s.step_delay_ms = v;
+        }
+        if let Some(v) = self.key_delay_ms {
+            s.key_delay_ms = v;
+        }
+        if let Some(v) = self.input_pause_ms {
+            s.input_pause_ms = v;
+        }
+        if let Some(v) = self.failsafe {
+            s.failsafe = v;
+        }
+        s
     }
 }
 
@@ -61,11 +88,41 @@ pub struct RunResult {
 
 /// Run a flow to completion. `overrides` replace the flow's initial variables.
 pub fn run_flow(flow: &Flow, overrides: Map<String, Value>, opts: &RunOptions, sink: &mut dyn FnMut(Event)) -> RunResult {
+    let settings = opts.effective(&flow.settings);
+    let reason: crate::failsafe::Reason = Arc::new(Mutex::new(None));
     let vars = Vars { map: Map::new(), flow_dir: opts.flow_dir.display().to_string() };
-    let mut ctx = Context { vars, opts, sink, input: None, #[cfg(windows)] uia: None, depth: 0 };
     let started = Instant::now();
-    let init = init_vars(&mut ctx.vars, &flow.variables, overrides);
-    let (success, message) = match init.and_then(|_| ctx.run_steps(&flow.steps, 0)) {
+
+    // Fail-safe watcher (corners + abort hotkey) for real runs.
+    let guard = if opts.dry_run {
+        Ok(None)
+    } else {
+        let hotkey = settings.abort_hotkey.clone();
+        crate::failsafe::start(opts.stop.clone(), reason.clone(), settings.failsafe, &hotkey).map(Some)
+    };
+
+    let mut ctx = Context { vars, opts, settings, reason, sink, input: None, #[cfg(windows)] uia: None, depth: 0 };
+    let result = guard.and_then(|g| {
+        if g.is_some() {
+            let s = &ctx.settings;
+            let mut parts = vec![];
+            if s.failsafe {
+                parts.push("move the mouse into a screen corner".to_string());
+            }
+            if !s.abort_hotkey.trim().is_empty() {
+                parts.push(format!("press {}", s.abort_hotkey));
+            }
+            if !parts.is_empty() {
+                ctx.log(LogLevel::Info, format!("to abort: {}", parts.join(" or ")));
+            }
+        }
+        let r = init_vars(&mut ctx.vars, &flow.variables, overrides).and_then(|_| ctx.run_steps(&flow.steps, 0));
+        drop(g);
+        r
+    });
+    // Release anything key_down/mouse_down left pressed.
+    ctx.input = None;
+    let (success, message) = match result {
         Ok(Ctl::Next) | Ok(Ctl::Break) => (true, format!("completed in {:.1}s", started.elapsed().as_secs_f64())),
         Ok(Ctl::Stop { success, message }) => (success, if message.is_empty() { "stopped".into() } else { message }),
         Err(e) => (false, format!("{e:#}")),
@@ -122,6 +179,8 @@ impl std::error::Error for Cancelled {}
 struct Context<'a> {
     vars: Vars,
     opts: &'a RunOptions,
+    settings: Settings,
+    reason: crate::failsafe::Reason,
     sink: &'a mut dyn FnMut(Event),
     input: Option<Input>,
     #[cfg(windows)]
@@ -140,9 +199,14 @@ impl<'a> Context<'a> {
         self.opts.stop.load(Ordering::Relaxed)
     }
 
+    fn cancel_error(&self) -> anyhow::Error {
+        let why = self.reason.lock().ok().and_then(|r| r.clone()).unwrap_or_else(|| "run cancelled by user".into());
+        Cancelled(why).into()
+    }
+
     fn check_cancel(&self) -> Result<()> {
         if self.cancelled() {
-            return Err(Cancelled("run cancelled by user".into()).into());
+            return Err(self.cancel_error());
         }
         Ok(())
     }
@@ -152,9 +216,9 @@ impl<'a> Context<'a> {
         let end = Instant::now() + Duration::from_millis(ms);
         while Instant::now() < end {
             self.check_cancel()?;
-            std::thread::sleep((end - Instant::now()).min(Duration::from_millis(50)));
+            std::thread::sleep((end - Instant::now()).min(Duration::from_millis(20)));
         }
-        Ok(())
+        self.check_cancel()
     }
 
     fn run_steps(&mut self, steps: &[Step], depth: usize) -> Result<Ctl> {
@@ -175,6 +239,10 @@ impl<'a> Context<'a> {
         let id = step.id.clone();
         let action = step.action.name().to_string();
         (self.sink)(Event::StepStarted { id: id.clone(), action: action.clone(), depth });
+        let dry = self.opts.dry_run;
+        if step.delay_before_ms > 0 && !dry {
+            self.sleep(step.delay_before_ms)?;
+        }
         let start = Instant::now();
         let is_container = !step.action.children().is_empty();
         let attempts = if is_container { 1 } else { step.retries + 1 };
@@ -185,6 +253,8 @@ impl<'a> Context<'a> {
             match self.exec(&step.action, depth) {
                 Ok(ctl) => break Ok(ctl),
                 Err(e) if e.is::<Cancelled>() || e.is::<Handled>() => break Err(e),
+                // Interrupted by the fail-safe/stop while typing, moving, waiting...
+                Err(_) if self.cancelled() => break Err(self.cancel_error()),
                 Err(e) if attempt < attempts => {
                     self.log(LogLevel::Warn, format!("[{id}] {action} failed (attempt {attempt}/{attempts}): {e:#}; retrying"));
                     self.sleep(step.retry_delay_ms)?;
@@ -197,8 +267,15 @@ impl<'a> Context<'a> {
         match result {
             Ok(ctl) => {
                 (self.sink)(Event::StepFinished { id, action, ok: true, error: None, millis });
-                if self.opts.step_delay_ms > 0 {
-                    self.sleep(self.opts.step_delay_ms)?;
+                if !dry {
+                    // PyAutoGUI-style PAUSE after input, then the per-step delays.
+                    let mut pause = step.delay_after_ms + self.settings.step_delay_ms;
+                    if step.action.uses_input() {
+                        pause += self.settings.input_pause_ms;
+                    }
+                    if pause > 0 && !is_container {
+                        self.sleep(pause)?;
+                    }
                 }
                 Ok(ctl)
             }
@@ -240,6 +317,14 @@ impl<'a> Context<'a> {
         }
     }
 
+    fn opt_point(&self, x: &Option<Int>, y: &Option<Int>, what: &str) -> Result<Option<(i32, i32)>> {
+        match (x, y) {
+            (Some(x), Some(y)) => Ok(Some((self.int(x)? as i32, self.int(y)? as i32))),
+            (None, None) => Ok(None),
+            _ => bail!("{what} needs both x and y, or neither"),
+        }
+    }
+
     /// Interpolate a path and make it absolute relative to the flow folder.
     fn path(&self, s: &str) -> Result<PathBuf> {
         let t = self.text(s)?;
@@ -257,21 +342,21 @@ impl<'a> Context<'a> {
         self.vars.set(name, v)
     }
 
+    /// The input device. The fail-safe watcher thread sets the stop flag;
+    /// checking it here keeps every input action responsive to it.
     fn input(&mut self) -> Result<&mut Input> {
-        if self.opts.failsafe {
-            let inp = match self.input.take() {
-                Some(i) => i,
-                None => Input::new()?,
-            };
-            let pos = inp.position().unwrap_or((1, 1));
-            self.input = Some(inp);
-            if pos == (0, 0) {
-                return Err(Cancelled("fail-safe triggered: mouse moved to the top-left corner".into()).into());
-            }
-        } else if self.input.is_none() {
+        self.check_cancel()?;
+        if self.input.is_none() {
             self.input = Some(Input::new()?);
         }
         Ok(self.input.as_mut().unwrap())
+    }
+
+    /// Move with the step's duration, or the flow default.
+    fn move_mouse(&mut self, x: i32, y: i32, duration: Option<u64>, tween: Tween) -> Result<()> {
+        let ms = duration.unwrap_or(self.settings.mouse_move_ms);
+        let stop = self.opts.stop.clone();
+        self.input()?.move_smooth(x, y, ms, tween, &stop)
     }
 
     #[cfg(windows)]
@@ -562,36 +647,57 @@ impl<'a> Context<'a> {
             Action::MouseMove(a) => {
                 let (x, y) = (self.int(&a.x)? as i32, self.int(&a.y)? as i32);
                 if !self.dry(format!("move mouse {} ({x}, {y})", if a.relative { "by" } else { "to" })) {
-                    let i = self.input()?;
-                    if a.relative { i.move_by(x, y)? } else { i.move_to(x, y)? }
+                    let (tx, ty) = if a.relative {
+                        let (cx, cy) = self.input()?.position()?;
+                        (cx + x, cy + y)
+                    } else {
+                        (x, y)
+                    };
+                    self.move_mouse(tx, ty, a.duration_ms, a.tween)?;
                 }
             }
             Action::MouseClick(a) => {
-                let pos = match (&a.x, &a.y) {
-                    (Some(x), Some(y)) => Some((self.int(x)? as i32, self.int(y)? as i32)),
-                    (None, None) => None,
-                    _ => bail!("mouse_click needs both x and y, or neither"),
-                };
+                let pos = self.opt_point(&a.x, &a.y, "mouse_click")?;
                 if !self.dry(format!("{:?} click x{} at {pos:?}", a.button, a.clicks)) {
-                    let i = self.input()?;
                     if let Some((x, y)) = pos {
-                        i.move_to(x, y)?;
+                        self.move_mouse(x, y, a.duration_ms, a.tween)?;
                         std::thread::sleep(Duration::from_millis(30));
                     }
-                    i.click(a.button, a.clicks)?;
+                    self.input()?.click_with(a.button, a.clicks, a.interval_ms)?;
+                }
+            }
+            Action::MouseDown(a) | Action::MouseUp(a) => {
+                let down = matches!(action, Action::MouseDown(_));
+                let pos = self.opt_point(&a.x, &a.y, action.name())?;
+                if !self.dry(format!("{} {:?} button at {pos:?}", if down { "press" } else { "release" }, a.button)) {
+                    if let Some((x, y)) = pos {
+                        self.move_mouse(x, y, None, Tween::Linear)?;
+                    }
+                    let i = self.input()?;
+                    if down { i.button_down(a.button)? } else { i.button_up(a.button)? }
                 }
             }
             Action::MouseScroll(a) => {
                 let n = self.int(&a.amount)? as i32;
+                let pos = self.opt_point(&a.x, &a.y, "mouse_scroll")?;
                 if !self.dry(format!("scroll {n}")) {
+                    if let Some((x, y)) = pos {
+                        self.move_mouse(x, y, None, Tween::Linear)?;
+                    }
                     self.input()?.scroll(n, a.horizontal)?;
                 }
             }
             Action::MouseDrag(a) => {
-                let from = (self.int(&a.from_x)? as i32, self.int(&a.from_y)? as i32);
-                let to = (self.int(&a.to_x)? as i32, self.int(&a.to_y)? as i32);
+                let from = match self.opt_point(&a.from_x, &a.from_y, "mouse_drag from")? {
+                    Some(p) => p,
+                    None if self.opts.dry_run => (0, 0),
+                    None => self.input()?.position()?,
+                };
+                let (tx, ty) = (self.int(&a.to_x)? as i32, self.int(&a.to_y)? as i32);
+                let to = if a.relative { (from.0 + tx, from.1 + ty) } else { (tx, ty) };
                 if !self.dry(format!("drag {from:?} -> {to:?}")) {
-                    self.input()?.drag(from, to, a.button)?;
+                    let stop = self.opts.stop.clone();
+                    self.input()?.drag_smooth(from, to, a.button, a.duration_ms, a.tween, &stop)?;
                 }
             }
             Action::MousePosition(a) => {
@@ -606,23 +712,34 @@ impl<'a> Context<'a> {
             // ---------------- keyboard
             Action::TypeText(a) => {
                 let t = self.text(&a.text)?;
-                if !self.dry(format!("type {} chars", t.chars().count())) {
-                    self.input()?.type_text_mode(&t, a.delay_ms, a.mode)?;
+                let delay = a.delay_ms.unwrap_or(self.settings.key_delay_ms);
+                if !self.dry(format!("type {} chars ({delay} ms apart)", t.chars().count())) {
+                    let stop = self.opts.stop.clone();
+                    self.input()?.type_text_mode(&t, delay, a.mode, &stop)?;
                 }
             }
             Action::KeyPress(a) => {
                 let keys = self.text(&a.keys)?;
                 crate::input::parse_combo(&keys)?; // validate even in dry-run
+                let interval = a.interval_ms.unwrap_or(self.settings.key_delay_ms);
                 if !self.dry(format!("press {keys} x{}", a.times.max(1))) {
                     for n in 0..a.times.max(1) {
                         if n > 0 {
-                            std::thread::sleep(Duration::from_millis(30));
+                            self.sleep(interval)?;
                         }
                         self.input()?.press_combo(&keys)?;
                     }
                 }
             }
-
+            Action::KeyDown(a) | Action::KeyUp(a) => {
+                let keys = self.text(&a.keys)?;
+                crate::input::parse_combo(&keys)?;
+                let down = matches!(action, Action::KeyDown(_));
+                if !self.dry(format!("{} {keys}", if down { "hold" } else { "release" })) {
+                    let i = self.input()?;
+                    if down { i.key_down(&keys)? } else { i.key_up(&keys)? }
+                }
+            }
             // ---------------- UI Automation
             #[cfg(windows)]
             Action::UiClick(a) => {
@@ -649,7 +766,8 @@ impl<'a> Context<'a> {
                         let i = self.input()?;
                         i.press_combo("ctrl+a")?;
                         i.press_combo("delete")?;
-                        i.type_text(&text, 0)?;
+                        let (delay, stop) = (self.settings.key_delay_ms, self.opts.stop.clone());
+                        self.input()?.type_text_mode(&text, delay, TypeMode::Keys, &stop)?;
                     }
                 }
             }
@@ -692,7 +810,90 @@ impl<'a> Context<'a> {
                 let p = self.path(&a.path)?;
                 let window = self.text(&a.window)?;
                 if !self.dry(format!("save screenshot to {}", p.display())) {
-                    screenshot(&p, a.monitor, &window)?;
+                    screenshot(&p, a.monitor, &window, a.region)?;
+                }
+            }
+            Action::ScreenSize(a) => {
+                let (w, h) = crate::failsafe::screen_size();
+                self.set_var(&a.width_var, json!(w))?;
+                self.set_var(&a.height_var, json!(h))?;
+            }
+            Action::PixelGet(a) => {
+                let (x, y) = (self.int(&a.x)? as i32, self.int(&a.y)? as i32);
+                let c = crate::vision::pixel(x, y)?;
+                self.set_var(&a.output_var, json!(crate::vision::hex(c)))?;
+            }
+            Action::PixelMatches(a) => {
+                let (x, y) = (self.int(&a.x)? as i32, self.int(&a.y)? as i32);
+                let want = crate::vision::parse_hex(&self.text(&a.color)?)?;
+                let got = crate::vision::pixel(x, y)?;
+                let ok = want.iter().zip(got).all(|(w, g)| w.abs_diff(g) <= a.tolerance);
+                self.set_var(&a.output_var, json!(ok.to_string()))?;
+            }
+
+            // ---------------- image recognition
+            Action::ImageFind(a) => {
+                let m = self.find_image(&a.target, false, false)?.into_iter().next();
+                self.set_var(&a.found_var, json!(m.is_some().to_string()))?;
+                if let Some(m) = m {
+                    self.set_var(&a.x_var, json!(m.x))?;
+                    self.set_var(&a.y_var, json!(m.y))?;
+                }
+            }
+            Action::ImageFindAll(a) => {
+                let all = self.find_image(&a.target, true, false)?;
+                self.set_var(&a.output_var, serde_json::to_value(all)?)?;
+            }
+            Action::ImageWait(a) => {
+                if self.opts.dry_run {
+                    self.dry(format!("wait for image {}", a.target.image));
+                } else {
+                    self.find_image(&a.target, false, true)?;
+                }
+            }
+            Action::ImageWaitVanish(a) => {
+                if !self.dry(format!("wait for image {} to disappear", a.target.image)) {
+                    let t = self.image_template(&a.target)?;
+                    let start = Instant::now();
+                    while !crate::vision::locate(&t, a.target.region, a.target.confidence, false)?.is_empty() {
+                        if start.elapsed() >= Duration::from_millis(a.target.timeout_ms) {
+                            bail!("image {} still visible after {} ms", a.target.image, a.target.timeout_ms);
+                        }
+                        self.sleep(200)?;
+                    }
+                }
+            }
+            Action::ImageClick(a) => {
+                if !self.dry(format!("click image {}", a.target.image)) {
+                    let m = self.find_image(&a.target, false, true)?[0];
+                    let (x, y) = (m.x + a.offset_x, m.y + a.offset_y);
+                    self.move_mouse(x, y, None, Tween::Linear)?;
+                    std::thread::sleep(Duration::from_millis(30));
+                    self.input()?.click_with(a.button, a.clicks, 60)?;
+                }
+            }
+
+            // ---------------- dialogs
+            Action::MessageBox(a) => {
+                let (title, text) = (self.text(&a.title)?, self.text(&a.text)?);
+                if self.dry(format!("show message \"{text}\"")) {
+                    self.set_var(&a.output_var, json!("ok"))?;
+                } else {
+                    let answer = crate::dialogs::message_box(&title, &text, a.buttons, a.icon)?;
+                    self.log(LogLevel::Info, format!("user answered: {answer}"));
+                    self.set_var(&a.output_var, json!(answer))?;
+                }
+            }
+            Action::InputBox(a) => {
+                let (title, prompt, default) = (self.text(&a.title)?, self.text(&a.prompt)?, self.text(&a.default)?);
+                if self.dry(format!("ask \"{prompt}\"")) {
+                    self.set_var(&a.output_var, json!(default))?;
+                } else {
+                    match crate::dialogs::input_box(&title, &prompt, &default, a.password)? {
+                        Some(v) => self.set_var(&a.output_var, json!(v))?,
+                        None if a.fail_on_cancel => bail!("cancelled by the user"),
+                        None => self.set_var(&a.output_var, json!(""))?,
+                    }
                 }
             }
 
@@ -700,6 +901,40 @@ impl<'a> Context<'a> {
             other => bail!("action `{}` is only supported on Windows", other.name()),
         }
         Ok(Ctl::Next)
+    }
+
+    fn image_template(&self, t: &ImageTarget) -> Result<xcap::image::GrayImage> {
+        let p = self.path(&t.image)?;
+        if !p.exists() {
+            bail!("image file not found: {}", p.display());
+        }
+        crate::vision::load_template(&p)
+    }
+
+    /// Locate an image, retrying until `timeout_ms`. With `required`, failing to find it is an error.
+    fn find_image(&mut self, t: &ImageTarget, all: bool, required: bool) -> Result<Vec<crate::vision::Match>> {
+        let tmpl = self.image_template(t)?;
+        let shown = self.text(&t.image)?;
+        if !(0.0..=1.0).contains(&t.confidence) {
+            bail!("confidence must be between 0 and 1");
+        }
+        let start = Instant::now();
+        loop {
+            let found = crate::vision::locate(&tmpl, t.region, t.confidence, all)?;
+            if !found.is_empty() {
+                let m = found[0];
+                self.log(LogLevel::Info, format!("found {shown} at ({}, {}) score {:.3}", m.x, m.y, m.score));
+                return Ok(found);
+            }
+            if start.elapsed() >= Duration::from_millis(t.timeout_ms) {
+                break;
+            }
+            self.sleep(250)?;
+        }
+        if required {
+            bail!("image {shown} not found on screen within {} ms (confidence {})", t.timeout_ms, t.confidence);
+        }
+        Ok(vec![])
     }
 
     fn selector(&self, s: &Selector) -> Result<Selector> {
@@ -780,6 +1015,9 @@ impl<'a> Context<'a> {
         }
         if !a.wait {
             // Detach stdio so a long-running program does not hold our output pipes open.
+            // Windows children inherit every inheritable handle, so also stop our
+            // own stdio from being inheritable.
+            no_inherit_std_handles();
             cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
             cmd.spawn().with_context(|| format!("start {program}"))?;
             return Ok(());
@@ -841,6 +1079,8 @@ impl<'a> Context<'a> {
             let mut child = Context {
                 vars,
                 opts: &opts,
+                settings: self.settings.clone(),
+                reason: self.reason.clone(),
                 sink: &mut *self.sink,
                 input: self.input.take(),
                 #[cfg(windows)]
@@ -886,6 +1126,29 @@ fn file_info(p: &Path) -> Value {
     })
 }
 
+/// Make this process's stdin/stdout/stderr non-inheritable, so programs started
+/// without waiting (e.g. an app the flow launches) don't keep the caller's pipes
+/// open, which would make `autoflow run ... | ...` hang until that app exits.
+fn no_inherit_std_handles() {
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetStdHandle(which: u32) -> isize;
+            fn SetHandleInformation(h: isize, mask: u32, flags: u32) -> i32;
+        }
+        const HANDLE_FLAG_INHERIT: u32 = 1;
+        for which in [-10i32, -11, -12] {
+            unsafe {
+                let h = GetStdHandle(which as u32);
+                if h != 0 && h != -1 {
+                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+    }
+}
+
 /// Do not flash a console window for helper processes.
 fn hidden(cmd: &mut Command) -> &mut Command {
     #[cfg(windows)]
@@ -912,8 +1175,10 @@ fn open_target(t: &str) -> Result<()> {
     Ok(())
 }
 
-fn screenshot(path: &Path, monitor: u32, window: &str) -> Result<()> {
-    let img = if !window.is_empty() {
+fn screenshot(path: &Path, monitor: u32, window: &str, region: Option<Region>) -> Result<()> {
+    let img = if let Some(r) = region {
+        crate::vision::capture(Some(r))?.into_iter().next().ok_or_else(|| anyhow!("capture failed"))?.0
+    } else if !window.is_empty() {
         let want = window.to_lowercase();
         let w = xcap::Window::all()?
             .into_iter()

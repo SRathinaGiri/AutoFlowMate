@@ -511,6 +511,7 @@ dependencies = [
  "anyhow",
  "autoflow-core",
  "clap",
+ "enigo",
  "serde_json",
 ]
 
@@ -536,6 +537,7 @@ name = "autoflow-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "autoflow-core",
  "eframe",
  "rfd",

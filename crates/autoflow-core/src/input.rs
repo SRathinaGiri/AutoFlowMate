@@ -2,9 +2,10 @@
 
 use anyhow::{anyhow, bail, Result};
 use enigo::{Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{thread::sleep, time::Duration};
 
-use crate::actions::MouseButton;
+use crate::actions::{MouseButton, Tween};
 
 /// Pause after pressing/before releasing modifiers so apps see them held.
 const MOD_SETTLE: Duration = Duration::from_millis(15);
@@ -32,30 +33,83 @@ impl Input {
     }
 
     pub fn click(&mut self, button: MouseButton, clicks: u32) -> Result<()> {
+        self.click_with(button, clicks, 40)
+    }
+
+    pub fn click_with(&mut self, button: MouseButton, clicks: u32, interval_ms: u64) -> Result<()> {
         let b = map_button(button);
         for i in 0..clicks.max(1) {
             if i > 0 {
-                sleep(Duration::from_millis(40));
+                sleep(Duration::from_millis(interval_ms));
             }
             self.enigo.button(b, Direction::Click).map_err(|e| anyhow!("{e}"))?;
         }
         Ok(())
     }
 
-    pub fn drag(&mut self, from: (i32, i32), to: (i32, i32), button: MouseButton) -> Result<()> {
-        let b = map_button(button);
+    pub fn button_down(&mut self, button: MouseButton) -> Result<()> {
+        self.enigo.button(map_button(button), Direction::Press).map_err(|e| anyhow!("{e}"))
+    }
+
+    pub fn button_up(&mut self, button: MouseButton) -> Result<()> {
+        self.enigo.button(map_button(button), Direction::Release).map_err(|e| anyhow!("{e}"))
+    }
+
+    /// Move to (x, y) over `duration_ms` following `tween` (PyAutoGUI moveTo).
+    /// Stops early (with an error) when `stop` is set.
+    pub fn move_smooth(&mut self, x: i32, y: i32, duration_ms: u64, tween: Tween, stop: &AtomicBool) -> Result<()> {
+        if duration_ms == 0 {
+            return self.move_to(x, y);
+        }
+        let (sx, sy) = self.position()?;
+        let start = std::time::Instant::now();
+        let total = duration_ms as f64;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                bail!("cancelled");
+            }
+            let t = (start.elapsed().as_secs_f64() * 1000.0 / total).min(1.0);
+            let e = tween.apply(t);
+            let cx = sx as f64 + (x - sx) as f64 * e;
+            let cy = sy as f64 + (y - sy) as f64 * e;
+            self.move_to(cx.round() as i32, cy.round() as i32)?;
+            if t >= 1.0 {
+                break;
+            }
+            sleep(Duration::from_millis(10));
+        }
+        self.move_to(x, y)
+    }
+
+    /// Press at `from`, move to `to` over `duration_ms`, release (PyAutoGUI dragTo).
+    pub fn drag_smooth(&mut self, from: (i32, i32), to: (i32, i32), button: MouseButton, duration_ms: u64, tween: Tween, stop: &AtomicBool) -> Result<()> {
         self.move_to(from.0, from.1)?;
         sleep(Duration::from_millis(50));
-        self.enigo.button(b, Direction::Press).map_err(|e| anyhow!("{e}"))?;
-        // Move in a few increments so applications register a drag.
-        let steps = 10;
-        for i in 1..=steps {
-            let x = from.0 + (to.0 - from.0) * i / steps;
-            let y = from.1 + (to.1 - from.1) * i / steps;
-            self.move_to(x, y)?;
-            sleep(Duration::from_millis(15));
+        self.button_down(button)?;
+        sleep(Duration::from_millis(50));
+        // Always move in increments so applications register a drag.
+        let r = self.move_smooth(to.0, to.1, duration_ms.max(100), tween, stop);
+        sleep(Duration::from_millis(50));
+        let up = self.button_up(button);
+        r.and(up)
+    }
+
+    /// Hold keys (key_down). `ctrl+shift` presses ctrl then shift.
+    pub fn key_down(&mut self, combo: &str) -> Result<()> {
+        for k in parse_combo(combo)? {
+            self.enigo.key(k, Direction::Press).map_err(|e| anyhow!("{e}"))?;
+            sleep(MOD_SETTLE);
         }
-        self.enigo.button(b, Direction::Release).map_err(|e| anyhow!("{e}"))
+        Ok(())
+    }
+
+    /// Release keys held with key_down, in reverse order.
+    pub fn key_up(&mut self, combo: &str) -> Result<()> {
+        for k in parse_combo(combo)?.into_iter().rev() {
+            self.enigo.key(k, Direction::Release).map_err(|e| anyhow!("{e}"))?;
+            sleep(MOD_SETTLE);
+        }
+        Ok(())
     }
 
     pub fn scroll(&mut self, amount: i32, horizontal: bool) -> Result<()> {
@@ -67,13 +121,16 @@ impl Input {
     /// current keyboard layout (most compatible) and falls back to Unicode
     /// injection for the rest; `unicode` injects everything as Unicode; `paste`
     /// goes through the clipboard (fastest for long text; clipboard is restored).
-    pub fn type_text_mode(&mut self, text: &str, delay_ms: u64, mode: TypeMode) -> Result<()> {
+    pub fn type_text_mode(&mut self, text: &str, delay_ms: u64, mode: TypeMode, stop: &AtomicBool) -> Result<()> {
         match mode {
             TypeMode::Paste => self.paste(text),
             TypeMode::Unicode if delay_ms == 0 => self.enigo.text(text).map_err(|e| anyhow!("{e}")),
             TypeMode::Unicode => {
                 let mut buf = [0u8; 4];
                 for c in text.chars() {
+                    if stop.load(Ordering::Relaxed) {
+                        bail!("cancelled");
+                    }
                     self.enigo.text(c.encode_utf8(&mut buf)).map_err(|e| anyhow!("{e}"))?;
                     sleep(Duration::from_millis(delay_ms));
                 }
@@ -83,6 +140,9 @@ impl Input {
                 let delay = Duration::from_millis(delay_ms.max(5));
                 let mut buf = [0u8; 4];
                 for c in text.chars() {
+                    if stop.load(Ordering::Relaxed) {
+                        bail!("cancelled");
+                    }
                     if c == '\r' {
                         continue; // "\r\n" -> a single Enter
                     }
@@ -118,7 +178,7 @@ impl Input {
     }
 
     pub fn type_text(&mut self, text: &str, delay_ms: u64) -> Result<()> {
-        self.type_text_mode(text, delay_ms, TypeMode::Keys)
+        self.type_text_mode(text, delay_ms, TypeMode::Keys, &AtomicBool::new(false))
     }
 
     fn paste(&mut self, text: &str) -> Result<()> {
