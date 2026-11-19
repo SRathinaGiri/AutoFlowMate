@@ -4,11 +4,11 @@ use anyhow::{anyhow, bail, Result};
 use serde_json::{Map, Value};
 
 /// Built-in names, resolved when no user variable has that name:
-/// `now` (2026-01-31 14:05:09), `date` (2026-01-31), `time` (14:05:09),
-/// `timestamp` (20260131_140509), `unix` (seconds), `env.NAME`,
-/// `flow_dir`, `cwd`, `newline`, `tab`.
+/// `now` (2026-01-31 14:05:09), `now:FORMAT` (e.g. `now:dd-MM-yyyy`),
+/// `date` (2026-01-31), `time` (14:05:09), `timestamp` (20260131_140509),
+/// `unix` (seconds), `env.NAME`, `flow_dir`, `cwd`, `newline`, `tab`.
 pub const BUILTINS: &[&str] = &[
-    "now", "date", "time", "timestamp", "unix", "env.NAME", "flow_dir", "cwd", "newline", "tab",
+    "now", "now:FORMAT", "date", "time", "timestamp", "unix", "env.NAME", "flow_dir", "cwd", "newline", "tab",
 ];
 
 #[derive(Debug, Clone, Default)]
@@ -57,6 +57,7 @@ impl Vars {
             "cwd" => std::env::current_dir().ok()?.display().to_string(),
             "newline" => "\r\n".into(),
             "tab" => "\t".into(),
+            _ if name.starts_with("now:") => now.format(&date_format(&name[4..])).to_string(),
             _ => {
                 let env = name.strip_prefix("env.")?;
                 std::env::var(env).ok()?
@@ -133,6 +134,34 @@ impl Vars {
     }
 }
 
+/// Turn a date pattern into a chrono format string. Accepts the common
+/// `yyyy MM dd HH hh mm ss tt` style (as in Excel/.NET: `yyyyMMdd_HHmmss`,
+/// `dd-MM-yyyy`) or a strftime string containing `%` (`%Y%m%d`), used as-is.
+pub fn date_format(pattern: &str) -> String {
+    if pattern.contains('%') {
+        return pattern.to_string();
+    }
+    const TOKENS: &[(&str, &str)] = &[
+        ("yyyy", "%Y"), ("yy", "%y"), ("MMMM", "%B"), ("MMM", "%b"), ("MM", "%m"), ("dddd", "%A"), ("ddd", "%a"),
+        ("dd", "%d"), ("HH", "%H"), ("hh", "%I"), ("mm", "%M"), ("ss", "%S"), ("fff", "%3f"), ("tt", "%p"),
+    ];
+    let mut out = String::new();
+    let mut rest = pattern;
+    'outer: while !rest.is_empty() {
+        for (tok, fmt) in TOKENS {
+            if let Some(r) = rest.strip_prefix(tok) {
+                out.push_str(fmt);
+                rest = r;
+                continue 'outer;
+            }
+        }
+        let c = rest.chars().next().unwrap();
+        out.push(c);
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
 /// How a value is rendered inside text.
 pub fn to_text(v: &Value) -> String {
     match v {
@@ -173,5 +202,16 @@ mod tests {
         assert!(v.interpolate("${missing}").is_err());
         assert_eq!(v.resolve_value(&json!("${list}")).unwrap(), json!(["a", "b"]));
         assert_eq!(v.resolve_value(&json!("${name}-${name}")).unwrap(), json!("World-World"));
+    }
+
+    #[test]
+    fn custom_date_formats() {
+        assert_eq!(date_format("yyyyMMdd_HHmmss"), "%Y%m%d_%H%M%S");
+        assert_eq!(date_format("dd-MM-yyyy hh:mm tt"), "%d-%m-%Y %I:%M %p");
+        assert_eq!(date_format("%Y/%m"), "%Y/%m");
+        let v = Vars::default();
+        let a = v.interpolate("${now:yyyyMMdd_HHmmss}").unwrap();
+        assert_eq!(a.len(), 15);
+        assert_eq!(a, v.interpolate("${timestamp}").unwrap());
     }
 }

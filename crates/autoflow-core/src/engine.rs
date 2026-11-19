@@ -467,6 +467,12 @@ impl<'a> Context<'a> {
                         Ctl::Break => break,
                         stop => return Ok(stop),
                     }
+                    // Waits are skipped in a dry run, so loops that poll for real-world
+                    // state (files, windows, the clock) would spin; one pass shows the plan.
+                    if self.opts.dry_run {
+                        self.log(LogLevel::Info, "[dry-run] while: stopping after one pass");
+                        break;
+                    }
                 }
             }
             Action::ForEach(a) => {

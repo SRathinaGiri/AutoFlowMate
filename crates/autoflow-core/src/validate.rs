@@ -178,7 +178,7 @@ fn walk(steps: &[Step], base: &str, loop_depth: usize, ids: &mut HashSet<String>
                 collect_refs(&v, &mut refs, true);
                 for r in refs {
                     let head = r.split('.').next().unwrap_or("");
-                    let builtin = crate::vars::BUILTINS.contains(&r.as_str()) || r.starts_with("env.");
+                    let builtin = crate::vars::BUILTINS.contains(&r.as_str()) || r.starts_with("env.") || r.starts_with("now:");
                     if !builtin && !defined.contains(&r) && !defined.contains(head) {
                         issues.push(warn(&loc, format!("variable `${{{r}}}` is never set in this flow (pass it with --var {head}=...)")));
                     }

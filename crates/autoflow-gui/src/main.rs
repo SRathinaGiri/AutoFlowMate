@@ -722,7 +722,7 @@ impl Studio {
         });
         ui.add_space(8.0);
         ui.label(RichText::new("Variables (JSON object)").strong());
-        ui.weak("Use them as ${name}. Built-ins: ${now} ${date} ${time} ${timestamp} ${flow_dir} ${env.USERPROFILE} ${newline}");
+        ui.weak("Use them as ${name}. Built-ins: ${now} ${now:dd-MM-yyyy} ${date} ${time} ${timestamp} ${flow_dir} ${env.USERPROFILE} ${newline}");
         let resp = ui.add(egui::TextEdit::multiline(&mut self.flow_vars_buf).code_editor().desired_rows(8).desired_width(f32::INFINITY));
         match serde_json::from_str::<Map<String, Value>>(&self.flow_vars_buf) {
             Ok(m) => {

@@ -14,7 +14,7 @@
   "variables": {
     "tally_exe": "D:\\TallyPrime\\tally.exe",
     "export_dir": "D:\\TallyPrime",
-    "export_file": "BalanceSheet_${timestamp}.xml",
+    "export_file": "BalanceSheet_${now:yyyyMMdd_HHmmss}.xml",
     "export_path": "${export_dir}\\${export_file}"
   },
   "steps": [
