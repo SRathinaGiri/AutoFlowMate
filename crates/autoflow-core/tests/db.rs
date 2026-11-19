@@ -40,6 +40,38 @@ fn sqlite_flow() {
 }
 
 #[test]
+fn dry_run_never_creates_or_changes_a_database() {
+    let dir = std::env::temp_dir().join(format!("afm_db_dry_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |steps: serde_json::Value, dry: bool| {
+        let flow: Flow = serde_json::from_value(json!({"name": "d", "steps": steps})).unwrap();
+        let opts = RunOptions { flow_dir: dir.clone(), failsafe: Some(false), dry_run: dry, ..Default::default() };
+        let mut logs = vec![];
+        let r = run_flow(&flow, Default::default(), &opts, &mut |e| {
+            if let autoflow_core::Event::Log { message, .. } = e {
+                logs.push(message)
+            }
+        });
+        (r, logs)
+    };
+    // Missing database: a dry run logs the query and creates nothing.
+    let (r, logs) = run(json!([{"id": "q", "action": "db_query", "connection": "sqlite:new/none.db", "sql": "SELECT 1 AS x", "output_var": "rows"}]), true);
+    assert!(r.success, "{}", r.message);
+    assert!(logs.iter().any(|l| l.contains("not created yet")), "{logs:?}");
+    assert!(!dir.join("new").exists(), "no folder or file created");
+    // Existing database: a dry run reads it, read-only.
+    let (r, _) = run(
+        json!([{"id": "c", "action": "db_execute", "connection": "sqlite:real.db", "sql": "CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (7);"}]),
+        false,
+    );
+    assert!(r.success, "{}", r.message);
+    let (r, _) = run(json!([{"id": "q", "action": "db_query", "connection": "sqlite:real.db", "sql": "SELECT a FROM t", "output_var": "rows"}]), true);
+    assert!(r.success, "{}", r.message);
+    assert_eq!(r.variables["rows"], json!([{"a": 7}]));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn sql_checks() {
     let text = json!({"name": "v", "steps": [
         {"id": "a", "action": "db_query", "connection": "x.db", "sql": "SELECT * FROM t WHERE a = ? AND b = '?'", "params": []},

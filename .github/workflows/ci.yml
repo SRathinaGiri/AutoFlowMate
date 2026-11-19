@@ -32,6 +32,12 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
       - name: Build
         run: cargo build --workspace --locked
 
@@ -45,3 +51,11 @@ jobs:
             .\target\debug\autoflow.exe validate $_.FullName
             if ($LASTEXITCODE -ne 0) { throw "invalid example: $($_.Name)" }
           }
+
+      - name: Generated schema and action reference are up to date
+        shell: pwsh
+        run: |
+          .\target\debug\autoflow.exe schema -o schema/flow.schema.json
+          .\target\debug\autoflow.exe docs -o skills/autoflowmate/references/actions.md
+          git diff --exit-code -- schema/flow.schema.json skills/autoflowmate/references/actions.md
+          if ($LASTEXITCODE -ne 0) { throw "run 'autoflow schema' and 'autoflow docs' and commit the result" }

@@ -74,15 +74,9 @@ pub fn read_imap(s: &ImapSettings, q: &Query) -> Result<Vec<Value>> {
     // TLS is required, except for a server on this PC (e.g. a local mail bridge).
     let local = matches!(s.host.trim().to_ascii_lowercase().as_str(), "localhost" | "127.0.0.1" | "::1");
     let mode = if local { imap::ConnectionMode::Auto } else { imap::ConnectionMode::AutoTls };
-    let client = imap::ClientBuilder::new(s.host.as_str(), s.port)
-        .mode(mode)
-        .connect()
-        .map_err(|e| anyhow!("cannot connect to {}:{}: {e}", s.host, s.port))?;
+    let client = imap::ClientBuilder::new(s.host.as_str(), s.port).mode(mode).connect().map_err(|e| anyhow!("cannot connect to {}:{}: {e}", s.host, s.port))?;
     let mut session = client.login(&s.username, &s.password).map_err(|(e, _)| {
-        anyhow!(
-            "IMAP login to {} failed: {e} (check the user name and stored password; Gmail needs IMAP enabled and an App Password)",
-            s.host
-        )
+        anyhow!("IMAP login to {} failed: {e} (check the user name and stored password; Gmail needs IMAP enabled and an App Password)", s.host)
     })?;
     let folder = if q.folder.trim().is_empty() { "INBOX" } else { q.folder.trim() };
     session.select(folder).map_err(|e| anyhow!("cannot open folder `{folder}`: {e}"))?;
@@ -119,15 +113,9 @@ pub fn read_imap(s: &ImapSettings, q: &Query) -> Result<Vec<Value>> {
 /// Turn a raw RFC 5322 message into a record, saving wanted attachments.
 pub fn parse_message(raw: &[u8], q: &Query) -> Result<Value> {
     let m = mail_parser::MessageParser::new().parse(raw).ok_or_else(|| anyhow!("unreadable message"))?;
-    let (from, from_name) = m
-        .from()
-        .and_then(|l| l.first())
-        .map(|a| (a.address().unwrap_or("").to_string(), a.name().unwrap_or("").to_string()))
-        .unwrap_or_default();
-    let to: Vec<String> = m
-        .to()
-        .map(|l| l.mailboxes().filter_map(|a| a.address().map(str::to_string)).collect())
-        .unwrap_or_default();
+    let (from, from_name) =
+        m.from().and_then(|l| l.first()).map(|a| (a.address().unwrap_or("").to_string(), a.name().unwrap_or("").to_string())).unwrap_or_default();
+    let to: Vec<String> = m.to().map(|l| l.mailboxes().filter_map(|a| a.address().map(str::to_string)).collect()).unwrap_or_default();
     let date = m
         .date()
         .and_then(|d| chrono::DateTime::parse_from_rfc3339(&d.to_rfc3339()).ok())

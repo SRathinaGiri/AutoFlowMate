@@ -30,9 +30,7 @@ pub mod secrets {
 
     pub fn get(name: &str) -> Result<String> {
         entry(name)?.get_password().map_err(|e| match e {
-            keyring::Error::NoEntry => anyhow!(
-                "no password stored under `{name}` - run `autoflow secret set {name}` (or use the 🔑 button in Studio)"
-            ),
+            keyring::Error::NoEntry => anyhow!("no password stored under `{name}` - run `autoflow secret set {name}` (or use the 🔑 button in Studio)"),
             other => anyhow!("cannot read secret `{name}`: {other}"),
         })
     }

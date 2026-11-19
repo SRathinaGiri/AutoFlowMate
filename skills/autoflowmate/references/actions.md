@@ -385,10 +385,11 @@ Write a list of records to a CSV file (Excel-friendly).
 | `header` | `true` | Write a header row with the column names. |
 | `append` | `false` | Add to the end of an existing file (the header is not repeated). |
 | `excel_bom` | `true` | Start the file with a UTF-8 marker so Excel shows non-English text correctly. |
+| `escape_formulas` | `false` | Put a ' before text starting with = + - @ so a spreadsheet shows it as text instead of running it as a formula. Use for data from e-mail, web pages or AI replies that is opened in Excel. |
 | `count_var` | `""` | Variable receiving the number of rows written (optional). |
 
 ```json
-{"action":"write_csv","path":"","data":"","columns":[],"delimiter":",","header":true,"append":false,"excel_bom":true,"count_var":""}
+{"action":"write_csv","path":"","data":"","columns":[],"delimiter":",","header":true,"append":false,"excel_bom":true,"escape_formulas":false,"count_var":""}
 ```
 
 ### `write_excel`
@@ -399,14 +400,15 @@ Write a list of records to a new Excel workbook.
 |---|---|---|
 | `path` | `""` | .xlsx workbook to create (an existing file is replaced; close it in Excel first). |
 | `sheet` | `"Sheet1"` | Sheet name. |
-| `data` | `""` | The rows: usually "${results}" - a list of records, a list of lists or a list of values. Numbers stay numbers; text starting with = is written as a formula. |
+| `data` | `""` | The rows: usually "${results}" - a list of records, a list of lists or a list of values. Numbers stay numbers; text stays text (see allow_formulas). |
 | `columns` | `[]` | Columns to write, in order (empty = every key of the records, in first-seen order). |
 | `header` | `true` | Write a bold, frozen header row with the column names. |
 | `autofit` | `true` | Size the columns to fit their contents. |
+| `allow_formulas` | `false` | Write text starting with = as a live formula (e.g. "=SUM(B2:B9)"). Off by default, so text from e-mail, web pages or AI replies can never run as a formula when the file is opened. |
 | `count_var` | `""` | Variable receiving the number of rows written (optional). |
 
 ```json
-{"action":"write_excel","path":"","sheet":"Sheet1","data":"","columns":[],"header":true,"autofit":true,"count_var":""}
+{"action":"write_excel","path":"","sheet":"Sheet1","data":"","columns":[],"header":true,"autofit":true,"allow_formulas":false,"count_var":""}
 ```
 
 ## Text

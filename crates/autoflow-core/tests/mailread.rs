@@ -32,7 +32,11 @@ fn fake_imap() -> (u16, Arc<Mutex<Vec<String>>>) {
             let reply = if cmd.starts_with("CAPABILITY") {
                 format!("* CAPABILITY IMAP4rev1 MOVE\r\n{tag} OK done\r\n")
             } else if cmd.starts_with("LOGIN") {
-                if rest.contains("\"secret\"") || rest.ends_with(" secret") { format!("{tag} OK logged in\r\n") } else { format!("{tag} NO bad password\r\n") }
+                if rest.contains("\"secret\"") || rest.ends_with(" secret") {
+                    format!("{tag} OK logged in\r\n")
+                } else {
+                    format!("{tag} NO bad password\r\n")
+                }
             } else if cmd.starts_with("SELECT") {
                 format!("* 2 EXISTS\r\n* FLAGS (\\Seen)\r\n{tag} OK [READ-WRITE] done\r\n")
             } else if cmd.starts_with("UID SEARCH") {
@@ -83,6 +87,30 @@ fn reads_marks_and_moves() {
     assert!(log.contains("UID STORE 7,5 +FLAGS (\\Seen)"), "{log}");
     assert!(log.contains("UID MOVE 7,5 Processed") || log.contains("UID MOVE 7,5 \"Processed\""), "{log}");
     std::fs::remove_dir_all(dir).ok();
+}
+
+/// A dry run reads the mail but saves no attachments and changes nothing in the mailbox.
+#[test]
+fn dry_run_reads_but_changes_nothing() {
+    use autoflow_core::{run_flow, Flow, RunOptions};
+    let (port, log) = fake_imap();
+    let secret = format!("afm-test-imap-{}", std::process::id());
+    autoflow_core::mail::secrets::set(&secret, "secret").unwrap();
+    let dir = std::env::temp_dir().join(format!("afm_imap_dry_{}", std::process::id()));
+    let flow: Flow = serde_json::from_value(serde_json::json!({"name": "dry", "steps": [
+        {"id": "r", "action": "read_email", "provider": "custom", "imap_host": "127.0.0.1", "imap_port": port,
+         "username": "me@example.com", "password_secret": secret, "mark_read": true, "move_to": "Processed",
+         "save_attachments_to": dir.display().to_string(), "output_var": "mails", "count_var": "n"}
+    ]}))
+    .unwrap();
+    let opts = RunOptions { dry_run: true, failsafe: Some(false), ..Default::default() };
+    let r = run_flow(&flow, Default::default(), &opts, &mut |_| {});
+    autoflow_core::mail::secrets::delete(&secret).ok();
+    assert!(r.success, "{}", r.message);
+    assert_eq!(r.variables["n"], 2, "messages are still read");
+    assert!(!dir.exists(), "no attachments saved in a dry run");
+    let log = log.lock().unwrap().join("\n");
+    assert!(!log.contains("UID STORE") && !log.contains("UID MOVE"), "{log}");
 }
 
 #[test]

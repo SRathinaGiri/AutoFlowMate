@@ -54,8 +54,19 @@ const AUTO_FORMATS: &[&str] = &[
     "%Y/%m/%d %H:%M:%S",
 ];
 const AUTO_DATES: &[&str] = &[
-    "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y", "%Y/%m/%d", "%Y%m%d", "%d %b %Y", "%d-%b-%Y", "%d %B %Y", "%b %d, %Y", "%B %d, %Y",
-    "%d-%b-%y", "%d/%m/%y",
+    "%Y-%m-%d",
+    "%d-%m-%Y",
+    "%d/%m/%Y",
+    "%d.%m.%Y",
+    "%Y/%m/%d",
+    "%Y%m%d",
+    "%d %b %Y",
+    "%d-%b-%Y",
+    "%d %B %Y",
+    "%b %d, %Y",
+    "%B %d, %Y",
+    "%d-%b-%y",
+    "%d/%m/%y",
 ];
 
 /// Parse a date/time. Empty = now. `format` uses the same tokens as `${now:...}`
@@ -153,7 +164,11 @@ pub fn diff(from: NaiveDateTime, to: NaiveDateTime, unit: &str) -> Result<i64> {
             } else if m < 0 && td > fd {
                 m += 1;
             }
-            if u == "years" { m / 12 } else { m }
+            if u == "years" {
+                m / 12
+            } else {
+                m
+            }
         }
     })
 }

@@ -67,9 +67,7 @@ fn devtools_ws_url(port: u16) -> Result<String> {
         buf.extend_from_slice(&chunk[..n]);
         let text = String::from_utf8_lossy(&buf).to_string();
         if let Some(h) = text.find("\r\n\r\n") {
-            let len = text[..h]
-                .lines()
-                .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()));
+            let len = text[..h].lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok()));
             let body = &buf[h + 4..];
             match len {
                 Some(len) if body.len() >= len => break Some(String::from_utf8_lossy(&body[..len]).to_string()),
@@ -80,25 +78,19 @@ fn devtools_ws_url(port: u16) -> Result<String> {
     };
     let body = body.ok_or_else(|| anyhow!("bad DevTools response"))?;
     let v: Value = serde_json::from_str(body.trim())?;
-    v.get("webSocketDebuggerUrl")
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("DevTools response has no webSocketDebuggerUrl"))
+    v.get("webSocketDebuggerUrl").and_then(Value::as_str).map(str::to_string).ok_or_else(|| anyhow!("DevTools response has no webSocketDebuggerUrl"))
 }
 
 /// Find the browser executable: "edge", "chrome" or a path.
 pub fn browser_path(which: &str) -> Result<PathBuf> {
     let w = which.trim();
     let candidates: Vec<PathBuf> = match w.to_ascii_lowercase().as_str() {
-        "" | "edge" | "msedge" => vec![
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe".into(),
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe".into(),
-        ],
+        "" | "edge" | "msedge" => {
+            vec![r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe".into(), r"C:\Program Files\Microsoft\Edge\Application\msedge.exe".into()]
+        }
         "chrome" | "google chrome" => {
-            let mut v: Vec<PathBuf> = vec![
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe".into(),
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe".into(),
-            ];
+            let mut v: Vec<PathBuf> =
+                vec![r"C:\Program Files\Google\Chrome\Application\chrome.exe".into(), r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe".into()];
             if let Ok(local) = std::env::var("LOCALAPPDATA") {
                 v.push(Path::new(&local).join(r"Google\Chrome\Application\chrome.exe"));
             }
@@ -106,10 +98,7 @@ pub fn browser_path(which: &str) -> Result<PathBuf> {
         }
         _ => vec![PathBuf::from(w)],
     };
-    candidates
-        .into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| anyhow!("browser `{which}` not found (use \"edge\", \"chrome\" or the full path to the .exe)"))
+    candidates.into_iter().find(|p| p.exists()).ok_or_else(|| anyhow!("browser `{which}` not found (use \"edge\", \"chrome\" or the full path to the .exe)"))
 }
 
 /// Turn a local path into a file:// URL; leave real URLs alone.
@@ -215,11 +204,7 @@ impl WebSession {
         let e = self.wait(css, timeout_ms)?;
         e.scroll_into_view().ok();
         if clear {
-            e.call_js_fn(
-                "function() { if ('value' in this) { this.value = ''; this.dispatchEvent(new Event('input', {bubbles: true})); } }",
-                vec![],
-                false,
-            )?;
+            e.call_js_fn("function() { if ('value' in this) { this.value = ''; this.dispatchEvent(new Event('input', {bubbles: true})); } }", vec![], false)?;
         }
         e.focus().map_err(|err| anyhow!("cannot focus {css}: {err}"))?;
         // Insert the text as one input (pages still receive beforeinput/input events);
@@ -431,9 +416,8 @@ pub fn pick_element(url: &str, which: &str, timeout_ms: u64, cancel: &dyn Fn() -
     }
     let start = std::time::Instant::now();
     loop {
-        let state = session
-            .eval("window.__afmPick ? (window.__afmPick.result ? JSON.stringify(window.__afmPick.result) : '') : 'NOINSTALL'")
-            .unwrap_or(Value::Null);
+        let state =
+            session.eval("window.__afmPick ? (window.__afmPick.result ? JSON.stringify(window.__afmPick.result) : '') : 'NOINSTALL'").unwrap_or(Value::Null);
         match state.as_str() {
             Some("NOINSTALL") | None => {
                 // New page (navigation) or not ready yet: (re)install the picker.

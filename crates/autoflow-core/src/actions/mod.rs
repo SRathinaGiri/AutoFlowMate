@@ -189,12 +189,7 @@ pub struct ForEach {
 }
 impl Default for ForEach {
     fn default() -> Self {
-        Self {
-            items: Value::String(String::new()),
-            item_var: "item".into(),
-            index_var: "index".into(),
-            steps: vec![],
-        }
+        Self { items: Value::String(String::new()), item_var: "item".into(), index_var: "index".into(), steps: vec![] }
     }
 }
 
@@ -305,14 +300,7 @@ pub struct DirList {
 }
 impl Default for DirList {
     fn default() -> Self {
-        Self {
-            path: String::new(),
-            pattern: "*".into(),
-            recursive: false,
-            include_files: true,
-            include_dirs: false,
-            output_var: "files".into(),
-        }
+        Self { path: String::new(), pattern: "*".into(), recursive: false, include_files: true, include_dirs: false, output_var: "files".into() }
     }
 }
 
@@ -327,7 +315,7 @@ pub struct PathInfo {
 
 // -------------------------------------------------------------------- programs
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct RunProgram {
     /// Executable path or name on PATH (e.g. `notepad.exe`).
@@ -346,20 +334,6 @@ pub struct RunProgram {
     pub exit_code_var: String,
     /// When waiting: fail if the exit code is not 0.
     pub check_exit_code: bool,
-}
-impl Default for RunProgram {
-    fn default() -> Self {
-        Self {
-            program: String::new(),
-            args: vec![],
-            working_dir: String::new(),
-            wait: false,
-            timeout_ms: 0,
-            output_var: String::new(),
-            exit_code_var: String::new(),
-            check_exit_code: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -460,18 +434,47 @@ impl Tween {
             Tween::Linear => t,
             Tween::EaseInQuad => t * t,
             Tween::EaseOutQuad => t * (2.0 - t),
-            Tween::EaseInOutQuad => if t < 0.5 { 2.0 * t * t } else { -1.0 + (4.0 - 2.0 * t) * t },
+            Tween::EaseInOutQuad => {
+                if t < 0.5 {
+                    2.0 * t * t
+                } else {
+                    -1.0 + (4.0 - 2.0 * t) * t
+                }
+            }
             Tween::EaseInCubic => t * t * t,
-            Tween::EaseOutCubic => { let u = t - 1.0; u * u * u + 1.0 }
-            Tween::EaseInOutCubic => if t < 0.5 { 4.0 * t * t * t } else { let u = 2.0 * t - 2.0; 0.5 * u * u * u + 1.0 },
+            Tween::EaseOutCubic => {
+                let u = t - 1.0;
+                u * u * u + 1.0
+            }
+            Tween::EaseInOutCubic => {
+                if t < 0.5 {
+                    4.0 * t * t * t
+                } else {
+                    let u = 2.0 * t - 2.0;
+                    0.5 * u * u * u + 1.0
+                }
+            }
             Tween::EaseInOutSine => -(std::f64::consts::PI * t).cos() / 2.0 + 0.5,
-            Tween::EaseOutBack => { let c1 = 1.70158; let c3 = c1 + 1.0; let u = t - 1.0; 1.0 + c3 * u * u * u + c1 * u * u }
+            Tween::EaseOutBack => {
+                let c1 = 1.70158;
+                let c3 = c1 + 1.0;
+                let u = t - 1.0;
+                1.0 + c3 * u * u * u + c1 * u * u
+            }
             Tween::EaseOutBounce => {
                 let (n1, d1) = (7.5625, 2.75);
-                if t < 1.0 / d1 { n1 * t * t }
-                else if t < 2.0 / d1 { let u = t - 1.5 / d1; n1 * u * u + 0.75 }
-                else if t < 2.5 / d1 { let u = t - 2.25 / d1; n1 * u * u + 0.9375 }
-                else { let u = t - 2.625 / d1; n1 * u * u + 0.984375 }
+                if t < 1.0 / d1 {
+                    n1 * t * t
+                } else if t < 2.0 / d1 {
+                    let u = t - 1.5 / d1;
+                    n1 * u * u + 0.75
+                } else if t < 2.5 / d1 {
+                    let u = t - 2.25 / d1;
+                    n1 * u * u + 0.9375
+                } else {
+                    let u = t - 2.625 / d1;
+                    n1 * u * u + 0.984375
+                }
             }
         }
     }
@@ -1687,6 +1690,9 @@ pub struct WriteCsv {
     pub append: bool,
     /// Start the file with a UTF-8 marker so Excel shows non-English text correctly.
     pub excel_bom: bool,
+    /// Put a ' before text starting with = + - @ so a spreadsheet shows it as text instead of
+    /// running it as a formula. Use for data from e-mail, web pages or AI replies that is opened in Excel.
+    pub escape_formulas: bool,
     /// Variable receiving the number of rows written (optional).
     pub count_var: String,
 }
@@ -1700,6 +1706,7 @@ impl Default for WriteCsv {
             header: true,
             append: false,
             excel_bom: true,
+            escape_formulas: false,
             count_var: String::new(),
         }
     }
@@ -1713,7 +1720,7 @@ pub struct WriteExcel {
     /// Sheet name.
     pub sheet: String,
     /// The rows: usually "${results}" - a list of records, a list of lists or a list of values.
-    /// Numbers stay numbers; text starting with = is written as a formula.
+    /// Numbers stay numbers; text stays text (see allow_formulas).
     pub data: Value,
     /// Columns to write, in order (empty = every key of the records, in first-seen order).
     pub columns: Vec<String>,
@@ -1721,6 +1728,9 @@ pub struct WriteExcel {
     pub header: bool,
     /// Size the columns to fit their contents.
     pub autofit: bool,
+    /// Write text starting with = as a live formula (e.g. "=SUM(B2:B9)"). Off by default, so text
+    /// from e-mail, web pages or AI replies can never run as a formula when the file is opened.
+    pub allow_formulas: bool,
     /// Variable receiving the number of rows written (optional).
     pub count_var: String,
 }
@@ -1733,6 +1743,7 @@ impl Default for WriteExcel {
             columns: vec![],
             header: true,
             autofit: true,
+            allow_formulas: false,
             count_var: String::new(),
         }
     }

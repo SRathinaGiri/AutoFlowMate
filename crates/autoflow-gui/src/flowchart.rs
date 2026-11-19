@@ -8,8 +8,8 @@
 //!   existing node) onto it, or click its ⊕ to make it the insertion point.
 
 use autoflow_core::{Action, Step};
-use std::collections::HashSet;
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Vec2};
+use std::collections::HashSet;
 
 use crate::tree::{DragItem, ListPath, Selection, StepPath};
 
@@ -187,10 +187,7 @@ impl Painter<'_, '_> {
         }
         if hovering_drag {
             let w = width.max(NODE_W * z) * 0.8;
-            self.painter.line_segment(
-                [Pos2::new(cx - w / 2.0, zone.center().y), Pos2::new(cx + w / 2.0, zone.center().y)],
-                Stroke::new(3.0 * z, accent),
-            );
+            self.painter.line_segment([Pos2::new(cx - w / 2.0, zone.center().y), Pos2::new(cx + w / 2.0, zone.center().y)], Stroke::new(3.0 * z, accent));
         } else if !empty && (resp.hovered() || selected) {
             let c = zone.center();
             let r = 9.0 * z;
@@ -373,21 +370,12 @@ impl Painter<'_, '_> {
             cat_col.gamma_multiply(dim),
         );
         if !s.id.is_empty() {
-            self.painter.text(
-                Pos2::new(r.right() - pad * 0.8, r.top() + 7.0 * z),
-                Align2::RIGHT_TOP,
-                &s.id,
-                FontId::monospace(10.0 * z),
-                v.weak_text_color(),
-            );
+            self.painter.text(Pos2::new(r.right() - pad * 0.8, r.top() + 7.0 * z), Align2::RIGHT_TOP, &s.id, FontId::monospace(10.0 * z), v.weak_text_color());
         }
         let summary = (self.chart.summary)(s);
         let max_chars = ((r.width() - 2.0 * pad) / (6.3 * z)).max(4.0) as usize;
-        let short: String = if summary.chars().count() > max_chars {
-            summary.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "…"
-        } else {
-            summary.clone()
-        };
+        let short: String =
+            if summary.chars().count() > max_chars { summary.chars().take(max_chars.saturating_sub(1)).collect::<String>() + "…" } else { summary.clone() };
         self.painter.text(
             Pos2::new(r.left() + pad, r.bottom() - 7.0 * z),
             Align2::LEFT_BOTTOM,
@@ -396,7 +384,13 @@ impl Painter<'_, '_> {
             v.text_color().gamma_multiply(0.75 * dim),
         );
         if !s.enabled {
-            self.painter.text(r.right_bottom() - Vec2::new(pad * 0.8, 7.0 * z), Align2::RIGHT_BOTTOM, "off", FontId::proportional(10.0 * z), v.weak_text_color());
+            self.painter.text(
+                r.right_bottom() - Vec2::new(pad * 0.8, 7.0 * z),
+                Align2::RIGHT_BOTTOM,
+                "off",
+                FontId::proportional(10.0 * z),
+                v.weak_text_color(),
+            );
         }
         if breakpoint {
             let c = Pos2::new(r.left() - 9.0 * z, r.center().y);

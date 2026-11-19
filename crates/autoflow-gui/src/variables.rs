@@ -33,10 +33,7 @@ fn rename(flow: &mut Flow, old: &str, new: &str) -> bool {
     if old == new || flow.variables.contains_key(new) || !valid_name(new) {
         return false;
     }
-    let vars: Map<String, Value> = std::mem::take(&mut flow.variables)
-        .into_iter()
-        .map(|(k, v)| if k == old { (new.to_string(), v) } else { (k, v) })
-        .collect();
+    let vars: Map<String, Value> = std::mem::take(&mut flow.variables).into_iter().map(|(k, v)| if k == old { (new.to_string(), v) } else { (k, v) }).collect();
     flow.variables = vars;
     if let Some(t) = flow.variable_types.remove(old) {
         flow.variable_types.insert(new.to_string(), t);
@@ -60,7 +57,9 @@ fn rename(flow: &mut Flow, old: &str, new: &str) -> bool {
 pub fn show(ui: &mut egui::Ui, flow: &mut Flow, state: &mut VarsUi, flow_dir: Option<&Path>) -> bool {
     let mut changed = false;
     ui.label(RichText::new("Flow variables").strong());
-    ui.weak("Values every run starts with. Use them in any field as ${name}, or pick them in a field's Variable mode. Override at run time with --var name=value.");
+    ui.weak(
+        "Values every run starts with. Use them in any field as ${name}, or pick them in a field's Variable mode. Override at run time with --var name=value.",
+    );
     ui.add_space(6.0);
 
     let names: Vec<String> = flow.variables.keys().cloned().collect();

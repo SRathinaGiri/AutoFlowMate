@@ -7,9 +7,7 @@ use serde_json::{Map, Value};
 /// `now` (2026-01-31 14:05:09), `now:FORMAT` (e.g. `now:dd-MM-yyyy`),
 /// `date` (2026-01-31), `time` (14:05:09), `timestamp` (20260131_140509),
 /// `unix` (seconds), `env.NAME`, `flow_dir`, `cwd`, `newline`, `tab`.
-pub const BUILTINS: &[&str] = &[
-    "now", "now:FORMAT", "date", "time", "timestamp", "unix", "env.NAME", "flow_dir", "cwd", "newline", "tab",
-];
+pub const BUILTINS: &[&str] = &["now", "now:FORMAT", "date", "time", "timestamp", "unix", "env.NAME", "flow_dir", "cwd", "newline", "tab"];
 
 #[derive(Debug, Clone, Default)]
 pub struct Vars {
@@ -86,17 +84,13 @@ impl Vars {
         while let Some(pos) = rest.find('$') {
             out.push_str(&rest[..pos]);
             let after = &rest[pos..];
-            if after.starts_with("$${") {
+            if let Some(r) = after.strip_prefix("$${") {
                 out.push_str("${");
-                rest = &after[3..];
+                rest = r;
             } else if let Some(body) = after.strip_prefix("${") {
-                let end = body
-                    .find('}')
-                    .ok_or_else(|| anyhow!("unclosed `${{` in \"{text}\""))?;
+                let end = body.find('}').ok_or_else(|| anyhow!("unclosed `${{` in \"{text}\""))?;
                 let name = body[..end].trim();
-                let value = self
-                    .get(name)
-                    .ok_or_else(|| anyhow!("unknown variable `{name}`"))?;
+                let value = self.get(name).ok_or_else(|| anyhow!("unknown variable `{name}`"))?;
                 out.push_str(&to_text(&value));
                 rest = &body[end + 1..];
             } else {
@@ -142,8 +136,20 @@ pub fn date_format(pattern: &str) -> String {
         return pattern.to_string();
     }
     const TOKENS: &[(&str, &str)] = &[
-        ("yyyy", "%Y"), ("yy", "%y"), ("MMMM", "%B"), ("MMM", "%b"), ("MM", "%m"), ("dddd", "%A"), ("ddd", "%a"),
-        ("dd", "%d"), ("HH", "%H"), ("hh", "%I"), ("mm", "%M"), ("ss", "%S"), ("fff", "%3f"), ("tt", "%p"),
+        ("yyyy", "%Y"),
+        ("yy", "%y"),
+        ("MMMM", "%B"),
+        ("MMM", "%b"),
+        ("MM", "%m"),
+        ("dddd", "%A"),
+        ("ddd", "%a"),
+        ("dd", "%d"),
+        ("HH", "%H"),
+        ("hh", "%I"),
+        ("mm", "%M"),
+        ("ss", "%S"),
+        ("fff", "%3f"),
+        ("tt", "%p"),
     ];
     let mut out = String::new();
     let mut rest = pattern;
@@ -175,9 +181,7 @@ pub fn to_text(v: &Value) -> String {
 
 /// Parse `name=value` overrides; value is parsed as JSON if possible, else kept as text.
 pub fn parse_override(s: &str) -> Result<(String, Value)> {
-    let (k, v) = s
-        .split_once('=')
-        .ok_or_else(|| anyhow!("expected name=value, got `{s}`"))?;
+    let (k, v) = s.split_once('=').ok_or_else(|| anyhow!("expected name=value, got `{s}`"))?;
     let value = match serde_json::from_str::<Value>(v) {
         Ok(j @ (Value::Array(_) | Value::Object(_) | Value::Number(_) | Value::Bool(_))) => j,
         _ => Value::String(v.to_string()),

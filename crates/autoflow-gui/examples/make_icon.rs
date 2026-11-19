@@ -1,5 +1,7 @@
 //! Generates the AutoFlowMate icon: `cargo run -p autoflow-gui --example make_icon`.
 //! Writes assets/autoflowmate.png (256 px) and assets/autoflowmate.ico (16-256 px).
+// tiny-skia paints are configured field by field.
+#![allow(clippy::field_reassign_with_default)]
 
 use tiny_skia::*;
 
@@ -15,10 +17,7 @@ fn draw(size: u32) -> Pixmap {
     paint.shader = LinearGradient::new(
         Point::from_xy(0.0, 0.0),
         Point::from_xy(256.0, 256.0),
-        vec![
-            GradientStop::new(0.0, Color::from_rgba8(37, 99, 235, 255)),
-            GradientStop::new(1.0, Color::from_rgba8(124, 58, 237, 255)),
-        ],
+        vec![GradientStop::new(0.0, Color::from_rgba8(37, 99, 235, 255)), GradientStop::new(1.0, Color::from_rgba8(124, 58, 237, 255))],
         SpreadMode::Pad,
         Transform::identity(),
     )

@@ -42,9 +42,19 @@ pub fn redact(conn: &str) -> String {
         .join(";")
 }
 
-pub fn open(conn: &str, flow_dir: &Path) -> Result<Conn> {
-    if let Some(p) = sqlite_path(conn) {
-        let path = if p == ":memory:" || Path::new(&p).is_absolute() { p.clone() } else { flow_dir.join(&p).display().to_string() };
+/// The file a SQLite connection string points at (relative to the flow folder).
+pub fn sqlite_file(conn: &str, flow_dir: &Path) -> Option<String> {
+    sqlite_path(conn).map(|p| if p == ":memory:" || Path::new(&p).is_absolute() { p } else { flow_dir.join(&p).display().to_string() })
+}
+
+/// Open a database. `read_only` (dry runs) opens SQLite without write access and never creates it.
+pub fn open(conn: &str, flow_dir: &Path, read_only: bool) -> Result<Conn> {
+    if let Some(path) = sqlite_file(conn, flow_dir) {
+        if read_only {
+            let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI;
+            let c = rusqlite::Connection::open_with_flags(&path, flags).with_context(|| format!("cannot open SQLite database {path}"))?;
+            return Ok(Conn::Sqlite(c));
+        }
         if path != ":memory:" {
             if let Some(dir) = Path::new(&path).parent() {
                 std::fs::create_dir_all(dir).ok();
@@ -55,9 +65,7 @@ pub fn open(conn: &str, flow_dir: &Path) -> Result<Conn> {
         return Ok(Conn::Sqlite(c));
     }
     let env = odbc_api::environment().map_err(|e| anyhow!("ODBC is not available: {e}"))?;
-    let c = env
-        .connect_with_connection_string(conn, odbc_api::ConnectionOptions::default())
-        .map_err(|e| anyhow!("cannot connect to {}: {e}", redact(conn)))?;
+    let c = env.connect_with_connection_string(conn, odbc_api::ConnectionOptions::default()).map_err(|e| anyhow!("cannot connect to {}: {e}", redact(conn)))?;
     Ok(Conn::Odbc(c))
 }
 
@@ -200,7 +208,7 @@ mod tests {
 
     #[test]
     fn sqlite_round_trip() {
-        let mut c = open(":memory:", Path::new(".")).unwrap();
+        let mut c = open(":memory:", Path::new("."), false).unwrap();
         let n = execute(&mut c, "CREATE TABLE t (id INTEGER, name TEXT, amount REAL); INSERT INTO t VALUES (1, 'a', 1.5);", &[]).unwrap();
         assert_eq!(n, 1);
         assert_eq!(execute(&mut c, "INSERT INTO t VALUES (?, ?, ?)", &[json!(2), json!("O'Brien"), json!(99.25)]).unwrap(), 1);

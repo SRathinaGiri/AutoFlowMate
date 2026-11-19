@@ -2,7 +2,7 @@
 
 use autoflow_core::{run_flow, Event, Flow, RunOptions};
 use serde_json::{json, Map};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn tmpdir(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("autoflow_test_{name}_{}", std::process::id()));
@@ -11,9 +11,9 @@ fn tmpdir(name: &str) -> PathBuf {
     d
 }
 
-fn run(flow: serde_json::Value, dir: &PathBuf) -> (autoflow_core::RunResult, Vec<Event>) {
+fn run(flow: serde_json::Value, dir: &Path) -> (autoflow_core::RunResult, Vec<Event>) {
     let flow: Flow = serde_json::from_value(flow).unwrap();
-    let opts = RunOptions { flow_dir: dir.clone(), failsafe: Some(false), ..Default::default() };
+    let opts = RunOptions { flow_dir: dir.to_path_buf(), failsafe: Some(false), ..Default::default() };
     let mut events = vec![];
     let r = run_flow(&flow, Map::new(), &opts, &mut |e| events.push(e));
     (r, events)

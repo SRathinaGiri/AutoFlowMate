@@ -208,8 +208,9 @@ Example: `examples/data_import_demo.json`. The GST example reads its GSTINs from
 ## Writing results, text, dates and maths
 
 Collect results with `list_append` (a record per row) and save them with `write_csv` (Excel
-friendly UTF-8, appending without a second header) or `write_excel` (bold frozen header, fitted
-columns, numbers stay numbers). `text_extract` pulls values out of text with a regular
+friendly UTF-8, appending without a second header, optional `escape_formulas`) or `write_excel`
+(bold frozen header, fitted columns, numbers stay numbers; text that starts with `=` stays text
+unless `allow_formulas` is set, so data from mail, web or AI can't run as a formula). `text_extract` pulls values out of text with a regular
 expression, for example an invoice number from a PDF, and `text_replace`, `text_split`,
 `text_join` and `text_transform` do the rest. `date_calc` formats, adds to and compares dates
 (day-first input such as 31/01/2026 and Excel date numbers are understood), and `calculate`
@@ -371,7 +372,9 @@ regardless. You can also log any manual run with `autoflow run flow.json --log r
 
 ## Using with AI agents
 
-Copy or link `skills/autoflowmate` into your agent's skill folder, for Claude Code:
+`SKILL.md` holds the workflow, safety rules and action-selection order; topic guides (data, AI,
+e-mail, databases, OCR, web, scheduling, examples) are in `skills/autoflowmate/references/`. Copy or
+link `skills/autoflowmate` into your agent's skill folder, for Claude Code:
 
 ```powershell
 Copy-Item -Recurse skills\autoflowmate "$env:USERPROFILE\.claude\skills\autoflowmate"
@@ -404,3 +407,7 @@ Built on [enigo](https://crates.io/crates/enigo) (mouse/keyboard),
 [ureq](https://crates.io/crates/ureq) (HTTP), [rusqlite](https://crates.io/crates/rusqlite) and
 [odbc-api](https://crates.io/crates/odbc-api) (databases), [fasteval](https://crates.io/crates/fasteval)
 (maths) and the [windows](https://crates.io/crates/windows) crate (Windows OCR).
+
+## License
+
+MIT: free to use, change and share, including commercially, with no warranty. See [LICENSE](LICENSE).

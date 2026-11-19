@@ -113,9 +113,8 @@ fn bearer(r: &Request) -> Vec<(String, String)> {
 
 /// LM Studio / Ollama: the first model the server lists (the loaded one).
 fn first_local_model(r: &Request, base: &str) -> Result<String> {
-    let v = http::get_json(&format!("{base}/models"), &bearer(r), Duration::from_secs(10)).map_err(|e| {
-        anyhow!("cannot reach the local AI server at {base} ({e}). Start LM Studio's local server (Developer tab) or Ollama, and load a model")
-    })?;
+    let v = http::get_json(&format!("{base}/models"), &bearer(r), Duration::from_secs(10))
+        .map_err(|e| anyhow!("cannot reach the local AI server at {base} ({e}). Start LM Studio's local server (Developer tab) or Ollama, and load a model"))?;
     v.get("data")
         .and_then(Value::as_array)
         .and_then(|a| a.first())
@@ -176,11 +175,7 @@ fn gemini(r: &Request, base: &str, model: &str) -> Result<String> {
         .pointer("/content/parts")
         .and_then(Value::as_array)
         .map(|parts| {
-            parts
-                .iter()
-                .filter(|p| !p.get("thought").and_then(Value::as_bool).unwrap_or(false))
-                .filter_map(|p| p.get("text").and_then(Value::as_str))
-                .collect()
+            parts.iter().filter(|p| !p.get("thought").and_then(Value::as_bool).unwrap_or(false)).filter_map(|p| p.get("text").and_then(Value::as_str)).collect()
         })
         .unwrap_or_default();
     if text.trim().is_empty() {
@@ -286,8 +281,8 @@ pub fn pick_label(reply: &str, labels: &[String]) -> Option<String> {
         while let Some(i) = hay[from..].find(&needle) {
             let s = from + i;
             let e = s + needle.len();
-            let before = hay[..s].chars().next_back().map_or(true, |c| !c.is_alphanumeric());
-            let after = hay[e..].chars().next().map_or(true, |c| !c.is_alphanumeric());
+            let before = hay[..s].chars().next_back().is_none_or(|c| !c.is_alphanumeric());
+            let after = hay[e..].chars().next().is_none_or(|c| !c.is_alphanumeric());
             if before && after {
                 let better = match best {
                     None => true,

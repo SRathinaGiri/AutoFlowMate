@@ -120,11 +120,7 @@ pub fn read_csv_raw(path: &Path, delimiter: &str) -> Result<Vec<Vec<Value>>> {
 
 fn detect_delimiter(text: &str) -> u8 {
     let first = text.lines().next().unwrap_or("");
-    [b',', b';', b'\t', b'|']
-        .into_iter()
-        .max_by_key(|d| first.bytes().filter(|b| b == d).count())
-        .filter(|d| first.as_bytes().contains(d))
-        .unwrap_or(b',')
+    (*b",;\t|").into_iter().max_by_key(|d| first.bytes().filter(|b| b == d).count()).filter(|d| first.as_bytes().contains(d)).unwrap_or(b',')
 }
 
 fn is_blank(v: &Value) -> bool {
@@ -203,10 +199,7 @@ pub fn shape(mut rows: Vec<Vec<Value>>, has_header: bool, column: &str, skip_emp
 
 /// Header names of a table (first row), for editors.
 pub fn headers(rows: &[Vec<Value>]) -> Vec<String> {
-    rows.iter()
-        .find(|r| !r.iter().all(is_blank))
-        .map(|r| r.iter().map(|v| crate::vars::to_text(v).trim().to_string()).collect())
-        .unwrap_or_default()
+    rows.iter().find(|r| !r.iter().all(is_blank)).map(|r| r.iter().map(|v| crate::vars::to_text(v).trim().to_string()).collect()).unwrap_or_default()
 }
 
 /// Text of a PDF; `pages` like "1-3,5" (empty = all). Returns (text, page count).
@@ -342,10 +335,7 @@ pub fn to_table(data: &Value, columns: &[String]) -> Result<Table> {
 
 /// Object field by exact name, else case-insensitively; missing = "".
 fn lookup(m: &Map<String, Value>, key: &str) -> Value {
-    m.get(key)
-        .or_else(|| m.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v))
-        .cloned()
-        .unwrap_or(Value::String(String::new()))
+    m.get(key).or_else(|| m.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v)).cloned().unwrap_or(Value::String(String::new()))
 }
 
 fn cell_text(v: &Value) -> String {
@@ -355,9 +345,15 @@ fn cell_text(v: &Value) -> String {
     }
 }
 
+/// Text a spreadsheet would run as a formula when the file is opened.
+pub fn looks_like_formula(s: &str) -> bool {
+    matches!(s.chars().next(), Some('=' | '+' | '-' | '@' | '\t' | '\r'))
+}
+
 /// Write a table as CSV. With `append` and an existing file, the header is not repeated.
 /// `bom` adds the UTF-8 marker Excel needs to show non-English text correctly.
-pub fn write_csv(path: &Path, t: &Table, delimiter: &str, header: bool, append: bool, bom: bool) -> Result<usize> {
+/// `escape_formulas` puts a ' before text starting with = + - @ so Excel shows it instead of running it.
+pub fn write_csv(path: &Path, t: &Table, delimiter: &str, header: bool, append: bool, bom: bool, escape_formulas: bool) -> Result<usize> {
     use std::io::Write;
     let delim = match delimiter {
         "" | "," => b',',
@@ -384,15 +380,24 @@ pub fn write_csv(path: &Path, t: &Table, delimiter: &str, header: bool, append: 
         w.write_record(&t.headers)?;
     }
     for r in &t.rows {
-        w.write_record(r.iter().map(cell_text))?;
+        w.write_record(r.iter().map(|v| {
+            let t = cell_text(v);
+            // Numbers such as -5 are data, not formulas.
+            if escape_formulas && v.is_string() && looks_like_formula(&t) && t.trim().parse::<f64>().is_err() {
+                format!("'{t}")
+            } else {
+                t
+            }
+        }))?;
     }
     w.flush()?;
     Ok(t.rows.len())
 }
 
 /// Write a table to a new .xlsx workbook (replacing the file). Numbers and
-/// booleans stay numbers/booleans; text starting with `=` becomes a formula.
-pub fn write_excel(path: &Path, sheet: &str, t: &Table, header: bool, autofit: bool) -> Result<usize> {
+/// booleans stay numbers/booleans. Text starting with `=` is written as text,
+/// or as a formula when `allow_formulas` is set.
+pub fn write_excel(path: &Path, sheet: &str, t: &Table, header: bool, autofit: bool, allow_formulas: bool) -> Result<usize> {
     use rust_xlsxwriter::{Format, Workbook};
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -421,7 +426,7 @@ pub fn write_excel(path: &Path, sheet: &str, t: &Table, header: bool, autofit: b
                 Value::Number(n) => {
                     ws.write_number(row, c, n.as_f64().unwrap_or(0.0))?;
                 }
-                Value::String(s) if s.starts_with('=') && s.len() > 1 => {
+                Value::String(s) if allow_formulas && s.starts_with('=') && s.len() > 1 => {
                     ws.write_formula(row, c, s.as_str())?;
                 }
                 Value::String(s) => {
@@ -463,15 +468,27 @@ mod write_tests {
         let dir = std::env::temp_dir().join(format!("afm_csv_{}", std::process::id()));
         let p = dir.join("out.csv");
         let t = to_table(&json!([{"Comment": "bad, \"awful\"", "Label": "UnFav"}]), &[]).unwrap();
-        write_csv(&p, &t, ",", true, false, true).unwrap();
-        write_csv(&p, &t, ",", true, true, true).unwrap();
+        write_csv(&p, &t, ",", true, false, true, false).unwrap();
+        write_csv(&p, &t, ",", true, true, true, false).unwrap();
         let rows = read_csv_raw(&p, ",").unwrap();
         assert_eq!(rows.len(), 3, "header once, two data rows: {rows:?}");
         assert_eq!(rows[1][0], json!("bad, \"awful\""));
         let x = dir.join("out.xlsx");
-        write_excel(&x, "Results", &t, true, true).unwrap();
+        write_excel(&x, "Results", &t, true, true, false).unwrap();
         let (_, raw) = read_excel_raw(&x, "Results", "").unwrap();
         assert_eq!(raw[1][1], json!("UnFav"));
+
+        // Formula-looking text from outside stays text unless formulas are allowed / escaped.
+        let risky = to_table(&json!([{"v": "=HYPERLINK(\"http://x\")", "n": -5, "s": "-5"}]), &[]).unwrap();
+        let x2 = dir.join("risky.xlsx");
+        write_excel(&x2, "S", &risky, true, false, false).unwrap();
+        let (_, raw) = read_excel_raw(&x2, "S", "").unwrap();
+        assert_eq!(raw[1][0], json!("=HYPERLINK(\"http://x\")"), "written as plain text");
+        let c2 = dir.join("risky.csv");
+        write_csv(&c2, &risky, ",", true, false, false, true).unwrap();
+        let text = std::fs::read_to_string(&c2).unwrap();
+        assert!(text.contains("\"'=HYPERLINK(\"\"http://x\"\")\""), "{text}");
+        assert!(text.contains(",-5,-5"), "numbers are not escaped: {text}");
         std::fs::remove_dir_all(dir).ok();
     }
 }

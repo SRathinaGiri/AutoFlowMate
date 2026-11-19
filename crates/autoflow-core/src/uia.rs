@@ -39,10 +39,8 @@ impl Uia {
         };
         let mut out: Vec<UIElement> = kids.iter().filter(|w| matches(w)).cloned().collect();
         if out.is_empty() && !title.is_empty() {
-            let is_window = self
-                .auto
-                .create_property_condition(UIProperty::ControlType, (ControlType::Window as i32).into(), None)
-                .map_err(|e| anyhow!("{e}"))?;
+            let is_window =
+                self.auto.create_property_condition(UIProperty::ControlType, (ControlType::Window as i32).into(), None).map_err(|e| anyhow!("{e}"))?;
             for k in &kids {
                 if let Ok(dialogs) = k.find_all(TreeScope::Children, &is_window) {
                     out.extend(dialogs.into_iter().filter(|d| matches(d)));
@@ -95,9 +93,7 @@ impl Uia {
     }
 
     pub fn close(&self, w: &UIElement) -> Result<()> {
-        w.get_pattern::<UIWindowPattern>()
-            .and_then(|p| p.close())
-            .map_err(|e| anyhow!("cannot close window: {e}"))
+        w.get_pattern::<UIWindowPattern>().and_then(|p| p.close()).map_err(|e| anyhow!("cannot close window: {e}"))
     }
 
     pub fn set_state(&self, w: &UIElement, state: WindowState) -> Result<()> {
@@ -106,9 +102,7 @@ impl Uia {
             WindowState::Maximized => WindowVisualState::Maximized,
             WindowState::Minimized => WindowVisualState::Minimized,
         };
-        w.get_pattern::<UIWindowPattern>()
-            .and_then(|p| p.set_window_visual_state(s))
-            .map_err(|e| anyhow!("cannot change window state: {e}"))
+        w.get_pattern::<UIWindowPattern>().and_then(|p| p.set_window_visual_state(s)).map_err(|e| anyhow!("cannot change window state: {e}"))
     }
 
     /// Find an element matching the selector, retrying until `timeout_ms`.
@@ -120,11 +114,8 @@ impl Uia {
         let deadline = Duration::from_millis(sel.timeout_ms);
         let cond = self.condition(sel)?;
         loop {
-            let scopes: Vec<UIElement> = if sel.window.is_empty() {
-                vec![self.auto.get_root_element().map_err(|e| anyhow!("{e}"))?]
-            } else {
-                self.windows(&sel.window, false)?
-            };
+            let scopes: Vec<UIElement> =
+                if sel.window.is_empty() { vec![self.auto.get_root_element().map_err(|e| anyhow!("{e}"))?] } else { self.windows(&sel.window, false)? };
             for scope in &scopes {
                 if let Ok(e) = scope.find_first(TreeScope::Descendants, &cond) {
                     return Ok(e);
@@ -267,11 +258,21 @@ impl ElementInfo {
 
 fn describe(sel: &Selector) -> String {
     let mut parts = Vec::new();
-    if !sel.window.is_empty() { parts.push(format!("window~\"{}\"", sel.window)); }
-    if !sel.name.is_empty() { parts.push(format!("name{}\"{}\"", if sel.name_contains { "~" } else { "=" }, sel.name)); }
-    if !sel.automation_id.is_empty() { parts.push(format!("automation_id=\"{}\"", sel.automation_id)); }
-    if !sel.class_name.is_empty() { parts.push(format!("class_name=\"{}\"", sel.class_name)); }
-    if !sel.control_type.is_empty() { parts.push(format!("control_type={}", sel.control_type)); }
+    if !sel.window.is_empty() {
+        parts.push(format!("window~\"{}\"", sel.window));
+    }
+    if !sel.name.is_empty() {
+        parts.push(format!("name{}\"{}\"", if sel.name_contains { "~" } else { "=" }, sel.name));
+    }
+    if !sel.automation_id.is_empty() {
+        parts.push(format!("automation_id=\"{}\"", sel.automation_id));
+    }
+    if !sel.class_name.is_empty() {
+        parts.push(format!("class_name=\"{}\"", sel.class_name));
+    }
+    if !sel.control_type.is_empty() {
+        parts.push(format!("control_type={}", sel.control_type));
+    }
     parts.join(" ")
 }
 

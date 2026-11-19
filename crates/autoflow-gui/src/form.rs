@@ -24,13 +24,34 @@ fn choices(key: &str) -> Option<&'static [&'static str]> {
         "buttons" => &["ok", "ok_cancel", "yes_no", "yes_no_cancel", "retry_cancel"],
         "icon" => &["info", "warning", "error", "question", "none"],
         "tween" => &[
-            "linear", "ease_in_quad", "ease_out_quad", "ease_in_out_quad", "ease_in_cubic", "ease_out_cubic",
-            "ease_in_out_cubic", "ease_in_out_sine", "ease_out_back", "ease_out_bounce",
+            "linear",
+            "ease_in_quad",
+            "ease_out_quad",
+            "ease_in_out_quad",
+            "ease_in_cubic",
+            "ease_out_cubic",
+            "ease_in_out_cubic",
+            "ease_in_out_sine",
+            "ease_out_back",
+            "ease_out_bounce",
         ],
         "op" => &[
-            "equals", "not_equals", "contains", "not_contains", "starts_with", "ends_with", "greater_than",
-            "less_than", "greater_or_equal", "less_or_equal", "is_empty", "not_empty", "is_true", "is_false",
-            "path_exists", "matches",
+            "equals",
+            "not_equals",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+            "greater_than",
+            "less_than",
+            "greater_or_equal",
+            "less_or_equal",
+            "is_empty",
+            "not_empty",
+            "is_true",
+            "is_false",
+            "path_exists",
+            "matches",
         ],
         "browser" => &["edge", "chrome"],
         "provider" => &["gmail", "outlook365", "outlook.com", "yahoo", "zoho", "custom"],
@@ -40,16 +61,68 @@ fn choices(key: &str) -> Option<&'static [&'static str]> {
 }
 
 const CONTROL_TYPES: &[&str] = &[
-    "Button", "Edit", "Document", "Text", "CheckBox", "RadioButton", "ComboBox", "List", "ListItem", "Menu",
-    "MenuItem", "MenuBar", "Tab", "TabItem", "Tree", "TreeItem", "DataGrid", "DataItem", "Hyperlink", "Pane",
-    "Window", "ToolBar", "Group", "Custom",
+    "Button",
+    "Edit",
+    "Document",
+    "Text",
+    "CheckBox",
+    "RadioButton",
+    "ComboBox",
+    "List",
+    "ListItem",
+    "Menu",
+    "MenuItem",
+    "MenuBar",
+    "Tab",
+    "TabItem",
+    "Tree",
+    "TreeItem",
+    "DataGrid",
+    "DataItem",
+    "Hyperlink",
+    "Pane",
+    "Window",
+    "ToolBar",
+    "Group",
+    "Custom",
 ];
 
 const COMMON_KEYS: &[&str] = &[
-    "enter", "tab", "esc", "space", "backspace", "delete", "up", "down", "left", "right", "home", "end",
-    "pageup", "pagedown", "f2", "f5", "f12", "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+x", "ctrl+z", "ctrl+s",
-    "ctrl+shift+s", "ctrl+n", "ctrl+o", "ctrl+p", "ctrl+w", "ctrl+f", "ctrl+home", "alt+f4", "alt+tab",
-    "win+r", "win+d", "shift+tab",
+    "enter",
+    "tab",
+    "esc",
+    "space",
+    "backspace",
+    "delete",
+    "up",
+    "down",
+    "left",
+    "right",
+    "home",
+    "end",
+    "pageup",
+    "pagedown",
+    "f2",
+    "f5",
+    "f12",
+    "ctrl+a",
+    "ctrl+c",
+    "ctrl+v",
+    "ctrl+x",
+    "ctrl+z",
+    "ctrl+s",
+    "ctrl+shift+s",
+    "ctrl+n",
+    "ctrl+o",
+    "ctrl+p",
+    "ctrl+w",
+    "ctrl+f",
+    "ctrl+home",
+    "alt+f4",
+    "alt+tab",
+    "win+r",
+    "win+d",
+    "shift+tab",
 ];
 
 /// Built-in variables offered in "insert variable" menus.
@@ -255,10 +328,7 @@ impl Form<'_> {
                 // One file per line, plus a Browse button that adds files.
                 let mut changed = false;
                 ui.vertical(|ui| {
-                    let buf = self
-                        .json_buffers
-                        .entry(path.to_string())
-                        .or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
+                    let buf = self.json_buffers.entry(path.to_string()).or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
                     let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(260.0).hint_text("one file per line, ${variables} allowed"));
                     if resp.changed() {
                         changed = true;
@@ -291,7 +361,9 @@ impl Form<'_> {
             }
             Value::String(_) if key.ends_with("_secret") => {
                 let mut s = v.as_str().unwrap_or("").to_string();
-                let mut changed = ui.add_sized([120.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text(if key == "password_secret" { "e.g. gmail" } else { "e.g. openai" })).changed();
+                let mut changed = ui
+                    .add_sized([120.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text(if key == "password_secret" { "e.g. gmail" } else { "e.g. openai" }))
+                    .changed();
                 let stored = !s.trim().is_empty() && !s.contains("${") && autoflow_core::mail::secrets::exists(&s);
                 if stored {
                     ui.colored_label(Color32::from_rgb(70, 170, 90), "✔ stored");
@@ -314,11 +386,13 @@ impl Form<'_> {
                 changed
             }
             Value::Array(a) if a.iter().all(Value::is_string) && matches!(key, "args" | "labels" | "columns" | "params") => {
-                let buf = self
-                    .json_buffers
-                    .entry(path.to_string())
-                    .or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
-                let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(300.0).hint_text(match key { "labels" => "one label per line, e.g. Fav", "columns" => "one column per line (empty = all)", "params" => "one value per ? placeholder, in order", _ => "one argument per line" }));
+                let buf = self.json_buffers.entry(path.to_string()).or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
+                let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(300.0).hint_text(match key {
+                    "labels" => "one label per line, e.g. Fav",
+                    "columns" => "one column per line (empty = all)",
+                    "params" => "one value per ? placeholder, in order",
+                    _ => "one argument per line",
+                }));
                 if resp.changed() {
                     *a = buf.lines().map(|l| Value::String(l.to_string())).collect();
                     return true;
@@ -347,11 +421,10 @@ impl Form<'_> {
         let label = if is_pos { "current position" } else { "flow default" };
         let mut use_default = v.is_null();
         let mut changed = false;
-        if ui.checkbox(&mut use_default, label).on_hover_text(if is_pos {
-            "Use wherever the mouse is when the step runs"
-        } else {
-            "Use the value from the flow's run settings"
-        }).changed()
+        if ui
+            .checkbox(&mut use_default, label)
+            .on_hover_text(if is_pos { "Use wherever the mouse is when the step runs" } else { "Use the value from the flow's run settings" })
+            .changed()
         {
             *v = if use_default { Value::Null } else { Value::from(0) };
             changed = true;
@@ -367,13 +440,10 @@ impl Form<'_> {
         let mut is_var = v.is_string();
         let mut changed = false;
         let before = is_var;
-        egui::ComboBox::from_id_salt(format!("{path}#mode"))
-            .width(68.0)
-            .selected_text(if is_var { "Variable" } else { "Value" })
-            .show_ui(ui, |ui| {
-                ui.selectable_value(&mut is_var, false, "Value");
-                ui.selectable_value(&mut is_var, true, "Variable");
-            });
+        egui::ComboBox::from_id_salt(format!("{path}#mode")).width(68.0).selected_text(if is_var { "Variable" } else { "Value" }).show_ui(ui, |ui| {
+            ui.selectable_value(&mut is_var, false, "Value");
+            ui.selectable_value(&mut is_var, true, "Variable");
+        });
         if is_var != before {
             changed = true;
             if is_var {
@@ -422,11 +492,7 @@ impl Form<'_> {
     }
 
     fn number_vars(&self) -> Vec<String> {
-        self.vars
-            .iter()
-            .filter(|(_, t)| matches!(t, None | Some(VarType::Integer) | Some(VarType::Number)))
-            .map(|(n, _)| n.clone())
-            .collect()
+        self.vars.iter().filter(|(_, t)| matches!(t, None | Some(VarType::Integer) | Some(VarType::Number))).map(|(n, _)| n.clone()).collect()
     }
 
     fn suggest_name(&self, key: &str) -> String {
@@ -504,9 +570,8 @@ impl Form<'_> {
             });
         } else if MULTILINE.contains(&key) {
             ui.vertical(|ui| {
-                changed |= ui
-                    .add(egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(matches!(key, "script" | "sql")))
-                    .changed();
+                changed |=
+                    ui.add(egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(matches!(key, "script" | "sql"))).changed();
                 changed |= self.insert_var_menu(ui, path, &mut s, key);
             });
         } else {
@@ -662,12 +727,7 @@ impl Form<'_> {
                 changed |= self.raw_json(ui, path, v);
             } else {
                 let mut s = v.as_str().unwrap_or("").to_string();
-                let lists: Vec<String> = self
-                    .vars
-                    .iter()
-                    .filter(|(_, t)| matches!(t, None | Some(VarType::List)))
-                    .map(|(n, _)| n.clone())
-                    .collect();
+                let lists: Vec<String> = self.vars.iter().filter(|(_, t)| matches!(t, None | Some(VarType::List))).map(|(n, _)| n.clone()).collect();
                 ui.horizontal(|ui| {
                     if ui.add(egui::TextEdit::singleline(&mut s).desired_width(170.0).hint_text("${files}")).changed() {
                         changed = true;
@@ -692,10 +752,7 @@ impl Form<'_> {
 
     /// Arrays/objects edited as JSON text; applied when the text parses.
     fn raw_json(&mut self, ui: &mut egui::Ui, path: &str, v: &mut Value) -> bool {
-        let buf = self
-            .json_buffers
-            .entry(path.to_string())
-            .or_insert_with(|| serde_json::to_string_pretty(v).unwrap_or_default());
+        let buf = self.json_buffers.entry(path.to_string()).or_insert_with(|| serde_json::to_string_pretty(v).unwrap_or_default());
         let mut changed = false;
         ui.vertical(|ui| {
             let resp = ui.add(egui::TextEdit::multiline(buf).code_editor().desired_rows(3).desired_width(300.0));
@@ -765,7 +822,11 @@ trait CodeEditorIf {
 }
 impl CodeEditorIf for egui::TextEdit<'_> {
     fn code_editor_if(self, yes: bool) -> Self {
-        if yes { self.code_editor() } else { self }
+        if yes {
+            self.code_editor()
+        } else {
+            self
+        }
     }
 }
 

@@ -339,10 +339,7 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
             Ok(if ok { ExitCode::SUCCESS } else { ExitCode::from(2) })
         }
         Cmd::Actions { json, category } => {
-            let list: Vec<_> = catalog()
-                .into_iter()
-                .filter(|a| category.as_ref().map(|c| a.category.eq_ignore_ascii_case(c)).unwrap_or(true))
-                .collect();
+            let list: Vec<_> = catalog().into_iter().filter(|a| category.as_ref().map(|c| a.category.eq_ignore_ascii_case(c)).unwrap_or(true)).collect();
             if json {
                 println!("{}", serde_json::to_string_pretty(&list)?);
             } else {
@@ -418,7 +415,10 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
             let t = autoflow_core::vision::load_template(&image)?;
             let started = std::time::Instant::now();
             let found = autoflow_core::vision::locate(&t, None, confidence, all)?;
-            println!("{}", serde_json::to_string_pretty(&json!({"found": !found.is_empty(), "matches": found, "millis": started.elapsed().as_millis() as u64}))?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({"found": !found.is_empty(), "matches": found, "millis": started.elapsed().as_millis() as u64}))?
+            );
             Ok(if found.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS })
         }
         Cmd::Ocr { image, window, find, language, scale, languages } => {
@@ -531,13 +531,9 @@ impl RunLog {
         match e {
             Event::StepStarted { .. } | Event::Paused { .. } => {}
             Event::StepFinished { id, action, ok: true, millis, .. } => self.line(&format!("ok    [{id}] {action} ({millis} ms)")),
-            Event::StepFinished { id, action, error, .. } => {
-                self.line(&format!("FAIL  [{id}] {action}: {}", error.as_deref().unwrap_or("")))
-            }
+            Event::StepFinished { id, action, error, .. } => self.line(&format!("FAIL  [{id}] {action}: {}", error.as_deref().unwrap_or(""))),
             Event::Log { level, message } => self.line(&format!("{:<5} {message}", format!("{level:?}").to_uppercase())),
-            Event::Finished { success, message } => {
-                self.line(&format!("RESULT {} {message}", if *success { "SUCCESS" } else { "FAILED" }))
-            }
+            Event::Finished { success, message } => self.line(&format!("RESULT {} {message}", if *success { "SUCCESS" } else { "FAILED" })),
         }
     }
 }
@@ -690,12 +686,7 @@ fn inspect(_: u64, _: Option<Vec<i32>>) -> Result<ExitCode> {
 #[cfg(windows)]
 fn windows(json: bool) -> Result<ExitCode> {
     let uia = autoflow_core::uia::Uia::new()?;
-    let titles: Vec<String> = uia
-        .windows("", false)?
-        .into_iter()
-        .filter_map(|w| w.get_name().ok())
-        .filter(|t| !t.trim().is_empty())
-        .collect();
+    let titles: Vec<String> = uia.windows("", false)?.into_iter().filter_map(|w| w.get_name().ok()).filter(|t| !t.trim().is_empty()).collect();
     if json {
         println!("{}", serde_json::to_string_pretty(&Value::from(titles))?);
     } else {

@@ -148,11 +148,8 @@ impl Input {
                     }
                     match vk_for_char(c) {
                         Some((vk, mods)) => {
-                            let mod_keys: Vec<Key> = [(1, Key::Shift), (2, Key::Control), (4, Key::Alt)]
-                                .into_iter()
-                                .filter(|(bit, _)| mods & bit != 0)
-                                .map(|(_, k)| k)
-                                .collect();
+                            let mod_keys: Vec<Key> =
+                                [(1, Key::Shift), (2, Key::Control), (4, Key::Alt)].into_iter().filter(|(bit, _)| mods & bit != 0).map(|(_, k)| k).collect();
                             for k in &mod_keys {
                                 self.enigo.key(*k, Direction::Press).map_err(|e| anyhow!("{e}"))?;
                             }
@@ -309,13 +306,21 @@ pub fn parse_key(name: &str) -> Result<Key> {
         "volumemute" | "mute" => Key::VolumeMute,
         "plus" => Key::Unicode('+'),
         "minus" => Key::Unicode('-'),
-        f if f.len() >= 2 && f.starts_with('f') && f[1..].parse::<u8>().is_ok() => {
-            match f[1..].parse::<u8>().unwrap() {
-                1 => Key::F1, 2 => Key::F2, 3 => Key::F3, 4 => Key::F4, 5 => Key::F5, 6 => Key::F6,
-                7 => Key::F7, 8 => Key::F8, 9 => Key::F9, 10 => Key::F10, 11 => Key::F11, 12 => Key::F12,
-                _ => bail!("unsupported function key `{name}`"),
-            }
-        }
+        f if f.len() >= 2 && f.starts_with('f') && f[1..].parse::<u8>().is_ok() => match f[1..].parse::<u8>().unwrap() {
+            1 => Key::F1,
+            2 => Key::F2,
+            3 => Key::F3,
+            4 => Key::F4,
+            5 => Key::F5,
+            6 => Key::F6,
+            7 => Key::F7,
+            8 => Key::F8,
+            9 => Key::F9,
+            10 => Key::F10,
+            11 => Key::F11,
+            12 => Key::F12,
+            _ => bail!("unsupported function key `{name}`"),
+        },
         _ => {
             let mut chars = name.chars();
             match (chars.next(), chars.next()) {

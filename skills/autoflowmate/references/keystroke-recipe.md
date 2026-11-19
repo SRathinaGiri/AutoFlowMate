@@ -1,0 +1,159 @@
+# Recipe: numbered keystroke instructions to a flow
+
+Users often describe a desktop task as numbered steps ("Open X, wait 20 s, press T, press Down
+6 times…"). Translate it **one instruction per step, in order**, keeping the user's numbering in
+the ids (`s01_open`, `s07_down6`), then apply the robustness additions below.
+
+| Instruction | Step |
+|---|---|
+| Open / start `C:\App\app.exe` | `{"action":"run_program","program":"C:\\App\\app.exe","working_dir":"C:\\App"}` (put the path in `variables`) |
+| Wait N seconds | `{"action":"wait","ms":N000}` |
+| Press T / Enter / Escape / F5 | `{"action":"key_press","keys":"t"}` · `"enter"` · `"esc"` · `"f5"` |
+| Press Ctrl + E, Alt+F4, Ctrl+Shift+S | `"keys":"ctrl+e"` · `"alt+f4"` · `"ctrl+shift+s"` |
+| Press Down arrow 6 times | `{"action":"key_press","keys":"down","times":6}` (arrows: `up down left right`) |
+| Type "text" | `{"action":"type_text","text":"text"}` |
+| …with a timestamp `yyyyMMdd_HHmmss` | `"text":"Report_${now:yyyyMMdd_HHmmss}.xml"` (or `${timestamp}` for exactly that format) |
+| Wait/pause N s between **all** steps | `settings.step_delay_ms: N000` — not a `wait` between every step |
+| Click at x,y | `{"action":"mouse_click","x":X,"y":Y}` |
+
+Rules:
+
+- "Between all steps" delays go in `settings.step_delay_ms`; explicit waits in the list stay as
+  `wait` steps (they add to the step delay — mention that to the user).
+- Keyboard-driven business apps (Tally, ERP, terminal emulators) need `settings.key_delay_ms`
+  150–250 so no keystroke is lost.
+- Insert `window_activate` (title substring of the app) right before the first keystroke, so
+  keys can never go to another window. Tell the user you added it.
+- Key names are lowercase; a single letter `t` is a plain keypress (no Shift). Uppercase text
+  belongs in `type_text`.
+- Put file names/paths in `variables` so they appear once and can be overridden with `--var`.
+- Unclear instruction (which window? 12 h or 24 h clock — `hh` vs `HH`?)? Pick the safe/likely
+  meaning, say which you chose, and keep going.
+
+What to deliver by default: the faithful translation **plus** upgrades 2–4 below (they need
+nothing from the user and only replace fixed sleeps or add checks). Apply upgrade 1 only when the
+user gives you an image of the ready screen (or the app exposes a window title/UI element to
+wait for); otherwise keep their fixed wait and explain how to upgrade it. Always list every step
+you added or changed in your reply.
+
+More decisions you will meet:
+
+- **Save dialogs:** if the user names the output folder, type the full path
+  (`${out_dir}\\${file}`) into the file-name box — apps remember the last folder, so a bare
+  name may land elsewhere. Verify exactly that path.
+- **Verify before or after closing the app?** Before closing (as in the Tally example) leaves the
+  app open on the failing screen — best when a person will look. For unattended/scheduled runs,
+  close the app first and verify last, so nothing is left running.
+- **`message_box` / `input_box` wait for a click** — good for attended runs and loud failures,
+  wrong for unattended ones (the run hangs). Use `stop` with `success: false` (exit code 1)
+  for unattended failure reporting; add a message box only if the user wants a pop-up.
+- **Timestamps:** use a single token for the whole stamp (`${now:dd-MM-yyyy_HHmm}`, not two
+  `${now:…}` tokens) and define it once in `variables` — variables are evaluated once at the
+  start, so the typed name and the checked path always match.
+- **Numbers from variables:** numeric fields such as `ms`, `times`, `x`, `y`, `by`, `amount`
+  accept a `"${var}"` string, e.g. `{ "action": "wait", "ms": "${pause}" }`.
+- **Window titles** are matched as a case-insensitive substring of the top-level window (and
+  its dialogs). If unsure, ask the user to run `autoflow windows` with the app open; splash
+  screens may have a different title, so prefer the main window's stable word.
+
+Robustness upgrades:
+
+1. **Wait for a screen instead of a fixed startup sleep.** If the app shows an identifiable
+   screen when it is ready, wait for it: `image_wait` with a PNG of a stable part of that screen
+   (ask the user to snip it with Win+Shift+S or Studio's "📷 Snip image" and save it under
+   `images/` next to the flow), or `ui_wait` / `window_wait` when the app exposes UI Automation
+   elements or a distinct window title. Keep a generous `timeout_ms` (60000 for slow starts).
+2. **Wait for an output file instead of a fixed sleep**, with a clock-based deadline (independent
+   of `step_delay_ms`):
+   ```json
+   { "id": "deadline", "action": "set_variable", "name": "deadline", "value": "${unix}" },
+   { "id": "plus30", "action": "increment", "name": "deadline", "by": 30 },
+   { "id": "wait_file", "action": "while", "max_iterations": 200,
+     "condition": { "left": "${unix}", "op": "less_than", "right": "${deadline}" },
+     "steps": [
+       { "id": "exists", "action": "file_exists", "path": "${out_path}", "output_var": "done" },
+       { "id": "done_if", "action": "if", "condition": { "left": "${done}", "op": "is_true" },
+         "then": [ { "id": "brk", "action": "break" } ],
+         "else": [ { "id": "nap", "action": "wait", "ms": 500 } ] } ] }
+   ```
+3. **Verify the result and fail loudly:**
+   ```json
+   { "id": "verify", "action": "if",
+     "condition": { "left": "${out_path}", "op": "path_exists" },
+     "then": [ { "id": "info", "action": "file_info", "path": "${out_path}", "output_var": "f" },
+               { "id": "ok", "action": "log", "message": "Saved ${f.name} (${f.size} bytes)" } ],
+     "else": [ { "id": "fail", "action": "stop", "success": false,
+                 "message": "${out_path} was not created" } ] }
+   ```
+4. **Confirm the app closed** after quitting: `window_wait_close` with `on_error: "continue"`.
+
+Know where the app saves files (Tally exports into its own install folder by default) so the
+verification checks the right path; ask the user if unsure.
+
+## Worked example (Tally Balance Sheet export)
+
+Request: *"1. Open D:\TallyPrime\tally.exe 2. Wait 20 s 3. Press T 4. Wait 2 s 5. Enter 6. Wait 3 s
+7. Down ×6 8. Enter 9. Wait 3 s 10. Ctrl+E 11. C 12. Down ×16 13. Enter 14. Type
+BalanceSheet_<yyyyMMdd_hhmmss>.xml 15. Enter 16. Ctrl+A 17. E 18. Wait 10 s 19. Alt+F4 20. Esc
+21. Esc 22. Y — wait 1 s between all steps."* Result (with upgrades 1–4; the plain translation
+simply keeps `wait` 20000 for step 2 and `wait` 10000 for step 18):
+
+```json
+{
+  "name": "Tally: export Balance Sheet",
+  "version": 1,
+  "settings": { "key_delay_ms": 150, "input_pause_ms": 100, "step_delay_ms": 1000,
+                "mouse_move_ms": 0, "failsafe": true, "abort_hotkey": "ctrl+alt+q" },
+  "variables": {
+    "tally_exe": "D:\\TallyPrime\\tally.exe",
+    "export_dir": "D:\\TallyPrime",
+    "export_file": "BalanceSheet_${now:yyyyMMdd_HHmmss}.xml",
+    "export_path": "${export_dir}\\${export_file}"
+  },
+  "steps": [
+    { "id": "s01_open", "action": "run_program", "program": "${tally_exe}", "working_dir": "${export_dir}" },
+    { "id": "s02_wait_ready", "action": "image_wait", "image": "images/tally_ready.png", "confidence": 0.9, "timeout_ms": 60000 },
+    { "id": "s02b_focus", "action": "window_activate", "title": "TallyPrime", "timeout_ms": 10000 },
+    { "id": "s03_t", "action": "key_press", "keys": "t" },
+    { "id": "s04_wait", "action": "wait", "ms": 2000 },
+    { "id": "s05_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s06_wait", "action": "wait", "ms": 3000 },
+    { "id": "s07_down6", "action": "key_press", "keys": "down", "times": 6 },
+    { "id": "s08_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s09_wait", "action": "wait", "ms": 3000 },
+    { "id": "s10_export", "action": "key_press", "keys": "ctrl+e" },
+    { "id": "s11_c", "action": "key_press", "keys": "c" },
+    { "id": "s12_down16", "action": "key_press", "keys": "down", "times": 16 },
+    { "id": "s13_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s14_filename", "action": "type_text", "text": "${export_file}" },
+    { "id": "s15_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s16_ctrl_a", "action": "key_press", "keys": "ctrl+a" },
+    { "id": "s17_e", "action": "key_press", "keys": "e" },
+    { "id": "s18_deadline", "action": "set_variable", "name": "deadline", "value": "${unix}" },
+    { "id": "s18_plus30", "action": "increment", "name": "deadline", "by": 30 },
+    { "id": "s18_wait_file", "action": "while", "max_iterations": 200,
+      "condition": { "left": "${unix}", "op": "less_than", "right": "${deadline}" },
+      "steps": [
+        { "id": "s18a_exists", "action": "file_exists", "path": "${export_path}", "output_var": "exported" },
+        { "id": "s18b_done", "action": "if", "condition": { "left": "${exported}", "op": "is_true" },
+          "then": [ { "id": "s18c_break", "action": "break" } ],
+          "else": [ { "id": "s18d_wait", "action": "wait", "ms": 500 } ] } ] },
+    { "id": "s18e_verify", "action": "if", "condition": { "left": "${export_path}", "op": "path_exists" },
+      "then": [ { "id": "s18f_info", "action": "file_info", "path": "${export_path}", "output_var": "xml" },
+                { "id": "s18g_log", "action": "log", "message": "Exported ${xml.name} (${xml.size} bytes) to ${xml.parent}" } ],
+      "else": [ { "id": "s18h_fail", "action": "stop", "success": false,
+                  "message": "Export failed: ${export_path} was not created within 30 s. Tally was left open so you can see where it stopped." } ] },
+    { "id": "s19_close", "action": "key_press", "keys": "alt+f4" },
+    { "id": "s20_esc", "action": "key_press", "keys": "esc" },
+    { "id": "s21_esc", "action": "key_press", "keys": "esc" },
+    { "id": "s22_yes", "action": "key_press", "keys": "y" },
+    { "id": "s23_closed", "action": "window_wait_close", "title": "TallyPrime", "timeout_ms": 15000, "on_error": "continue" }
+  ]
+}
+```
+
+This is the complete, tested flow (also `examples/tally_balance_sheet_export.json`). The image of
+Tally's ready screen must come from the user's own screen (display scaling and licence screen
+differ per machine); without it, keep `{ "id": "s02_wait", "action": "wait", "ms": 20000 }` and
+tell the user how to upgrade it. Tally's quit sequence is Alt+F4 → "Quit? Yes/No" → Y; the extra
+Esc presses come from the user's list — keep the user's order even when a step looks redundant.

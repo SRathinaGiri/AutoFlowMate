@@ -45,9 +45,7 @@ impl Trigger {
     /// `monthly 1 09:00`, `every 30m` / `every 2h`, `logon`.
     pub fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.split_whitespace().collect();
-        let time = |t: &str| -> Result<NaiveTime> {
-            NaiveTime::parse_from_str(t, "%H:%M").map_err(|_| anyhow!("time must be HH:MM (24 h), got `{t}`"))
-        };
+        let time = |t: &str| -> Result<NaiveTime> { NaiveTime::parse_from_str(t, "%H:%M").map_err(|_| anyhow!("time must be HH:MM (24 h), got `{t}`")) };
         Ok(match parts.as_slice() {
             ["once", d, t] => {
                 let date = NaiveDate::parse_from_str(d, "%Y-%m-%d").map_err(|_| anyhow!("date must be YYYY-MM-DD, got `{d}`"))?;
@@ -76,12 +74,8 @@ impl Trigger {
             }
             ["every", n] => {
                 let n = n.to_ascii_lowercase();
-                let minutes = if let Some(h) = n.strip_suffix('h') {
-                    h.parse::<u32>().map(|h| h * 60)
-                } else {
-                    n.trim_end_matches('m').parse::<u32>()
-                }
-                .map_err(|_| anyhow!("interval must look like 30m or 2h"))?;
+                let minutes = if let Some(h) = n.strip_suffix('h') { h.parse::<u32>().map(|h| h * 60) } else { n.trim_end_matches('m').parse::<u32>() }
+                    .map_err(|_| anyhow!("interval must look like 30m or 2h"))?;
                 if minutes == 0 {
                     bail!("interval must be at least 1 minute");
                 }
@@ -101,11 +95,9 @@ impl Trigger {
             Trigger::Once { at } => format!("once on {}", at.format("%Y-%m-%d at %H:%M")),
             Trigger::Daily { time } => format!("daily at {}", time.format("%H:%M")),
             Trigger::Weekdays { time } => format!("Monday-Friday at {}", time.format("%H:%M")),
-            Trigger::Weekly { days, time } => format!(
-                "every {} at {}",
-                days.iter().map(|d| &DAY_NAMES[*d as usize][..3]).collect::<Vec<_>>().join(", "),
-                time.format("%H:%M")
-            ),
+            Trigger::Weekly { days, time } => {
+                format!("every {} at {}", days.iter().map(|d| &DAY_NAMES[*d as usize][..3]).collect::<Vec<_>>().join(", "), time.format("%H:%M"))
+            }
             Trigger::Monthly { day, time } => format!("monthly on day {day} at {}", time.format("%H:%M")),
             Trigger::Every { minutes } if minutes % 60 == 0 => format!("every {} h", minutes / 60),
             Trigger::Every { minutes } => format!("every {minutes} min"),
@@ -116,24 +108,20 @@ impl Trigger {
     fn xml(&self, user: &str) -> String {
         let today = Local::now().date_naive();
         let at = |t: &NaiveTime| format!("{}T{}", today.format("%Y-%m-%d"), t.format("%H:%M:00"));
-        let cal = |t: &NaiveTime, body: String| {
-            format!("<CalendarTrigger><StartBoundary>{}</StartBoundary><Enabled>true</Enabled>{body}</CalendarTrigger>", at(t))
-        };
+        let cal =
+            |t: &NaiveTime, body: String| format!("<CalendarTrigger><StartBoundary>{}</StartBoundary><Enabled>true</Enabled>{body}</CalendarTrigger>", at(t));
         let days = |d: &[u8]| d.iter().map(|i| format!("<{}/>", DAY_NAMES[*i as usize])).collect::<String>();
         match self {
-            Trigger::Once { at } => format!(
-                "<TimeTrigger><StartBoundary>{}</StartBoundary><Enabled>true</Enabled></TimeTrigger>",
-                at.format("%Y-%m-%dT%H:%M:00")
-            ),
+            Trigger::Once { at } => {
+                format!("<TimeTrigger><StartBoundary>{}</StartBoundary><Enabled>true</Enabled></TimeTrigger>", at.format("%Y-%m-%dT%H:%M:00"))
+            }
             Trigger::Daily { time } => cal(time, "<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>".into()),
-            Trigger::Weekdays { time } => cal(
-                time,
-                format!("<ScheduleByWeek><DaysOfWeek>{}</DaysOfWeek><WeeksInterval>1</WeeksInterval></ScheduleByWeek>", days(&[0, 1, 2, 3, 4])),
-            ),
-            Trigger::Weekly { days: d, time } => cal(
-                time,
-                format!("<ScheduleByWeek><DaysOfWeek>{}</DaysOfWeek><WeeksInterval>1</WeeksInterval></ScheduleByWeek>", days(d)),
-            ),
+            Trigger::Weekdays { time } => {
+                cal(time, format!("<ScheduleByWeek><DaysOfWeek>{}</DaysOfWeek><WeeksInterval>1</WeeksInterval></ScheduleByWeek>", days(&[0, 1, 2, 3, 4])))
+            }
+            Trigger::Weekly { days: d, time } => {
+                cal(time, format!("<ScheduleByWeek><DaysOfWeek>{}</DaysOfWeek><WeeksInterval>1</WeeksInterval></ScheduleByWeek>", days(d)))
+            }
             Trigger::Monthly { day, time } => cal(
                 time,
                 format!(
@@ -152,10 +140,9 @@ impl Trigger {
                     start.with_second(0).unwrap_or(start).format("%Y-%m-%dT%H:%M:%S")
                 )
             }
-            Trigger::Logon { delay_seconds } => format!(
-                "<LogonTrigger><Enabled>true</Enabled><UserId>{}</UserId><Delay>PT{delay_seconds}S</Delay></LogonTrigger>",
-                esc(user)
-            ),
+            Trigger::Logon { delay_seconds } => {
+                format!("<LogonTrigger><Enabled>true</Enabled><UserId>{}</UserId><Delay>PT{delay_seconds}S</Delay></LogonTrigger>", esc(user))
+            }
         }
     }
 }
@@ -204,12 +191,13 @@ impl TaskInfo {
 
 /// Make a valid task name from free text.
 pub fn sanitize_name(s: &str) -> String {
-    let t: String = s
-        .chars()
-        .map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c })
-        .collect();
+    let t: String = s.chars().map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c }).collect();
     let t = t.trim().trim_matches('.').to_string();
-    if t.is_empty() { "flow".into() } else { t }
+    if t.is_empty() {
+        "flow".into()
+    } else {
+        t
+    }
 }
 
 fn esc(s: &str) -> String {
@@ -352,9 +340,7 @@ $items = @(Get-ScheduledTask -TaskPath '\AutoFlowMate\' | ForEach-Object {
 })
 ConvertTo-Json -InputObject $items -Compress
 "#;
-    let out = hidden(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script]))
-        .output()
-        .context("cannot run PowerShell")?;
+    let out = hidden(Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", script])).output().context("cannot run PowerShell")?;
     let text = String::from_utf8_lossy(&out.stdout);
     let text = text.trim();
     if text.is_empty() || text == "null" {

@@ -96,11 +96,14 @@ fn validation_catches_mistakes() {
     let (_, issues) = validate_json(&text);
     let all = issues.iter().map(|i| format!("{} {}", i.location, i.message)).collect::<Vec<_>>().join("\n");
     assert!(all.contains("steps[2].catch[0]"), "nested catch steps are checked:\n{all}");
-    let (_, issues) = validate_json(&json!({"name": "v", "steps": [
-        {"id": "a", "action": "text_extract", "pattern": "(", "output_var": "m"},
-        {"id": "b", "action": "date_calc", "operation": "add", "unit": "fortnights", "output_var": "d"},
-        {"id": "e", "action": "ai_prompt", "provider": "openai", "prompt": "hi"}
-    ]}).to_string());
+    let (_, issues) = validate_json(
+        &json!({"name": "v", "steps": [
+            {"id": "a", "action": "text_extract", "pattern": "(", "output_var": "m"},
+            {"id": "b", "action": "date_calc", "operation": "add", "unit": "fortnights", "output_var": "d"},
+            {"id": "e", "action": "ai_prompt", "provider": "openai", "prompt": "hi"}
+        ]})
+        .to_string(),
+    );
     let all = issues.iter().map(|i| i.message.clone()).collect::<Vec<_>>().join("\n");
     assert!(all.contains("bad regular expression"), "{all}");
     assert!(all.contains("unknown unit"), "{all}");

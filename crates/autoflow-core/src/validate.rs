@@ -23,9 +23,7 @@ pub struct Issue {
     pub message: String,
 }
 
-const COMMON_KEYS: &[&str] = &[
-    "action", "id", "enabled", "comment", "on_error", "retries", "retry_delay_ms", "delay_before_ms", "delay_after_ms",
-];
+const COMMON_KEYS: &[&str] = &["action", "id", "enabled", "comment", "on_error", "retries", "retry_delay_ms", "delay_before_ms", "delay_after_ms"];
 
 /// Validate flow JSON text. Returns the parsed flow (if it parses) and all issues found.
 pub fn validate_json(text: &str) -> (Option<Flow>, Vec<Issue>) {
@@ -82,11 +80,7 @@ fn check_raw_steps(steps: &[Value], base: &str, issues: &mut Vec<Issue>) {
             issues.push(err(&loc, format!("unknown action \"{name}\"{hint}. Run `autoflow actions` for the list")));
             continue;
         };
-        let known: HashSet<&str> = info
-            .template
-            .as_object()
-            .map(|o| o.keys().map(String::as_str).collect())
-            .unwrap_or_default();
+        let known: HashSet<&str> = info.template.as_object().map(|o| o.keys().map(String::as_str).collect()).unwrap_or_default();
         for key in obj.keys() {
             if !known.contains(key.as_str()) && !COMMON_KEYS.contains(&key.as_str()) {
                 let mut valid: Vec<&str> = known.iter().copied().filter(|k| *k != "action").collect();
@@ -138,8 +132,7 @@ fn check_flow(flow: &Flow, issues: &mut Vec<Issue>) {
         }
     }
     for name in flow.variables.keys() {
-        let ok = name.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false)
-            && name.chars().all(|c| c.is_alphanumeric() || c == '_');
+        let ok = name.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false) && name.chars().all(|c| c.is_alphanumeric() || c == '_');
         if !ok {
             issues.push(warn(&format!("variables.{name}"), format!("`{name}`: use letters, digits and _ only (no spaces or dots)")));
         }
@@ -471,9 +464,7 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             if !x.pattern.contains("${") {
                 match regex::Regex::new(&x.pattern) {
                     Err(e) => issues.push(err(loc, format!("text_extract: bad regular expression: {e}"))),
-                    Ok(re) if x.group as usize >= re.captures_len() => {
-                        issues.push(err(loc, format!("text_extract: the pattern has no group {}", x.group)))
-                    }
+                    Ok(re) if x.group as usize >= re.captures_len() => issues.push(err(loc, format!("text_extract: the pattern has no group {}", x.group))),
                     _ => {}
                 }
             }
@@ -553,7 +544,10 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
                 issues.push(err(loc, "send_email: set password_secret (the name of the password stored with `autoflow secret set NAME`)".into()));
             }
             if crate::mail::provider_defaults(&x.provider).is_none() && x.smtp_host.trim().is_empty() {
-                issues.push(err(loc, format!("send_email: provider `{}` is not known; use gmail / outlook365 / outlook.com / yahoo / zoho, or set smtp_host", x.provider)));
+                issues.push(err(
+                    loc,
+                    format!("send_email: provider `{}` is not known; use gmail / outlook365 / outlook.com / yahoo / zoho, or set smtp_host", x.provider),
+                ));
             }
             if x.username.trim().is_empty() && x.from.trim().is_empty() {
                 issues.push(err(loc, "send_email: set username (your e-mail address) or from".into()));
@@ -570,9 +564,7 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
         Action::Screenshot(x) => need(issues, "path", &x.path),
         Action::Break(_) if loop_depth == 0 => issues.push(err(loc, "break used outside of a loop".into())),
         Action::MouseClick(x) if x.x.is_some() != x.y.is_some() => issues.push(err(loc, "mouse_click: set both x and y, or neither".into())),
-        Action::ForEach(x) if x.items.as_str().map(|s| s.trim().is_empty()).unwrap_or(false) => {
-            issues.push(err(loc, "for_each: \"items\" is required".into()))
-        }
+        Action::ForEach(x) if x.items.as_str().map(|s| s.trim().is_empty()).unwrap_or(false) => issues.push(err(loc, "for_each: \"items\" is required".into())),
         _ => {}
     }
 }

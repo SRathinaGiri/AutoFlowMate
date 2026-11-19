@@ -80,7 +80,7 @@
           "default": 100
         },
         "step_delay_ms": {
-          "description": "Pause after every step in ms.",
+          "description": "Pause after every action step, in ms. Not added after if / loops / try themselves:\nthe steps inside them already get it.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
@@ -204,7 +204,7 @@
           "minimum": 0
         },
         "delay_after_ms": {
-          "description": "Wait this many ms after the step succeeds (in addition to settings.step_delay_ms).",
+          "description": "Wait this many ms after the step succeeds (in addition to settings.step_delay_ms).\nIgnored on if / loops / try; put it on the last step inside instead.",
           "type": "integer",
           "format": "uint64",
           "minimum": 0
@@ -2193,6 +2193,11 @@
           "type": "boolean",
           "default": true
         },
+        "escape_formulas": {
+          "description": "Put a ' before text starting with = + - @ so a spreadsheet shows it as text instead of\nrunning it as a formula. Use for data from e-mail, web pages or AI replies that is opened in Excel.",
+          "type": "boolean",
+          "default": false
+        },
         "count_var": {
           "description": "Variable receiving the number of rows written (optional).",
           "type": "string",
@@ -2214,7 +2219,7 @@
           "default": "Sheet1"
         },
         "data": {
-          "description": "The rows: usually \"${results}\" - a list of records, a list of lists or a list of values.\nNumbers stay numbers; text starting with = is written as a formula.",
+          "description": "The rows: usually \"${results}\" - a list of records, a list of lists or a list of values.\nNumbers stay numbers; text stays text (see allow_formulas).",
           "default": ""
         },
         "columns": {
@@ -2234,6 +2239,11 @@
           "description": "Size the columns to fit their contents.",
           "type": "boolean",
           "default": true
+        },
+        "allow_formulas": {
+          "description": "Write text starting with = as a live formula (e.g. \"=SUM(B2:B9)\"). Off by default, so text\nfrom e-mail, web pages or AI replies can never run as a formula when the file is opened.",
+          "type": "boolean",
+          "default": false
         },
         "count_var": {
           "description": "Variable receiving the number of rows written (optional).",

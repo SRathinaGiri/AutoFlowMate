@@ -9,18 +9,18 @@ pub mod engine;
 pub mod failsafe;
 pub mod flow;
 pub mod http;
-pub mod schedule;
-pub mod textops;
-pub mod vision;
-pub mod web;
 pub mod input;
 pub mod mail;
 pub mod mailread;
 pub mod ocr;
-pub mod validate;
-pub mod vars;
+pub mod schedule;
+pub mod textops;
 #[cfg(windows)]
 pub mod uia;
+pub mod validate;
+pub mod vars;
+pub mod vision;
+pub mod web;
 
 pub use actions::{catalog, Action, ActionInfo};
 pub use engine::{run_flow, Debugger, Event, RunOptions, RunResult};

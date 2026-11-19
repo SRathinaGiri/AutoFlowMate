@@ -20,12 +20,32 @@ use crate::vars::Vars;
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum Event {
-    StepStarted { id: String, action: String, depth: usize },
-    StepFinished { id: String, action: String, ok: bool, error: Option<String>, millis: u64 },
-    Log { level: LogLevel, message: String },
-    Finished { success: bool, message: String },
+    StepStarted {
+        id: String,
+        action: String,
+        depth: usize,
+    },
+    StepFinished {
+        id: String,
+        action: String,
+        ok: bool,
+        error: Option<String>,
+        millis: u64,
+    },
+    Log {
+        level: LogLevel,
+        message: String,
+    },
+    Finished {
+        success: bool,
+        message: String,
+    },
     /// Waiting before step `id` (breakpoint or step-by-step); `variables` are the current values.
-    Paused { id: String, action: String, variables: Map<String, Value> },
+    Paused {
+        id: String,
+        action: String,
+        variables: Map<String, Value>,
+    },
 }
 
 /// Breakpoints and step-by-step running, shared between the run thread and the editor.
@@ -143,7 +163,20 @@ pub fn run_flow(flow: &Flow, overrides: Map<String, Value>, opts: &RunOptions, s
         crate::failsafe::start(opts.stop.clone(), reason.clone(), settings.failsafe, &hotkey).map(Some)
     };
 
-    let mut ctx = Context { vars, opts, settings, reason, sink, input: None, #[cfg(windows)] uia: None, web: None, dbs: Default::default(), secret_vars: Default::default(), depth: 0 };
+    let mut ctx = Context {
+        vars,
+        opts,
+        settings,
+        reason,
+        sink,
+        input: None,
+        #[cfg(windows)]
+        uia: None,
+        web: None,
+        dbs: Default::default(),
+        secret_vars: Default::default(),
+        depth: 0,
+    };
     let result = guard.and_then(|g| {
         if g.is_some() {
             let s = &ctx.settings;
@@ -170,8 +203,62 @@ pub fn run_flow(flow: &Flow, overrides: Map<String, Value>, opts: &RunOptions, s
         Ok(Ctl::Stop { success, message }) => (success, if message.is_empty() { "stopped".into() } else { message }),
         Err(e) => (false, format!("{e:#}")),
     };
-    (ctx.sink)(Event::Finished { success, message: message.clone() });
-    RunResult { success, message, variables: ctx.vars.map }
+    // Typed passwords stay usable inside the run but never leave it: events, --json output, callers.
+    let secrets = ctx.secret_values();
+    let message = mask_text(&message, &secrets);
+    ctx.emit(Event::Finished { success, message: message.clone() });
+    let variables = match mask_value(Value::Object(std::mem::take(&mut ctx.vars.map)), &secrets) {
+        Value::Object(m) => m,
+        _ => Map::new(),
+    };
+    RunResult { success, message, variables }
+}
+
+/// Text shown instead of a typed password.
+pub const MASK: &str = "••••••";
+
+fn secret_values(vars: &Map<String, Value>, names: &std::collections::HashSet<String>) -> Vec<String> {
+    let mut v: Vec<String> = names.iter().filter_map(|n| vars.get(n)).filter_map(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string).collect();
+    // Longest first, so a password containing another one is masked whole.
+    v.sort_by_key(|s| std::cmp::Reverse(s.len()));
+    v
+}
+
+fn mask_text(s: &str, secrets: &[String]) -> String {
+    let mut out = s.to_string();
+    for sec in secrets {
+        if out.contains(sec.as_str()) {
+            out = out.replace(sec.as_str(), MASK);
+        }
+    }
+    out
+}
+
+/// Mask passwords anywhere in a value, including copies inside other variables and records.
+fn mask_value(v: Value, secrets: &[String]) -> Value {
+    match v {
+        Value::String(s) => Value::String(mask_text(&s, secrets)),
+        Value::Array(a) => Value::Array(a.into_iter().map(|x| mask_value(x, secrets)).collect()),
+        Value::Object(o) => Value::Object(o.into_iter().map(|(k, x)| (k, mask_value(x, secrets))).collect()),
+        other => other,
+    }
+}
+
+fn mask_event(e: Event, secrets: &[String]) -> Event {
+    match e {
+        Event::Log { level, message } => Event::Log { level, message: mask_text(&message, secrets) },
+        Event::StepFinished { id, action, ok, error, millis } => Event::StepFinished { id, action, ok, error: error.map(|m| mask_text(&m, secrets)), millis },
+        Event::Finished { success, message } => Event::Finished { success, message: mask_text(&message, secrets) },
+        Event::Paused { id, action, variables } => Event::Paused {
+            id,
+            action,
+            variables: match mask_value(Value::Object(variables), secrets) {
+                Value::Object(m) => m,
+                _ => Map::new(),
+            },
+        },
+        other => other,
+    }
 }
 
 /// Set initial variables in declaration order, so later ones may reference
@@ -240,7 +327,19 @@ const MAX_SUBFLOW_DEPTH: usize = 16;
 
 impl<'a> Context<'a> {
     fn log(&mut self, level: LogLevel, message: impl Into<String>) {
-        (self.sink)(Event::Log { level, message: message.into() });
+        self.emit(Event::Log { level, message: message.into() });
+    }
+
+    /// The values of variables that hold typed passwords.
+    fn secret_values(&self) -> Vec<String> {
+        secret_values(&self.vars.map, &self.secret_vars)
+    }
+
+    /// Report an event, with any typed password replaced by a mask.
+    fn emit(&mut self, e: Event) {
+        let secrets = self.secret_values();
+        let e = if secrets.is_empty() { e } else { mask_event(e, &secrets) };
+        (self.sink)(e);
     }
 
     fn cancelled(&self) -> bool {
@@ -288,18 +387,13 @@ impl<'a> Context<'a> {
         let action = step.action.name().to_string();
         if let Some(d) = self.opts.debug.clone() {
             if d.should_pause(&id) {
-                let mut variables = self.vars.map.clone();
-                for name in &self.secret_vars {
-                    if variables.contains_key(name) {
-                        variables.insert(name.clone(), json!("••••••"));
-                    }
-                }
-                (self.sink)(Event::Paused { id: id.clone(), action: action.clone(), variables });
+                let variables = self.vars.map.clone();
+                self.emit(Event::Paused { id: id.clone(), action: action.clone(), variables });
                 d.wait(&self.opts.stop);
                 self.check_cancel()?;
             }
         }
-        (self.sink)(Event::StepStarted { id: id.clone(), action: action.clone(), depth });
+        self.emit(Event::StepStarted { id: id.clone(), action: action.clone(), depth });
         let dry = self.opts.dry_run;
         if step.delay_before_ms > 0 && !dry {
             self.sleep(step.delay_before_ms)?;
@@ -327,7 +421,7 @@ impl<'a> Context<'a> {
 
         match result {
             Ok(ctl) => {
-                (self.sink)(Event::StepFinished { id, action, ok: true, error: None, millis });
+                self.emit(Event::StepFinished { id, action, ok: true, error: None, millis });
                 if !dry {
                     // PyAutoGUI-style PAUSE after input, then the per-step delays.
                     let mut pause = step.delay_after_ms + self.settings.step_delay_ms;
@@ -341,12 +435,12 @@ impl<'a> Context<'a> {
                 Ok(ctl)
             }
             Err(e) if e.is::<Cancelled>() || e.is::<Handled>() => {
-                (self.sink)(Event::StepFinished { id, action, ok: false, error: Some(format!("{e:#}")), millis });
+                self.emit(Event::StepFinished { id, action, ok: false, error: Some(format!("{e:#}")), millis });
                 Err(e)
             }
             Err(e) => {
                 let msg = format!("{e:#}");
-                (self.sink)(Event::StepFinished { id: id.clone(), action: action.clone(), ok: false, error: Some(msg.clone()), millis });
+                self.emit(Event::StepFinished { id: id.clone(), action: action.clone(), ok: false, error: Some(msg.clone()), millis });
                 match step.on_error {
                     OnError::Continue => {
                         self.log(LogLevel::Warn, format!("[{id}] {action} failed, continuing: {msg}"));
@@ -443,8 +537,14 @@ impl<'a> Context<'a> {
             }
         };
         Ok(match c.op {
-            Op::Equals => match nums { (Ok(a), Ok(b)) => a == b, _ => l == r },
-            Op::NotEquals => match nums { (Ok(a), Ok(b)) => a != b, _ => l != r },
+            Op::Equals => match nums {
+                (Ok(a), Ok(b)) => a == b,
+                _ => l == r,
+            },
+            Op::NotEquals => match nums {
+                (Ok(a), Ok(b)) => a != b,
+                _ => l != r,
+            },
             Op::Contains => l.contains(&r),
             Op::NotContains => !l.contains(&r),
             Op::StartsWith => l.starts_with(&r),
@@ -485,7 +585,8 @@ impl<'a> Context<'a> {
             Action::Increment(a) => {
                 let name = self.text(&a.name)?;
                 let cur = self.vars.get(&name).map(|v| crate::vars::to_text(&v)).unwrap_or_default();
-                let cur: f64 = if cur.trim().is_empty() { 0.0 } else { cur.trim().parse().map_err(|_| anyhow!("variable `{name}` is not a number: `{cur}`"))? };
+                let cur: f64 =
+                    if cur.trim().is_empty() { 0.0 } else { cur.trim().parse().map_err(|_| anyhow!("variable `{name}` is not a number: `{cur}`"))? };
                 let by = self.int(&a.by)? as f64;
                 let n = cur + by;
                 let v = if n.fract() == 0.0 { json!(n as i64) } else { json!(n) };
@@ -707,7 +808,7 @@ impl<'a> Context<'a> {
                 let table = crate::data::to_table(&data, &cols)?;
                 let what = format!("{} {} row(s) to {}", if a.append { "append" } else { "write" }, table.rows.len(), p.display());
                 if !self.dry(what.clone()) {
-                    let n = crate::data::write_csv(&p, &table, &self.text(&a.delimiter)?, a.header, a.append, a.excel_bom)?;
+                    let n = crate::data::write_csv(&p, &table, &self.text(&a.delimiter)?, a.header, a.append, a.excel_bom, a.escape_formulas)?;
                     self.log(LogLevel::Info, format!("{} {n} row(s) to {}", if a.append { "appended" } else { "wrote" }, p.display()));
                 }
                 self.set_var(&a.count_var, json!(table.rows.len()))?;
@@ -719,7 +820,7 @@ impl<'a> Context<'a> {
                 let table = crate::data::to_table(&data, &cols)?;
                 let sheet = self.text(&a.sheet)?;
                 if !self.dry(format!("write {} row(s) to {} [{sheet}]", table.rows.len(), p.display())) {
-                    let n = crate::data::write_excel(&p, &sheet, &table, a.header, a.autofit)?;
+                    let n = crate::data::write_excel(&p, &sheet, &table, a.header, a.autofit, a.allow_formulas)?;
                     self.log(LogLevel::Info, format!("wrote {n} row(s) to {} [{sheet}]", p.display()));
                 }
                 self.set_var(&a.count_var, json!(table.rows.len()))?;
@@ -729,6 +830,19 @@ impl<'a> Context<'a> {
             Action::DbQuery(a) => {
                 let sql = self.text(&a.sql)?;
                 let params = self.db_params(&a.params)?;
+                // A dry run reads existing databases but never creates a SQLite file.
+                if self.opts.dry_run {
+                    let conn = self.text(&a.db.connection)?;
+                    if let Some(f) = crate::db::sqlite_file(&conn, &self.opts.flow_dir) {
+                        if f != ":memory:" && !Path::new(&f).exists() {
+                            let short: String = sql.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
+                            self.dry(format!("query {f} (not created yet): {short}"));
+                            self.set_var(&a.count_var, json!(0))?;
+                            self.set_var(&a.output_var, json!([]))?;
+                            return Ok(Ctl::Next);
+                        }
+                    }
+                }
                 let conn = self.db(&a.db)?;
                 let rows = crate::db::query(conn, &sql, &params, a.max_rows as usize)?;
                 self.log(LogLevel::Info, format!("query returned {} row(s)", rows.len()));
@@ -902,23 +1016,12 @@ impl<'a> Context<'a> {
                         (host, if a.smtp_port == 0 { default_port } else { a.smtp_port }, sec)
                     }
                 };
-                let what = format!(
-                    "e-mail \"{}\" to {} with {} attachment(s) via {host}:{port}",
-                    mail.subject,
-                    mail.to.join(", "),
-                    mail.attachments.len()
-                );
+                let what = format!("e-mail \"{}\" to {} with {} attachment(s) via {host}:{port}", mail.subject, mail.to.join(", "), mail.attachments.len());
                 if !self.dry(format!("send {what}")) {
                     // The password is read from Windows Credential Manager only now, and never logged.
                     let password = if username.trim().is_empty() { String::new() } else { crate::mail::secrets::get(&self.text(&a.password_secret)?)? };
-                    let settings = crate::mail::SmtpSettings {
-                        host,
-                        port,
-                        security,
-                        username,
-                        password,
-                        timeout: Duration::from_millis(a.timeout_ms.max(5_000)),
-                    };
+                    let settings =
+                        crate::mail::SmtpSettings { host, port, security, username, password, timeout: Duration::from_millis(a.timeout_ms.max(5_000)) };
                     let reply = crate::mail::send_smtp(&settings, &mail)?;
                     self.log(LogLevel::Info, format!("sent {what} ({reply})"));
                 }
@@ -936,6 +1039,7 @@ impl<'a> Context<'a> {
                 let settings = crate::mailread::ImapSettings { host: host.clone(), port, username: username.clone(), password };
                 let mails = crate::mailread::read_imap(&settings, &q)?;
                 self.log(LogLevel::Info, format!("read {} message(s) from {username} / {}", mails.len(), q.folder));
+                self.mail_dry_notes(&a.filter)?;
                 self.set_var(&a.filter.count_var, json!(mails.len()))?;
                 self.set_var(&a.filter.output_var, Value::Array(mails))?;
             }
@@ -943,6 +1047,7 @@ impl<'a> Context<'a> {
                 let q = self.mail_query(&a.filter)?;
                 let mails = crate::mailread::read_outlook(&q, &self.text(&a.account)?)?;
                 self.log(LogLevel::Info, format!("read {} message(s) from Outlook {}", mails.len(), q.folder));
+                self.mail_dry_notes(&a.filter)?;
                 self.set_var(&a.filter.count_var, json!(mails.len()))?;
                 self.set_var(&a.filter.output_var, Value::Array(mails))?;
             }
@@ -1069,7 +1174,11 @@ impl<'a> Context<'a> {
                         self.move_mouse(x, y, None, Tween::Linear)?;
                     }
                     let i = self.input()?;
-                    if down { i.button_down(a.button)? } else { i.button_up(a.button)? }
+                    if down {
+                        i.button_down(a.button)?
+                    } else {
+                        i.button_up(a.button)?
+                    }
                 }
             }
             Action::MouseScroll(a) => {
@@ -1132,7 +1241,11 @@ impl<'a> Context<'a> {
                 let down = matches!(action, Action::KeyDown(_));
                 if !self.dry(format!("{} {keys}", if down { "hold" } else { "release" })) {
                     let i = self.input()?;
-                    if down { i.key_down(&keys)? } else { i.key_up(&keys)? }
+                    if down {
+                        i.key_down(&keys)?
+                    } else {
+                        i.key_up(&keys)?
+                    }
                 }
             }
             // ---------------- UI Automation
@@ -1443,12 +1556,31 @@ impl<'a> Context<'a> {
             conn = conn.replace("{password}", &crate::mail::secrets::get(name.trim())?);
         }
         if !self.dbs.contains_key(&conn) {
-            let c = crate::db::open(&conn, &self.opts.flow_dir)?;
+            let c = crate::db::open(&conn, &self.opts.flow_dir, self.opts.dry_run)?;
             let shown = crate::db::redact(&self.text(&d.connection)?);
             self.log(LogLevel::Info, format!("connected to {shown}"));
             self.dbs.insert(conn.clone(), c);
         }
         Ok(self.dbs.get_mut(&conn).unwrap())
+    }
+
+    /// In a dry run, say what reading the mail would have changed.
+    fn mail_dry_notes(&mut self, f: &MailFilter) -> Result<()> {
+        if !self.opts.dry_run {
+            return Ok(());
+        }
+        let save = self.text(&f.save_attachments_to)?;
+        if !save.trim().is_empty() {
+            self.dry(format!("save attachments to {save}"));
+        }
+        if f.mark_read {
+            self.dry("mark the messages read".into());
+        }
+        let mv = self.text(&f.move_to)?;
+        if !mv.trim().is_empty() {
+            self.dry(format!("move the messages to {mv}"));
+        }
+        Ok(())
     }
 
     fn mail_query(&self, f: &MailFilter) -> Result<crate::mailread::Query> {
@@ -1467,7 +1599,8 @@ impl<'a> Context<'a> {
             newest_first: f.newest_first,
             mark_read: f.mark_read && !self.opts.dry_run,
             move_to: if self.opts.dry_run { String::new() } else { self.text(&f.move_to)? },
-            save_dir: if save.trim().is_empty() { None } else { Some(self.path(&save)?) },
+            // A dry run reads messages but saves no attachments.
+            save_dir: if save.trim().is_empty() || self.opts.dry_run { None } else { Some(self.path(&save)?) },
             attachment_filter: self.text(&f.attachment_filter)?,
         })
     }
@@ -1510,7 +1643,7 @@ impl<'a> Context<'a> {
             let (img, ox, oy) = self.ocr_capture(&a.source)?;
             let out = crate::ocr::recognize(&img, &lang, a.source.scale)?;
             let mut hits = crate::ocr::find(&out, &needle, a.ignore_case);
-            hits.sort_by(|p, q| (p.y as i32 / 8, p.x as i32).cmp(&(q.y as i32 / 8, q.x as i32)));
+            hits.sort_by_key(|p| (p.y as i32 / 8, p.x as i32));
             if let Some(h) = hits.get(a.occurrence.max(1) as usize - 1) {
                 let (cx, cy) = h.center();
                 return Ok(Some((ox + cx.round() as i32, oy + cy.round() as i32)));
@@ -1597,11 +1730,7 @@ impl<'a> Context<'a> {
             return self.set_var(&a.output_var, v);
         }
         let secret = self.text(&a.api_key_secret)?;
-        let api_key = if secret.trim().is_empty() {
-            String::new()
-        } else {
-            crate::mail::secrets::get(secret.trim())?
-        };
+        let api_key = if secret.trim().is_empty() { String::new() } else { crate::mail::secrets::get(secret.trim())? };
         let req = crate::ai::Request {
             provider,
             model: self.text(&a.model)?,
@@ -1763,8 +1892,16 @@ impl<'a> Context<'a> {
         let mut child = hidden(&mut cmd).spawn().with_context(|| format!("start {program}"))?;
         let mut stdout = child.stdout.take().unwrap();
         let mut stderr = child.stderr.take().unwrap();
-        let out_t = std::thread::spawn(move || { let mut b = Vec::new(); std::io::Read::read_to_end(&mut stdout, &mut b).ok(); b });
-        let err_t = std::thread::spawn(move || { let mut b = Vec::new(); std::io::Read::read_to_end(&mut stderr, &mut b).ok(); b });
+        let out_t = std::thread::spawn(move || {
+            let mut b = Vec::new();
+            std::io::Read::read_to_end(&mut stdout, &mut b).ok();
+            b
+        });
+        let err_t = std::thread::spawn(move || {
+            let mut b = Vec::new();
+            std::io::Read::read_to_end(&mut stderr, &mut b).ok();
+            b
+        });
         let start = Instant::now();
         let status = loop {
             if let Some(s) = child.try_wait()? {
@@ -1802,18 +1939,14 @@ impl<'a> Context<'a> {
             map: if a.share_variables { self.vars.map.clone() } else { Map::new() },
             flow_dir: path.parent().unwrap_or(Path::new(".")).display().to_string(),
         };
-        let declared: Map<String, Value> = sub
-            .variables
-            .iter()
-            .filter(|(k, _)| !vars.map.contains_key(*k) && !passed.contains_key(*k))
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let declared: Map<String, Value> =
+            sub.variables.iter().filter(|(k, _)| !vars.map.contains_key(*k) && !passed.contains_key(*k)).map(|(k, v)| (k.clone(), v.clone())).collect();
         init_vars(&mut vars, &declared, Map::new())?;
         vars.map.extend(passed);
         // Breakpoints refer to this flow's step ids, so a sub-flow runs straight through.
         let opts = RunOptions { flow_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(), debug: None, ..self.opts.clone() };
         self.log(LogLevel::Info, format!("running sub-flow {}", path.display()));
-        let (ctl, map) = {
+        let (ctl, map, secrets) = {
             let mut child = Context {
                 vars,
                 opts: &opts,
@@ -1838,10 +1971,12 @@ impl<'a> Context<'a> {
                 self.web = child.web.take();
                 self.dbs = std::mem::take(&mut child.dbs);
             }
-            (ctl, child.vars.map)
+            (ctl, child.vars.map, child.secret_vars)
         };
         if a.share_variables {
             self.vars.map = map;
+            // Passwords typed in the sub-flow stay masked in this flow's output too.
+            self.secret_vars.extend(secrets);
         }
         match ctl? {
             Ctl::Stop { success: false, message } => bail!("sub-flow failed: {message}"),
@@ -1853,9 +1988,7 @@ impl<'a> Context<'a> {
 fn file_info(p: &Path) -> Value {
     let meta = std::fs::metadata(p).ok();
     let ts = |t: std::io::Result<std::time::SystemTime>| -> Value {
-        t.ok()
-            .map(|t| json!(chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%d %H:%M:%S").to_string()))
-            .unwrap_or(Value::Null)
+        t.ok().map(|t| json!(chrono::DateTime::<chrono::Local>::from(t).format("%Y-%m-%d %H:%M:%S").to_string())).unwrap_or(Value::Null)
     };
     json!({
         "path": p.display().to_string(),
@@ -1947,4 +2080,29 @@ fn screenshot(path: &Path, monitor: u32, window: &str, region: Option<Region>) -
 /// "\n", "\t" and "\\" typed in a separator field mean newline, tab and backslash.
 fn unescape(s: &str) -> String {
     s.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passwords_are_masked_everywhere() {
+        let vars: Map<String, Value> = serde_json::from_value(json!({
+            "pw": "s3cret!", "copy": "s3cret!", "login": {"user": "me", "pass": "s3cret!"}, "other": "fine"
+        }))
+        .unwrap();
+        let names: std::collections::HashSet<String> = ["pw".to_string()].into();
+        let secrets = secret_values(&vars, &names);
+        let masked = mask_value(Value::Object(vars), &secrets);
+        assert_eq!(masked["pw"], MASK);
+        assert_eq!(masked["copy"], MASK, "copies of the password are masked too");
+        assert_eq!(masked["login"]["pass"], MASK);
+        assert_eq!(masked["other"], "fine");
+        match mask_event(Event::Log { level: LogLevel::Info, message: "logging in with s3cret!".into() }, &secrets) {
+            Event::Log { message, .. } => assert_eq!(message, format!("logging in with {MASK}")),
+            _ => unreachable!(),
+        }
+        assert!(secret_values(&Map::new(), &names).is_empty());
+    }
 }

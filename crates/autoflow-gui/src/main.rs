@@ -2,8 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod flowchart;
-mod icons;
 mod form;
+mod icons;
 mod tree;
 mod variables;
 
@@ -26,6 +26,9 @@ enum View {
 
 /// Result of a "Snip image" request: saved file path relative to the flow folder.
 type SnipResult = Result<String, String>;
+
+/// Result of "Pick element": screen position and, when found, a UI Automation selector.
+type PickResult = Result<(i32, i32, Option<String>), String>;
 
 fn main() -> eframe::Result {
     let path = std::env::args().nth(1).map(PathBuf::from);
@@ -88,7 +91,7 @@ struct Studio {
     failed_steps: Vec<String>,
     dry_run: bool,
     minimize_on_run: bool,
-    pick_rx: Option<Receiver<Result<(i32, i32, Option<String>), String>>>,
+    pick_rx: Option<Receiver<PickResult>>,
     snip_rx: Option<(StepPath, Receiver<SnipResult>)>,
     web_pick_rx: Option<(StepPath, Receiver<Result<autoflow_core::web::PickedElement, String>>)>,
     palette_filter: String,
@@ -429,10 +432,7 @@ impl Studio {
     fn save(&mut self, save_as: bool) {
         let path = match (&self.path, save_as) {
             (Some(p), false) => Some(p.clone()),
-            _ => rfd::FileDialog::new()
-                .add_filter("Flow", &["json"])
-                .set_file_name(format!("{}.json", slug(&self.flow.name)))
-                .save_file(),
+            _ => rfd::FileDialog::new().add_filter("Flow", &["json"]).set_file_name(format!("{}.json", slug(&self.flow.name))).save_file(),
         };
         let Some(p) = path else { return };
         self.flow.assign_ids();
@@ -484,11 +484,7 @@ impl Studio {
         }
         let flow = self.flow.clone();
         let stop = Arc::new(AtomicBool::new(false));
-        let flow_dir = self
-            .path
-            .as_ref()
-            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let flow_dir = self.path.as_ref().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         // Timing and fail-safe come from flow.settings (edited in the toolbar / flow settings).
         let debug = Arc::new(Debugger::new(self.breakpoints.iter().cloned(), stepping));
         let opts = RunOptions { dry_run: self.dry_run, stop: stop.clone(), flow_dir, debug: Some(debug.clone()), ..RunOptions::default() };
@@ -504,11 +500,14 @@ impl Studio {
         if self.minimize_on_run && !self.dry_run && !stepping {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
-        self.info(LogKind::Info, match (self.dry_run, stepping) {
-            (_, true) => "step-by-step run started: F10 runs the next step, F5 continues",
-            (true, _) => "dry run started",
-            _ => "run started",
-        });
+        self.info(
+            LogKind::Info,
+            match (self.dry_run, stepping) {
+                (_, true) => "step-by-step run started: F10 runs the next step, F5 continues",
+                (true, _) => "dry run started",
+                _ => "run started",
+            },
+        );
         self.running = Some(Running { rx, stop, current: None, debug, paused: None });
     }
 
@@ -577,10 +576,7 @@ impl Studio {
             let res = (|| -> anyhow::Result<(i32, i32, Option<String>)> {
                 let (x, y) = autoflow_core::input::Input::new()?.position()?;
                 #[cfg(windows)]
-                let info = autoflow_core::uia::Uia::new()
-                    .and_then(|u| u.inspect_point(x, y))
-                    .ok()
-                    .map(|i| serde_json::to_string(&i).unwrap_or_default());
+                let info = autoflow_core::uia::Uia::new().and_then(|u| u.inspect_point(x, y)).ok().map(|i| serde_json::to_string(&i).unwrap_or_default());
                 #[cfg(not(windows))]
                 let info = None;
                 Ok((x, y, info))
@@ -776,14 +772,22 @@ impl Studio {
             ui.separator();
             let run_label = if paused { "▶ Continue (F5)" } else { "▶ Run (F5)" };
             if ui.add_enabled(!running || paused, egui::Button::new(RichText::new(run_label).color(Color32::from_rgb(80, 180, 90)))).clicked() {
-                if paused { self.resume(false, &ctx) } else { self.run(&ctx, false) }
+                if paused {
+                    self.resume(false, &ctx)
+                } else {
+                    self.run(&ctx, false)
+                }
             }
             if ui
                 .add_enabled(!running || paused, egui::Button::new("⏭ Step (F10)"))
                 .on_hover_text("Run one step at a time, pausing before each (shows the variables). Breakpoints: F9 on a step.")
                 .clicked()
             {
-                if paused { self.resume(true, &ctx) } else { self.run(&ctx, true) }
+                if paused {
+                    self.resume(true, &ctx)
+                } else {
+                    self.run(&ctx, true)
+                }
             }
             if ui.add_enabled(running, egui::Button::new(RichText::new("■ Stop").color(Color32::from_rgb(220, 80, 80)))).clicked() {
                 self.stop();
@@ -796,7 +800,8 @@ impl Studio {
             let mut changed = false;
             ui.label("Key delay").on_hover_text("settings.key_delay_ms: pause between keystrokes. Raise to 150-250 ms for slow apps such as Tally.");
             changed |= ui.add(egui::DragValue::new(&mut s.key_delay_ms).range(0..=2000).suffix(" ms").speed(5.0)).changed();
-            ui.label("Step delay").on_hover_text("settings.step_delay_ms: pause after every step.");
+            ui.label("Step delay")
+                .on_hover_text("settings.step_delay_ms: pause after every action step (if / loops / try add none themselves; their inner steps do).");
             changed |= ui.add(egui::DragValue::new(&mut s.step_delay_ms).range(0..=10000).suffix(" ms").speed(10.0)).changed();
             changed |= ui
                 .checkbox(&mut s.failsafe, "Fail-safe")
@@ -807,11 +812,7 @@ impl Studio {
                 .changed();
             self.dirty |= changed;
             ui.separator();
-            if ui
-                .button("⏰ Schedule…")
-                .on_hover_text("Run this flow automatically with Windows Task Scheduler")
-                .clicked()
-            {
+            if ui.button("⏰ Schedule…").on_hover_text("Run this flow automatically with Windows Task Scheduler").clicked() {
                 self.open_schedule();
             }
             if ui.button("✔ Validate").clicked() {
@@ -852,23 +853,25 @@ impl Studio {
                 if items.is_empty() {
                     continue;
                 }
-                egui::CollapsingHeader::new(RichText::new(format!("{}  {cat}", icons::category_icon(cat))).strong().color(cat_color(cat))).default_open(true).show(ui, |ui| {
-                    let w = ui.available_width();
-                    for a in items {
-                        let r = ui
-                            .add(
-                                egui::Button::new(format!("{}  {}", icons::action_icon(a.name), a.name))
-                                    .right_text("")
-                                    .min_size(egui::vec2(w, 24.0))
-                                    .sense(egui::Sense::click_and_drag()),
-                            )
-                            .on_hover_text(a.description);
-                        r.dnd_set_drag_payload(DragItem::New(a.name.to_string()));
-                        if r.clicked() {
-                            add = Some(a.name.to_string());
+                egui::CollapsingHeader::new(RichText::new(format!("{}  {cat}", icons::category_icon(cat))).strong().color(cat_color(cat)))
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        let w = ui.available_width();
+                        for a in items {
+                            let r = ui
+                                .add(
+                                    egui::Button::new(format!("{}  {}", icons::action_icon(a.name), a.name))
+                                        .right_text("")
+                                        .min_size(egui::vec2(w, 24.0))
+                                        .sense(egui::Sense::click_and_drag()),
+                                )
+                                .on_hover_text(a.description);
+                            r.dnd_set_drag_payload(DragItem::New(a.name.to_string()));
+                            if r.clicked() {
+                                add = Some(a.name.to_string());
+                            }
                         }
-                    }
-                });
+                    });
             }
         });
         if let Some(name) = add {
@@ -1069,10 +1072,8 @@ impl Studio {
         let mut common_part: Map<String, Value> = obj.iter().filter(|(k, _)| common.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
 
         // Action-specific field help first, generic help (common fields, condition) as fallback.
-        let mut help: HashMap<String, String> = autoflow_core::flow::action_field_help(name)
-            .into_iter()
-            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
-            .collect();
+        let mut help: HashMap<String, String> =
+            autoflow_core::flow::action_field_help(name).into_iter().filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string()))).collect();
         for (k, v) in &self.help {
             help.entry(k.clone()).or_insert_with(|| v.clone());
         }
@@ -1139,16 +1140,12 @@ impl Studio {
         });
         if matches!(name, "read_excel" | "read_csv" | "read_pdf") {
             ui.add_space(6.0);
-            if ui
-                .button("👁 Preview data")
-                .on_hover_text("Read the file now with these settings and show the first rows (what the flow will get)")
-                .clicked()
+            if ui.button("👁 Preview data").on_hover_text("Read the file now with these settings and show the first rows (what the flow will get)").clicked()
             {
                 self.preview_data(p);
             }
         }
-        let targets_element = name.starts_with("browser_")
-            && !matches!(name, "browser_open" | "browser_navigate" | "browser_eval" | "browser_close");
+        let targets_element = name.starts_with("browser_") && !matches!(name, "browser_open" | "browser_navigate" | "browser_eval" | "browser_close");
         if targets_element {
             ui.add_space(6.0);
             let busy = self.web_pick_rx.is_some();
@@ -1278,19 +1275,19 @@ impl Studio {
         let tex = self.icon(ctx);
         // Dim the editor behind the splash.
         let screen = ctx.content_rect();
-        ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::NULL.with("splash_dim")))
-            .rect_filled(screen, 0.0, Color32::from_black_alpha(140));
-        egui::Area::new(egui::Id::NULL.with("splash"))
-            .order(egui::Order::Tooltip)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                egui::Frame::window(ui.style()).inner_margin(egui::Margin::same(28)).corner_radius(16.0).show(ui, |ui| {
-                    ui.set_width(460.0);
-                    Self::brand(ui, &tex, 128.0);
-                    ui.add_space(10.0);
-                    ui.vertical_centered(|ui| ui.label(RichText::new("click anywhere to start").small().weak()));
-                });
+        ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::NULL.with("splash_dim"))).rect_filled(
+            screen,
+            0.0,
+            Color32::from_black_alpha(140),
+        );
+        egui::Area::new(egui::Id::NULL.with("splash")).order(egui::Order::Tooltip).anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0)).show(ctx, |ui| {
+            egui::Frame::window(ui.style()).inner_margin(egui::Margin::same(28)).corner_radius(16.0).show(ui, |ui| {
+                ui.set_width(460.0);
+                Self::brand(ui, &tex, 128.0);
+                ui.add_space(10.0);
+                ui.vertical_centered(|ui| ui.label(RichText::new("click anywhere to start").small().weak()));
             });
+        });
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
 
@@ -1300,17 +1297,20 @@ impl Studio {
         }
         let tex = self.icon(ctx);
         let mut open = true;
-        egui::Window::new("About AutoFlowMate").open(&mut open).resizable(false).collapsible(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-            ui.set_width(440.0);
-            Self::brand(ui, &tex, 96.0);
-            ui.separator();
-            ui.label(RichText::new("Shortcuts").strong());
-            ui.label("F5 run · Ctrl+S save · Ctrl+O open · Ctrl+wheel zoom flowchart");
-            ui.label("Abort a run: move the mouse into a screen corner, or press the abort hotkey (default Ctrl+Alt+Q)");
-            ui.add_space(6.0);
-            ui.label(RichText::new("Built with").strong());
-            ui.label(RichText::new("Rust · egui/eframe · enigo · uiautomation · headless_chrome · xcap · arboard").weak());
-        });
+        egui::Window::new("About AutoFlowMate").open(&mut open).resizable(false).collapsible(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
+            ctx,
+            |ui| {
+                ui.set_width(440.0);
+                Self::brand(ui, &tex, 96.0);
+                ui.separator();
+                ui.label(RichText::new("Shortcuts").strong());
+                ui.label("F5 run · Ctrl+S save · Ctrl+O open · Ctrl+wheel zoom flowchart");
+                ui.label("Abort a run: move the mouse into a screen corner, or press the abort hotkey (default Ctrl+Alt+Q)");
+                ui.add_space(6.0);
+                ui.label(RichText::new("Built with").strong());
+                ui.label(RichText::new("Rust · egui/eframe · enigo · uiautomation · headless_chrome · xcap · arboard").weak());
+            },
+        );
         self.show_about = open;
     }
 
@@ -1395,9 +1395,11 @@ impl Studio {
             });
             ui.add_space(6.0);
             ui.label(
-                RichText::new("Desktop flows run only while you are logged on with the screen unlocked. Each run is logged to logs\\<flow>.log next to the flow.")
-                    .small()
-                    .weak(),
+                RichText::new(
+                    "Desktop flows run only while you are logged on with the screen unlocked. Each run is logged to logs\\<flow>.log next to the flow.",
+                )
+                .small()
+                .weak(),
             );
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -1486,11 +1488,7 @@ impl Studio {
 
     /// Use the Windows snipping tool, then save the clipboard image next to the flow.
     fn start_snip(&mut self, ctx: &egui::Context, p: StepPath) {
-        let dir = self
-            .path
-            .as_ref()
-            .and_then(|f| f.parent().map(|d| d.to_path_buf()))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let dir = self.path.as_ref().and_then(|f| f.parent().map(|d| d.to_path_buf())).unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         let id = tree::step_ref(&self.flow.steps, &p).map(|s| s.id.clone()).unwrap_or_default();
         let name = format!("images/{}_{}.png", if id.is_empty() { "img".into() } else { id }, chrono_stamp());
         let (tx, rx) = channel();
@@ -1580,27 +1578,25 @@ impl Studio {
         let Some(step) = tree::step_ref(&self.flow.steps, p) else { return };
         let vars = self.resolved_vars();
         let txt = |s: &str| vars.interpolate(s).unwrap_or_else(|_| s.to_string());
-        let result: Result<(String, Value), String> = (|| {
-            match &step.action {
-                Action::ReadExcel(a) => {
-                    let path = self.resolve_path(&a.path).ok_or("set the workbook path first")?;
-                    let (used, raw) = autoflow_core::data::read_excel_raw(&path, &txt(&a.sheet), &txt(&a.range)).map_err(|e| e.to_string())?;
-                    let v = autoflow_core::data::shape(raw, a.has_header, &txt(&a.column), a.skip_empty).map_err(|e| e.to_string())?;
-                    Ok((format!("{} [{used}]", path.display()), v))
-                }
-                Action::ReadCsv(a) => {
-                    let path = self.resolve_path(&a.path).ok_or("set the CSV path first")?;
-                    let raw = autoflow_core::data::read_csv_raw(&path, &txt(&a.delimiter)).map_err(|e| e.to_string())?;
-                    let v = autoflow_core::data::shape(raw, a.has_header, &txt(&a.column), a.skip_empty).map_err(|e| e.to_string())?;
-                    Ok((path.display().to_string(), v))
-                }
-                Action::ReadPdf(a) => {
-                    let path = self.resolve_path(&a.path).ok_or("set the PDF path first")?;
-                    let (text, n) = autoflow_core::data::read_pdf(&path, &txt(&a.pages)).map_err(|e| e.to_string())?;
-                    Ok((format!("{} ({n} pages)", path.display()), Value::String(text)))
-                }
-                _ => Err("not a data step".into()),
+        let result: Result<(String, Value), String> = (|| match &step.action {
+            Action::ReadExcel(a) => {
+                let path = self.resolve_path(&a.path).ok_or("set the workbook path first")?;
+                let (used, raw) = autoflow_core::data::read_excel_raw(&path, &txt(&a.sheet), &txt(&a.range)).map_err(|e| e.to_string())?;
+                let v = autoflow_core::data::shape(raw, a.has_header, &txt(&a.column), a.skip_empty).map_err(|e| e.to_string())?;
+                Ok((format!("{} [{used}]", path.display()), v))
             }
+            Action::ReadCsv(a) => {
+                let path = self.resolve_path(&a.path).ok_or("set the CSV path first")?;
+                let raw = autoflow_core::data::read_csv_raw(&path, &txt(&a.delimiter)).map_err(|e| e.to_string())?;
+                let v = autoflow_core::data::shape(raw, a.has_header, &txt(&a.column), a.skip_empty).map_err(|e| e.to_string())?;
+                Ok((path.display().to_string(), v))
+            }
+            Action::ReadPdf(a) => {
+                let path = self.resolve_path(&a.path).ok_or("set the PDF path first")?;
+                let (text, n) = autoflow_core::data::read_pdf(&path, &txt(&a.pages)).map_err(|e| e.to_string())?;
+                Ok((format!("{} ({n} pages)", path.display()), Value::String(text)))
+            }
+            _ => Err("not a data step".into()),
         })();
         self.preview = Some(match result {
             Ok((title, v)) => (title, Ok(v)),
@@ -1612,43 +1608,46 @@ impl Studio {
         let Some(d) = self.secret_dialog.as_mut() else { return };
         let mut open = true;
         let mut done: Option<String> = None;
-        egui::Window::new("🔑 Store password").open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-            ui.label(format!("Password for `{}`", d.name));
-            ui.weak("Saved in Windows Credential Manager (AutoFlowMate). It is never written to the flow file or the log.");
-            ui.weak("Gmail: create an App Password (Google Account → Security → 2-Step Verification → App passwords).");
-            ui.add_space(6.0);
-            egui::Grid::new("secret_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                ui.label("Password");
-                ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.first).password(true));
-                ui.end_row();
-                ui.label("Again");
-                ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.second).password(true));
-                ui.end_row();
-            });
-            if let Some(e) = &d.error {
-                ui.colored_label(Color32::from_rgb(220, 80, 80), e);
-            }
-            ui.horizontal(|ui| {
-                if ui.button(RichText::new("Store").strong()).clicked() {
-                    if d.first.is_empty() {
-                        d.error = Some("enter the password".into());
-                    } else if d.first != d.second {
-                        d.error = Some("the two entries differ".into());
-                    } else {
-                        match autoflow_core::mail::secrets::set(&d.name, &d.first) {
-                            Ok(()) => done = Some(d.name.clone()),
+        egui::Window::new("🔑 Store password").open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
+            ctx,
+            |ui| {
+                ui.label(format!("Password for `{}`", d.name));
+                ui.weak("Saved in Windows Credential Manager (AutoFlowMate). It is never written to the flow file or the log.");
+                ui.weak("Gmail: create an App Password (Google Account → Security → 2-Step Verification → App passwords).");
+                ui.add_space(6.0);
+                egui::Grid::new("secret_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    ui.label("Password");
+                    ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.first).password(true));
+                    ui.end_row();
+                    ui.label("Again");
+                    ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.second).password(true));
+                    ui.end_row();
+                });
+                if let Some(e) = &d.error {
+                    ui.colored_label(Color32::from_rgb(220, 80, 80), e);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("Store").strong()).clicked() {
+                        if d.first.is_empty() {
+                            d.error = Some("enter the password".into());
+                        } else if d.first != d.second {
+                            d.error = Some("the two entries differ".into());
+                        } else {
+                            match autoflow_core::mail::secrets::set(&d.name, &d.first) {
+                                Ok(()) => done = Some(d.name.clone()),
+                                Err(e) => d.error = Some(e.to_string()),
+                            }
+                        }
+                    }
+                    if autoflow_core::mail::secrets::exists(&d.name) && ui.button("Delete stored password").clicked() {
+                        match autoflow_core::mail::secrets::delete(&d.name) {
+                            Ok(()) => done = Some(format!("{} (deleted)", d.name)),
                             Err(e) => d.error = Some(e.to_string()),
                         }
                     }
-                }
-                if autoflow_core::mail::secrets::exists(&d.name) && ui.button("Delete stored password").clicked() {
-                    match autoflow_core::mail::secrets::delete(&d.name) {
-                        Ok(()) => done = Some(format!("{} (deleted)", d.name)),
-                        Err(e) => d.error = Some(e.to_string()),
-                    }
-                }
-            });
-        });
+                });
+            },
+        );
         if let Some(name) = done {
             self.info(LogKind::Ok, format!("password `{name}` stored in Windows Credential Manager"));
             self.secret_dialog = None;
@@ -1742,7 +1741,11 @@ impl Studio {
         }
         let url = vars.interpolate(&url).unwrap_or(url);
         let base = self.flow_dir().unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-        if url.trim().is_empty() { String::new() } else { autoflow_core::web::to_url(&url, &base) }
+        if url.trim().is_empty() {
+            String::new()
+        } else {
+            autoflow_core::web::to_url(&url, &base)
+        }
     }
 
     fn start_web_pick(&mut self, ctx: &egui::Context, p: StepPath) {
@@ -1807,7 +1810,10 @@ impl Studio {
                         self.buffers_for = None;
                     }
                 }
-                self.info(LogKind::Ok, format!("saved snip as {file}{}", if self.path.is_none() { " (save the flow so the relative path resolves)" } else { "" }));
+                self.info(
+                    LogKind::Ok,
+                    format!("saved snip as {file}{}", if self.path.is_none() { " (save the flow so the relative path resolves)" } else { "" }),
+                );
             }
             Err(e) => self.info(LogKind::Error, format!("snip failed: {e}")),
         }
@@ -1871,10 +1877,18 @@ impl eframe::App for Studio {
         }
         let paused = self.is_paused();
         if run {
-            if paused { self.resume(false, &ctx) } else { self.run(&ctx, false) }
+            if paused {
+                self.resume(false, &ctx)
+            } else {
+                self.run(&ctx, false)
+            }
         }
         if step {
-            if paused { self.resume(true, &ctx) } else { self.run(&ctx, true) }
+            if paused {
+                self.resume(true, &ctx)
+            } else {
+                self.run(&ctx, true)
+            }
         }
         if bp {
             if let Selection::Step(p) = self.sel.clone() {
@@ -1965,8 +1979,16 @@ fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize
             if ui.checkbox(&mut en, "").on_hover_text("enabled").changed() {
                 ops.push(TreeOp::Toggle(path.clone()));
             }
-            let marker = if running { "▶ " } else if failed { "✖ " } else { "" };
-            let mut label = RichText::new(format!("{marker}{} {}", icons::action_icon(step.action.name()), step.action.name())).strong().color(cat_color(step.action.category()));
+            let marker = if running {
+                "▶ "
+            } else if failed {
+                "✖ "
+            } else {
+                ""
+            };
+            let mut label = RichText::new(format!("{marker}{} {}", icons::action_icon(step.action.name()), step.action.name()))
+                .strong()
+                .color(cat_color(step.action.category()));
             if !step.enabled {
                 label = label.strikethrough().weak();
             }
@@ -1991,7 +2013,11 @@ fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize
             let sel = *cx.sel == Selection::List(lp.clone());
             ui.horizontal(|ui| {
                 ui.add_space(depth as f32 * 22.0 + 26.0);
-                if ui.selectable_label(sel, RichText::new(format!("{}:  ({} steps)", labels[l], children.len())).italics()).on_hover_text("Select, then click an action to add it here").clicked() {
+                if ui
+                    .selectable_label(sel, RichText::new(format!("{}:  ({} steps)", labels[l], children.len())).italics())
+                    .on_hover_text("Select, then click an action to add it here")
+                    .clicked()
+                {
                     ops.push(TreeOp::Select(Selection::List(lp.clone())));
                 }
             });
@@ -2091,18 +2117,8 @@ fn create_task(s: &SchedUi, flow: &std::path::Path) -> (bool, String) {
         Err(e) => return (false, e.to_string()),
     };
     // The task runs the CLI that sits next to Studio.
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("autoflow.exe")))
-        .unwrap_or_default();
-    let spec = TaskSpec {
-        name: schedule::sanitize_name(&s.name),
-        flow: flow.to_path_buf(),
-        trigger,
-        exe,
-        extra_args: vec![],
-        time_limit_minutes: 120,
-    };
+    let exe = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("autoflow.exe"))).unwrap_or_default();
+    let spec = TaskSpec { name: schedule::sanitize_name(&s.name), flow: flow.to_path_buf(), trigger, exe, extra_args: vec![], time_limit_minutes: 120 };
     match schedule::create(&spec) {
         Ok(()) => (true, format!("scheduled \"{}\": {}", spec.name, spec.trigger.describe())),
         Err(e) => (false, e.to_string()),
@@ -2116,5 +2132,9 @@ fn chrono_stamp() -> String {
 
 fn slug(s: &str) -> String {
     let t: String = s.chars().map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '_' }).collect();
-    if t.is_empty() { "flow".into() } else { t }
+    if t.is_empty() {
+        "flow".into()
+    } else {
+        t
+    }
 }

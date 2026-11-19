@@ -65,8 +65,7 @@ impl Flow {
 
     pub fn load(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
+        let text = std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
         Self::from_json(&text).map_err(|e| anyhow::anyhow!("invalid flow {}: {e}", path.display()))
     }
 
@@ -110,7 +109,8 @@ pub struct Settings {
     pub key_delay_ms: u64,
     /// Pause after every mouse/keyboard action in ms (like PyAutoGUI's PAUSE).
     pub input_pause_ms: u64,
-    /// Pause after every step in ms.
+    /// Pause after every action step, in ms. Not added after if / loops / try themselves:
+    /// the steps inside them already get it.
     pub step_delay_ms: u64,
     /// Default duration of mouse movements in ms (0 = jump instantly).
     pub mouse_move_ms: u64,
@@ -122,14 +122,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self {
-            key_delay_ms: 100,
-            input_pause_ms: 100,
-            step_delay_ms: 0,
-            mouse_move_ms: 0,
-            failsafe: true,
-            abort_hotkey: "ctrl+alt+q".into(),
-        }
+        Self { key_delay_ms: 100, input_pause_ms: 100, step_delay_ms: 0, mouse_move_ms: 0, failsafe: true, abort_hotkey: "ctrl+alt+q".into() }
     }
 }
 
@@ -165,8 +158,17 @@ pub enum VarType {
 
 impl VarType {
     pub const ALL: [VarType; 11] = [
-        VarType::Text, VarType::Integer, VarType::Number, VarType::Boolean, VarType::Date, VarType::Time,
-        VarType::Datetime, VarType::Url, VarType::File, VarType::Folder, VarType::List,
+        VarType::Text,
+        VarType::Integer,
+        VarType::Number,
+        VarType::Boolean,
+        VarType::Date,
+        VarType::Time,
+        VarType::Datetime,
+        VarType::Url,
+        VarType::File,
+        VarType::Folder,
+        VarType::List,
     ];
 
     pub fn label(self) -> &'static str {
@@ -229,12 +231,9 @@ impl VarType {
             VarType::Number => v.is_number() || t.parse::<f64>().is_ok(),
             VarType::Boolean => v.is_boolean() || matches!(t, "true" | "false"),
             VarType::Date => chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").is_ok(),
-            VarType::Time => {
-                chrono::NaiveTime::parse_from_str(t, "%H:%M").is_ok() || chrono::NaiveTime::parse_from_str(t, "%H:%M:%S").is_ok()
-            }
+            VarType::Time => chrono::NaiveTime::parse_from_str(t, "%H:%M").is_ok() || chrono::NaiveTime::parse_from_str(t, "%H:%M:%S").is_ok(),
             VarType::Datetime => {
-                chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M").is_ok()
-                    || chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").is_ok()
+                chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M").is_ok() || chrono::NaiveDateTime::parse_from_str(t, "%Y-%m-%d %H:%M:%S").is_ok()
             }
             VarType::Url => t.is_empty() || t.contains("://") || t.starts_with("about:"),
             VarType::List => v.is_array(),
@@ -281,6 +280,7 @@ pub struct Step {
     #[serde(default, skip_serializing_if = "is_default")]
     pub delay_before_ms: u64,
     /// Wait this many ms after the step succeeds (in addition to settings.step_delay_ms).
+    /// Ignored on if / loops / try; put it on the last step inside instead.
     #[serde(default, skip_serializing_if = "is_default")]
     pub delay_after_ms: u64,
     #[serde(flatten)]
@@ -345,10 +345,7 @@ pub fn action_field_help(action: &str) -> Map<String, Value> {
     let defs = schema.get("$defs").cloned().unwrap_or_default();
     let mut out = Map::new();
     let variants = defs.pointer("/Step/oneOf").and_then(Value::as_array).cloned().unwrap_or_default();
-    let Some(variant) = variants
-        .iter()
-        .find(|v| v.pointer("/properties/action/const").and_then(Value::as_str) == Some(action))
-    else {
+    let Some(variant) = variants.iter().find(|v| v.pointer("/properties/action/const").and_then(Value::as_str) == Some(action)) else {
         return out;
     };
     fn collect(v: &Value, defs: &Value, out: &mut Map<String, Value>, depth: usize) {
