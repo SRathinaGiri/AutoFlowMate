@@ -10,6 +10,7 @@ pub mod schedule;
 pub mod vision;
 pub mod web;
 pub mod input;
+pub mod mail;
 pub mod validate;
 pub mod vars;
 #[cfg(windows)]

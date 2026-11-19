@@ -52,6 +52,11 @@ enum Cmd {
         #[arg(long)]
         scheduled: bool,
     },
+    /// Store passwords (e.g. a Gmail App Password) in Windows Credential Manager for send_email.
+    Secret {
+        #[command(subcommand)]
+        cmd: SecretCmd,
+    },
     /// Run flows automatically with Windows Task Scheduler.
     Schedule {
         #[command(subcommand)]
@@ -133,6 +138,16 @@ enum Cmd {
 }
 
 #[derive(Subcommand)]
+enum SecretCmd {
+    /// Store a password under NAME (asked for twice, not shown). Flows use `password_secret: "NAME"`.
+    Set { name: String },
+    /// Tell whether a password is stored under NAME.
+    Check { name: String },
+    /// Delete the password stored under NAME.
+    Delete { name: String },
+}
+
+#[derive(Subcommand)]
 enum ScheduleCmd {
     /// Create (or replace) a scheduled task for a flow.
     ///
@@ -184,6 +199,37 @@ fn main() -> ExitCode {
 fn real_main(cli: Cli) -> Result<ExitCode> {
     match cli.cmd {
         Cmd::Schedule { cmd } => schedule_cmd(cmd),
+        Cmd::Secret { cmd } => {
+            use autoflow_core::mail::secrets;
+            match cmd {
+                SecretCmd::Set { name } => {
+                    let a = rpassword::prompt_password(format!("Password for `{name}` (not shown): "))?;
+                    if a.is_empty() {
+                        bail!("empty password, nothing stored");
+                    }
+                    let b = rpassword::prompt_password("Type it again: ")?;
+                    if a != b {
+                        bail!("the two entries differ, nothing stored");
+                    }
+                    secrets::set(&name, &a)?;
+                    println!("stored `{name}` in Windows Credential Manager (AutoFlowMate:{name})");
+                    println!("use it in send_email with  \"password_secret\": \"{name}\"");
+                }
+                SecretCmd::Check { name } => {
+                    if secrets::exists(&name) {
+                        println!("`{name}` is stored");
+                    } else {
+                        println!("`{name}` is not stored - run `autoflow secret set {name}`");
+                        return Ok(ExitCode::from(1));
+                    }
+                }
+                SecretCmd::Delete { name } => {
+                    secrets::delete(&name)?;
+                    println!("deleted `{name}`");
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
         Cmd::Run { flow, vars, dry_run, json, step_delay, key_delay, input_pause, no_failsafe, no_validate, log, scheduled } => {
             if scheduled {
                 hide_console();

@@ -607,6 +607,91 @@ impl<'a> Context<'a> {
                 self.set_var(&a.page_count_var, json!(pages))?;
             }
 
+            // ---------------- email
+            Action::SendEmail(a) => {
+                let (to, cc, bcc) = (self.text(&a.to)?, self.text(&a.cc)?, self.text(&a.bcc)?);
+                let username = self.text(&a.username)?;
+                let from = match self.text(&a.from)? {
+                    f if f.trim().is_empty() => username.clone(),
+                    f => f,
+                };
+                let attachments: Vec<PathBuf> = a.attachments.iter().filter(|s| !s.trim().is_empty()).map(|s| self.path(s)).collect::<Result<_>>()?;
+                for p in &attachments {
+                    if !p.exists() {
+                        bail!("attachment not found: {}", p.display());
+                    }
+                }
+                let mail = crate::mail::Mail {
+                    from,
+                    to: crate::mail::split_addresses(&to),
+                    cc: crate::mail::split_addresses(&cc),
+                    bcc: crate::mail::split_addresses(&bcc),
+                    subject: self.text(&a.subject)?,
+                    body: self.text(&a.body)?,
+                    html: a.html,
+                    attachments,
+                };
+                let provider = self.text(&a.provider)?;
+                let (host, port, security) = match crate::mail::provider_defaults(&provider) {
+                    Some((h, p, s)) if a.smtp_host.trim().is_empty() => (h.to_string(), if a.smtp_port == 0 { p } else { a.smtp_port }, s),
+                    _ => {
+                        let sec = match a.security.trim().to_ascii_lowercase().as_str() {
+                            "tls" | "ssl" => crate::mail::Security::Tls,
+                            "none" | "plain" => crate::mail::Security::None,
+                            _ => crate::mail::Security::StartTls,
+                        };
+                        let default_port = match sec {
+                            crate::mail::Security::Tls => 465,
+                            crate::mail::Security::None => 25,
+                            crate::mail::Security::StartTls => 587,
+                        };
+                        let host = self.text(&a.smtp_host)?;
+                        if host.trim().is_empty() {
+                            bail!("set smtp_host (or provider gmail / outlook365)");
+                        }
+                        (host, if a.smtp_port == 0 { default_port } else { a.smtp_port }, sec)
+                    }
+                };
+                let what = format!(
+                    "e-mail \"{}\" to {} with {} attachment(s) via {host}:{port}",
+                    mail.subject,
+                    mail.to.join(", "),
+                    mail.attachments.len()
+                );
+                if !self.dry(format!("send {what}")) {
+                    // The password is read from Windows Credential Manager only now, and never logged.
+                    let password = if username.trim().is_empty() { String::new() } else { crate::mail::secrets::get(&self.text(&a.password_secret)?)? };
+                    let settings = crate::mail::SmtpSettings {
+                        host,
+                        port,
+                        security,
+                        username,
+                        password,
+                        timeout: Duration::from_millis(a.timeout_ms.max(5_000)),
+                    };
+                    let reply = crate::mail::send_smtp(&settings, &mail)?;
+                    self.log(LogLevel::Info, format!("sent {what} ({reply})"));
+                }
+            }
+            Action::OutlookSend(a) => {
+                let attachments: Vec<PathBuf> = a.attachments.iter().filter(|s| !s.trim().is_empty()).map(|s| self.path(s)).collect::<Result<_>>()?;
+                let mail = crate::mail::Mail {
+                    from: String::new(),
+                    to: crate::mail::split_addresses(&self.text(&a.to)?),
+                    cc: crate::mail::split_addresses(&self.text(&a.cc)?),
+                    bcc: crate::mail::split_addresses(&self.text(&a.bcc)?),
+                    subject: self.text(&a.subject)?,
+                    body: self.text(&a.body)?,
+                    html: a.html,
+                    attachments,
+                };
+                let what = format!("Outlook e-mail \"{}\" to {} with {} attachment(s)", mail.subject, mail.to.join(", "), mail.attachments.len());
+                if !self.dry(format!("{} {what}", if a.send_now { "send" } else { "open a draft of" })) {
+                    let r = crate::mail::outlook_send(&mail, a.send_now, &self.text(&a.account)?)?;
+                    self.log(LogLevel::Info, format!("{} {what}", if r == "sent" { "sent" } else { "opened draft:" }));
+                }
+            }
+
             // ---------------- programs
             Action::RunProgram(a) => self.run_program(a)?,
             Action::KillProgram(a) => {

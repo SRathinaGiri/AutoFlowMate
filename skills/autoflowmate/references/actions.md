@@ -1059,6 +1059,54 @@ Close the browser.
 {"action":"browser_close"}
 ```
 
+## Email
+
+### `send_email`
+
+Send an e-mail with attachments through SMTP (Gmail, Microsoft 365, any server).
+
+| field | default | description |
+|---|---|---|
+| `provider` | `"gmail"` | `gmail`, `outlook365`, `outlook.com`, `yahoo`, `zoho` (fills server/port), or `custom`. |
+| `smtp_host` | `""` | SMTP server (custom provider), e.g. `smtp.yourcompany.com`. |
+| `smtp_port` | `0` | SMTP port; 0 = the provider's default (587). |
+| `security` | `"starttls"` | `starttls` (port 587), `tls` (port 465) or `none` (internal relays only). |
+| `username` | `""` | Login name, usually your e-mail address. Empty = no login (internal relays). |
+| `password_secret` | `"gmail"` | Name of the password stored in Windows Credential Manager (`autoflow secret set NAME`). For Gmail use an App Password. Never put the password itself in the flow. |
+| `from` | `""` | Sender, e.g. `Accounts <me@gmail.com>`; empty = the user name. |
+| `to` | `""` | Recipients, separated by ; or , |
+| `cc` | `""` | Copy recipients, separated by ; or , |
+| `bcc` | `""` | Blind-copy recipients, separated by ; or , |
+| `subject` | `""` | Subject line (interpolated). |
+| `body` | `""` | Message text (interpolated). |
+| `html` | `false` | The body is HTML. |
+| `attachments` | `[]` | Files to attach, one per item (interpolated; relative to the flow folder). |
+| `timeout_ms` | `60000` | Give up after this many ms. |
+
+```json
+{"action":"send_email","provider":"gmail","smtp_host":"","smtp_port":0,"security":"starttls","username":"","password_secret":"gmail","from":"","to":"","cc":"","bcc":"","subject":"","body":"","html":false,"attachments":[],"timeout_ms":60000}
+```
+
+### `outlook_send`
+
+Create an e-mail in the Outlook desktop app and send it (or show it as a draft).
+
+| field | default | description |
+|---|---|---|
+| `to` | `""` | Recipients, separated by ; or , |
+| `cc` | `""` | Copy recipients, separated by ; or , |
+| `bcc` | `""` | Blind-copy recipients, separated by ; or , |
+| `subject` | `""` | Subject line (interpolated). |
+| `body` | `""` | Message text (interpolated). |
+| `html` | `false` | The body is HTML. |
+| `attachments` | `[]` | Files to attach, one per item (interpolated; relative to the flow folder). |
+| `send_now` | `false` | Send immediately. Off = open the mail in Outlook as a draft for you to check and send. |
+| `account` | `""` | Send from this Outlook account (its e-mail address); empty = the default account. |
+
+```json
+{"action":"outlook_send","to":"","cc":"","bcc":"","subject":"","body":"","html":false,"attachments":[],"send_now":false,"account":""}
+```
+
 ## Dialog
 
 ### `message_box`

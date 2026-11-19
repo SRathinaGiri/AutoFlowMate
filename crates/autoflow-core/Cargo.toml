@@ -21,6 +21,8 @@ base64 = "0.22"
 calamine.workspace = true
 csv.workspace = true
 pdf-extract.workspace = true
+lettre.workspace = true
+keyring.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 uiautomation.workspace = true

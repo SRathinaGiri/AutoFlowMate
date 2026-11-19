@@ -73,6 +73,9 @@ pub fn action_icon(name: &str) -> &'static str {
         "image_click" => "🎯",
         "image_wait" => "⏱",
         "image_wait_vanish" => "💨",
+        // Email
+        "send_email" => "✉",
+        "outlook_send" => "📧",
         // Dialog
         "message_box" => "🗨",
         "input_box" => "🔡",
@@ -103,6 +106,7 @@ pub fn category_icon(cat: &str) -> &'static str {
         "Clipboard" => "📋",
         "Screen" => "🖥",
         "Image" => "🖼",
+        "Email" => "✉",
         "Dialog" => "🗨",
         "Web" => "🌐",
         _ => "•",

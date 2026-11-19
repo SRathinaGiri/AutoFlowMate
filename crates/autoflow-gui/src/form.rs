@@ -33,6 +33,8 @@ fn choices(key: &str) -> Option<&'static [&'static str]> {
             "path_exists", "matches",
         ],
         "browser" => &["edge", "chrome"],
+        "provider" => &["gmail", "outlook365", "outlook.com", "yahoo", "zoho", "custom"],
+        "security" => &["starttls", "tls", "none"],
         _ => return None,
     })
 }
@@ -163,6 +165,8 @@ pub struct Form<'a> {
     pub new_var: Option<(String, VarType)>,
     /// Sheets and column headers of the file a read_excel/read_csv step points at.
     pub table: Option<&'a TableInfo>,
+    /// Set when the user clicks "Set password…" for a secret name.
+    pub secret_request: Option<String>,
 }
 
 /// What the editor knows about a data file (for the sheet / column dropdowns).
@@ -231,10 +235,72 @@ impl Form<'_> {
                     c
                 }
             }
-            Value::String(_) => self.text(ui, path, key, v),
+            Value::String(_) if key != "password_secret" => self.text(ui, path, key, v),
             Value::Object(o) if key == "condition" => {
                 let mut changed = false;
                 ui.vertical(|ui| changed = self.object(ui, path, o));
+                changed
+            }
+            Value::Array(a) if a.iter().all(Value::is_string) && key == "attachments" => {
+                // One file per line, plus a Browse button that adds files.
+                let mut changed = false;
+                ui.vertical(|ui| {
+                    let buf = self
+                        .json_buffers
+                        .entry(path.to_string())
+                        .or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
+                    let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(260.0).hint_text("one file per line, ${variables} allowed"));
+                    if resp.changed() {
+                        changed = true;
+                    }
+                    let mut add: Vec<String> = vec![];
+                    ui.horizontal(|ui| {
+                        if ui.button("📄 Add file…").clicked() {
+                            let mut d = rfd::FileDialog::new();
+                            if let Some(dir) = self.flow_dir {
+                                d = d.set_directory(dir);
+                            }
+                            if let Some(files) = d.pick_files() {
+                                add = files.iter().map(|p| self.relative(p)).collect();
+                            }
+                        }
+                    });
+                    let buf = self.json_buffers.get_mut(path).unwrap();
+                    for f in add {
+                        if !buf.is_empty() && !buf.ends_with('\n') {
+                            buf.push('\n');
+                        }
+                        buf.push_str(&f);
+                        changed = true;
+                    }
+                    if changed {
+                        *a = buf.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| Value::String(l.to_string())).collect();
+                    }
+                });
+                changed
+            }
+            Value::String(_) if key == "password_secret" => {
+                let mut s = v.as_str().unwrap_or("").to_string();
+                let mut changed = ui.add_sized([120.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text("e.g. gmail")).changed();
+                let stored = !s.trim().is_empty() && !s.contains("${") && autoflow_core::mail::secrets::exists(&s);
+                if stored {
+                    ui.colored_label(Color32::from_rgb(70, 170, 90), "✔ stored");
+                } else {
+                    ui.colored_label(Color32::from_rgb(220, 140, 40), "not stored");
+                }
+                if ui
+                    .button("🔑 Set password…")
+                    .on_hover_text("Store the password (Gmail: an App Password) in Windows Credential Manager. It is never saved in the flow.")
+                    .clicked()
+                    && !s.trim().is_empty()
+                {
+                    self.secret_request = Some(s.trim().to_string());
+                }
+                if changed {
+                    *v = Value::String(s);
+                } else {
+                    changed = false;
+                }
                 changed
             }
             Value::Array(a) if a.iter().all(Value::is_string) && key == "args" => {

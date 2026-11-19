@@ -1192,6 +1192,34 @@
           ]
         },
         {
+          "description": "Send an e-mail with attachments through SMTP (Gmail, Microsoft 365, any server).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "send_email"
+            }
+          },
+          "$ref": "#/$defs/SendEmail",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Create an e-mail in the Outlook desktop app and send it (or show it as a draft).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "outlook_send"
+            }
+          },
+          "$ref": "#/$defs/OutlookSend",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Show a message box and store which button was clicked.",
           "type": "object",
           "properties": {
@@ -3082,6 +3110,147 @@
     },
     "BrowserClose": {
       "type": "object"
+    },
+    "SendEmail": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "description": "`gmail`, `outlook365`, `outlook.com`, `yahoo`, `zoho` (fills server/port), or `custom`.",
+          "type": "string",
+          "default": "gmail"
+        },
+        "smtp_host": {
+          "description": "SMTP server (custom provider), e.g. `smtp.yourcompany.com`.",
+          "type": "string",
+          "default": ""
+        },
+        "smtp_port": {
+          "description": "SMTP port; 0 = the provider's default (587).",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
+        },
+        "security": {
+          "description": "`starttls` (port 587), `tls` (port 465) or `none` (internal relays only).",
+          "type": "string",
+          "default": "starttls"
+        },
+        "username": {
+          "description": "Login name, usually your e-mail address. Empty = no login (internal relays).",
+          "type": "string",
+          "default": ""
+        },
+        "password_secret": {
+          "description": "Name of the password stored in Windows Credential Manager (`autoflow secret set NAME`).\nFor Gmail use an App Password. Never put the password itself in the flow.",
+          "type": "string",
+          "default": "gmail"
+        },
+        "from": {
+          "description": "Sender, e.g. `Accounts <me@gmail.com>`; empty = the user name.",
+          "type": "string",
+          "default": ""
+        },
+        "to": {
+          "description": "Recipients, separated by ; or ,",
+          "type": "string",
+          "default": ""
+        },
+        "cc": {
+          "description": "Copy recipients, separated by ; or ,",
+          "type": "string",
+          "default": ""
+        },
+        "bcc": {
+          "description": "Blind-copy recipients, separated by ; or ,",
+          "type": "string",
+          "default": ""
+        },
+        "subject": {
+          "description": "Subject line (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "body": {
+          "description": "Message text (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "html": {
+          "description": "The body is HTML.",
+          "type": "boolean",
+          "default": false
+        },
+        "attachments": {
+          "description": "Files to attach, one per item (interpolated; relative to the flow folder).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "timeout_ms": {
+          "description": "Give up after this many ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 60000
+        }
+      }
+    },
+    "OutlookSend": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "description": "Recipients, separated by ; or ,",
+          "type": "string",
+          "default": ""
+        },
+        "cc": {
+          "description": "Copy recipients, separated by ; or ,",
+          "type": "string",
+          "default": ""
+        },
+        "bcc": {
+          "description": "Blind-copy recipients, separated by ; or ,",
+          "type": "string",
+          "default": ""
+        },
+        "subject": {
+          "description": "Subject line (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "body": {
+          "description": "Message text (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "html": {
+          "description": "The body is HTML.",
+          "type": "boolean",
+          "default": false
+        },
+        "attachments": {
+          "description": "Files to attach, one per item (interpolated; relative to the flow folder).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "send_now": {
+          "description": "Send immediately. Off = open the mail in Outlook as a draft for you to check and send.",
+          "type": "boolean",
+          "default": false
+        },
+        "account": {
+          "description": "Send from this Outlook account (its e-mail address); empty = the default account.",
+          "type": "string",
+          "default": ""
+        }
+      }
     },
     "DialogButtons": {
       "type": "string",

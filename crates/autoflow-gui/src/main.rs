@@ -84,6 +84,7 @@ struct Studio {
     vars_ui: variables::VarsUi,
     table_cache: HashMap<String, (Option<std::time::SystemTime>, form::TableInfo)>,
     preview: Option<(String, Result<Value, String>)>,
+    secret_dialog: Option<SecretDialog>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -96,6 +97,14 @@ enum RightTab {
 const ICON_PNG: &[u8] = include_bytes!("../../../assets/autoflowmate.png");
 const GITHUB_URL: &str = "https://github.com/SRathinaGiri/AutoFlowMate";
 const SPLASH_SECONDS: f64 = 2.5;
+
+/// "Set password" dialog: the value goes straight to Windows Credential Manager.
+struct SecretDialog {
+    name: String,
+    first: String,
+    second: String,
+    error: Option<String>,
+}
 
 /// State of the "Schedule" window.
 struct SchedUi {
@@ -147,6 +156,7 @@ impl Studio {
             vars_ui: variables::VarsUi::default(),
             table_cache: HashMap::new(),
             preview: None,
+            secret_dialog: None,
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -783,6 +793,7 @@ impl Studio {
             flow_dir: dir.as_deref(),
             new_var: None,
             table: table.as_ref(),
+            secret_request: None,
         };
         let mut changed = form.object(ui, "a", &mut action_part);
         ui.add_space(8.0);
@@ -790,6 +801,9 @@ impl Studio {
             changed |= form.object(ui, "c", &mut common_part);
         });
         // "➕ New variable…" chosen in a field: declare it now.
+        if let Some(name) = form.secret_request.take() {
+            self.secret_dialog = Some(SecretDialog { name, first: String::new(), second: String::new(), error: None });
+        }
         if let Some((vname, vtype)) = form.new_var.take() {
             variables::add_variable(&mut self.flow, &vname, vtype);
             self.vars_ui.highlight = Some(vname.clone());
@@ -907,6 +921,7 @@ impl Studio {
                 flow_dir: None,
                 new_var: None,
                 table: None,
+                secret_request: None,
             };
             if f.object(ui, "settings", o) {
                 if let Ok(s) = serde_json::from_value(v) {
@@ -1299,6 +1314,55 @@ impl Studio {
         });
     }
 
+    fn secret_window(&mut self, ctx: &egui::Context) {
+        let Some(d) = self.secret_dialog.as_mut() else { return };
+        let mut open = true;
+        let mut done: Option<String> = None;
+        egui::Window::new("🔑 Store password").open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            ui.label(format!("Password for `{}`", d.name));
+            ui.weak("Saved in Windows Credential Manager (AutoFlowMate). It is never written to the flow file or the log.");
+            ui.weak("Gmail: create an App Password (Google Account → Security → 2-Step Verification → App passwords).");
+            ui.add_space(6.0);
+            egui::Grid::new("secret_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                ui.label("Password");
+                ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.first).password(true));
+                ui.end_row();
+                ui.label("Again");
+                ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.second).password(true));
+                ui.end_row();
+            });
+            if let Some(e) = &d.error {
+                ui.colored_label(Color32::from_rgb(220, 80, 80), e);
+            }
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("Store").strong()).clicked() {
+                    if d.first.is_empty() {
+                        d.error = Some("enter the password".into());
+                    } else if d.first != d.second {
+                        d.error = Some("the two entries differ".into());
+                    } else {
+                        match autoflow_core::mail::secrets::set(&d.name, &d.first) {
+                            Ok(()) => done = Some(d.name.clone()),
+                            Err(e) => d.error = Some(e.to_string()),
+                        }
+                    }
+                }
+                if autoflow_core::mail::secrets::exists(&d.name) && ui.button("Delete stored password").clicked() {
+                    match autoflow_core::mail::secrets::delete(&d.name) {
+                        Ok(()) => done = Some(format!("{} (deleted)", d.name)),
+                        Err(e) => d.error = Some(e.to_string()),
+                    }
+                }
+            });
+        });
+        if let Some(name) = done {
+            self.info(LogKind::Ok, format!("password `{name}` stored in Windows Credential Manager"));
+            self.secret_dialog = None;
+        } else if !open {
+            self.secret_dialog = None;
+        }
+    }
+
     fn preview_window(&mut self, ctx: &egui::Context) {
         let Some((title, res)) = &self.preview else { return };
         let mut open = true;
@@ -1518,6 +1582,7 @@ impl eframe::App for Studio {
         self.schedule_window(&ctx);
         self.about_window(&ctx);
         self.preview_window(&ctx);
+        self.secret_window(&ctx);
         self.splash(&ctx);
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").exact_size(22.0).show(ui, |ui| self.status_bar(ui));
@@ -1650,6 +1715,7 @@ fn cat_color(cat: &str) -> Color32 {
         "UI Element" => Color32::from_rgb(110, 200, 110),
         "Web" => Color32::from_rgb(60, 150, 235),
         "Data" => Color32::from_rgb(30, 160, 120),
+        "Email" => Color32::from_rgb(200, 80, 60),
         "Image" => Color32::from_rgb(235, 120, 60),
         "Screen" => Color32::from_rgb(150, 120, 220),
         "Dialog" => Color32::from_rgb(200, 100, 180),

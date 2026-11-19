@@ -28,6 +28,9 @@ headless_chrome = "1"
 calamine = { version = "0.38", features = ["dates"] }
 csv = "1"
 pdf-extract = "0.12"
+lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls", "ring", "webpki-roots"] }
+keyring = { version = "3", features = ["windows-native"] }
+rpassword = "7"
 
 [profile.release]
 opt-level = 3

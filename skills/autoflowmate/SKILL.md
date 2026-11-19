@@ -22,6 +22,7 @@ AutoFlowMate runs **flows**: JSON files listing steps such as `file_copy`, `wind
 | `autoflow mouse [--once]` | Live mouse X/Y and pixel colour (PyAutoGUI displayMousePosition) |
 | `autoflow locate image.png [--confidence 0.9] [--all]` | Test whether an image is found on screen right now |
 | `autoflow web-pick <url>` | Open a page, Ctrl+click an element, get its `element_id` / `selector` |
+| `autoflow secret set NAME` / `check NAME` / `delete NAME` | Store a password (hidden prompt) in Windows Credential Manager for `send_email` |
 | `autoflow schedule add flow.json --when "daily 09:00"` | Run a flow automatically (Windows Task Scheduler) |
 | `autoflow schedule list` / `run NAME` / `remove NAME` | See next/last run and result, start now, delete |
 | `autoflow run flow.json --log run.log` | Also append a timestamped log of the run |
@@ -342,6 +343,36 @@ data** shows the result.
 { "id": "each", "action": "for_each", "items": "${gstins}", "item_var": "gstin", "steps": [ … ] }
 ```
 
+### Sending e-mail
+
+Two actions. **Never** put a password in a flow; never ask the user to paste one into chat.
+
+- **`outlook_send`**: uses the classic Outlook desktop app and the account already signed in,
+  so no password is needed. `send_now: false` (default) opens the mail as a draft for the user
+  to check and send; `send_now: true` sends at once (use this for scheduled flows). `account`
+  picks a sender account by address. The new Outlook app can't be automated.
+- **`send_email`**: SMTP with `provider` `gmail` / `outlook365` / `outlook.com` / `yahoo` /
+  `zoho` (server and port filled in) or `custom` (+ `smtp_host`, `smtp_port`, `security`
+  starttls|tls|none). `username` is the login (the e-mail address). `password_secret` is the
+  *name* of a password stored in Windows Credential Manager: the user runs
+  `autoflow secret set gmail` once (or uses 🔑 Set password… in Studio). **Gmail needs an App
+  Password** (Google Account → Security → 2-Step Verification → App passwords). Microsoft has
+  been turning off password logins for SMTP, so for Outlook/Microsoft 365 accounts prefer
+  `outlook_send`.
+
+Both take `to` / `cc` / `bcc` (separated by `;` or `,`), `subject`, `body` (`html: true` for
+HTML) and `attachments`, a list of paths that can contain variables. A missing attachment fails
+the step before anything is sent.
+
+```json
+{ "id": "mail", "action": "outlook_send", "to": "accounts@company.com",
+  "subject": "Balance Sheet ${now:dd-MM-yyyy}", "body": "Please find attached.",
+  "attachments": ["${export_path}"], "send_now": true }
+```
+
+Sending mail on the user's behalf is an outward action. Confirm recipients with the user, and
+use `send_now: false` or a test address the first time.
+
 ### Web pages (browser_*)
 
 For web applications use the **Web** actions — they drive Edge (default) or Chrome through the
@@ -482,6 +513,10 @@ the file-name box with `window: "Excel"`, `automation_id: "1001"`, `name: "File 
 `web_form_demo.json` (with `web/contact_form.html`): open a page, type into fields by
 `element_id`, set a `<select>` via `browser_eval`, submit, wait for and read the confirmation,
 verify it, screenshot the page and one element.
+
+`tally_export_and_mail.json`: run the Tally export as a sub-flow (`run_flow` with
+`share_variables`, so `${export_path}` is available), then mail the XML via `outlook_send`
+(draft by default) or Gmail `send_email`.
 
 `data_import_demo.json`: one Excel column as a list, a CSV as records in a loop, a second sheet
 by name, and PDF text checked with `contains` (files in `examples/data/`).

@@ -963,6 +963,88 @@ impl Default for ReadPdf {
     }
 }
 
+// ------------------------------------------------------------------------ email
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SendEmail {
+    /// `gmail`, `outlook365`, `outlook.com`, `yahoo`, `zoho` (fills server/port), or `custom`.
+    pub provider: String,
+    /// SMTP server (custom provider), e.g. `smtp.yourcompany.com`.
+    pub smtp_host: String,
+    /// SMTP port; 0 = the provider's default (587).
+    pub smtp_port: u16,
+    /// `starttls` (port 587), `tls` (port 465) or `none` (internal relays only).
+    pub security: String,
+    /// Login name, usually your e-mail address. Empty = no login (internal relays).
+    pub username: String,
+    /// Name of the password stored in Windows Credential Manager (`autoflow secret set NAME`).
+    /// For Gmail use an App Password. Never put the password itself in the flow.
+    pub password_secret: String,
+    /// Sender, e.g. `Accounts <me@gmail.com>`; empty = the user name.
+    pub from: String,
+    /// Recipients, separated by ; or ,
+    pub to: String,
+    /// Copy recipients, separated by ; or ,
+    pub cc: String,
+    /// Blind-copy recipients, separated by ; or ,
+    pub bcc: String,
+    /// Subject line (interpolated).
+    pub subject: String,
+    /// Message text (interpolated).
+    pub body: String,
+    /// The body is HTML.
+    pub html: bool,
+    /// Files to attach, one per item (interpolated; relative to the flow folder).
+    pub attachments: Vec<String>,
+    /// Give up after this many ms.
+    pub timeout_ms: u64,
+}
+impl Default for SendEmail {
+    fn default() -> Self {
+        Self {
+            provider: "gmail".into(),
+            smtp_host: String::new(),
+            smtp_port: 0,
+            security: "starttls".into(),
+            username: String::new(),
+            password_secret: "gmail".into(),
+            from: String::new(),
+            to: String::new(),
+            cc: String::new(),
+            bcc: String::new(),
+            subject: String::new(),
+            body: String::new(),
+            html: false,
+            attachments: vec![],
+            timeout_ms: 60_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OutlookSend {
+    /// Recipients, separated by ; or ,
+    pub to: String,
+    /// Copy recipients, separated by ; or ,
+    pub cc: String,
+    /// Blind-copy recipients, separated by ; or ,
+    pub bcc: String,
+    /// Subject line (interpolated).
+    pub subject: String,
+    /// Message text (interpolated).
+    pub body: String,
+    /// The body is HTML.
+    pub html: bool,
+    /// Files to attach, one per item (interpolated; relative to the flow folder).
+    pub attachments: Vec<String>,
+    /// Send immediately. Off = open the mail in Outlook as a draft for you to check and send.
+    pub send_now: bool,
+    /// Send from this Outlook account (its e-mail address); empty = the default account.
+    pub account: String,
+}
+
 // -------------------------------------------------------------------------- web
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1312,6 +1394,9 @@ actions! {
     "Web", "browser_screenshot", BrowserScreenshot(BrowserScreenshot), "Save a PNG of the page or of one element.";
     "Web", "browser_eval", BrowserEval(BrowserEval), "Run JavaScript in the page and store the result.";
     "Web", "browser_close", BrowserClose(BrowserClose), "Close the browser.";
+
+    "Email", "send_email", SendEmail(SendEmail), "Send an e-mail with attachments through SMTP (Gmail, Microsoft 365, any server).";
+    "Email", "outlook_send", OutlookSend(OutlookSend), "Create an e-mail in the Outlook desktop app and send it (or show it as a draft).";
 
     "Dialog", "message_box", MessageBox(MessageBox), "Show a message box and store which button was clicked.";
     "Dialog", "input_box", InputBox(InputBox), "Ask the user to type a value (optionally masked).";

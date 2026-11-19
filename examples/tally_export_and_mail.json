@@ -1,0 +1,45 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Tally: export Balance Sheet and e-mail it",
+  "description": "Runs tally_balance_sheet_export.json, then mails the exported XML as an attachment - through Outlook (default: opens a draft for you to check; set send_now to send directly) or through Gmail SMTP with an App Password stored via `autoflow secret set gmail`.",
+  "version": 1,
+  "variables": {
+    "mail_to": "accounts@example.com",
+    "mail_cc": "",
+    "use_outlook": true,
+    "outlook_send_now": false,
+    "gmail_user": "you@gmail.com"
+  },
+  "variable_types": {
+    "mail_to": "text",
+    "mail_cc": "text",
+    "use_outlook": "boolean",
+    "outlook_send_now": "boolean",
+    "gmail_user": "text"
+  },
+  "steps": [
+    { "id": "export", "action": "run_flow", "path": "tally_balance_sheet_export.json", "share_variables": true,
+      "comment": "Shares its variables back, so ${export_path} and ${export_file} are available here" },
+    { "id": "check", "action": "file_exists", "path": "${export_path}", "output_var": "have_file" },
+    { "id": "need_file", "action": "if", "condition": { "left": "${have_file}", "op": "is_false" },
+      "then": [ { "id": "no_file", "action": "stop", "success": false, "message": "No export file to send: ${export_path}" } ] },
+    { "id": "subject", "action": "set_variable", "name": "subject", "value": "Balance Sheet ${now:dd-MM-yyyy}" },
+    { "id": "body", "action": "set_variable", "name": "body",
+      "value": "Dear Sir/Madam,${newline}${newline}Please find attached the Balance Sheet exported from TallyPrime on ${now}.${newline}${newline}Regards,${newline}AutoFlowMate" },
+    {
+      "id": "send", "action": "if",
+      "condition": { "left": "${use_outlook}", "op": "is_true" },
+      "then": [
+        { "id": "outlook", "action": "outlook_send", "to": "${mail_to}", "cc": "${mail_cc}", "subject": "${subject}", "body": "${body}",
+          "attachments": ["${export_path}"], "send_now": false,
+          "comment": "send_now false = opens the mail in Outlook for you to check and press Send" }
+      ],
+      "else": [
+        { "id": "gmail", "action": "send_email", "provider": "gmail", "username": "${gmail_user}", "password_secret": "gmail",
+          "to": "${mail_to}", "cc": "${mail_cc}", "subject": "${subject}", "body": "${body}", "attachments": ["${export_path}"],
+          "comment": "Store the Gmail App Password once: autoflow secret set gmail" }
+      ]
+    },
+    { "id": "done", "action": "log", "message": "Mailed ${export_file} to ${mail_to}" }
+  ]
+}

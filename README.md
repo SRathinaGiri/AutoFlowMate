@@ -12,7 +12,7 @@ so you can build them in a GUI, write them by hand, or have an **AI agent** gene
 - **AI skill** ([skills/autoflowmate/SKILL.md](skills/autoflowmate/SKILL.md)): teaches agents such
   as Claude Code to author, validate and run flows.
 
-## What it can automate (72 actions)
+## What it can automate (74 actions)
 
 | Category | Actions |
 |---|---|
@@ -27,7 +27,8 @@ so you can build them in a GUI, write them by hand, or have an **AI agent** gene
 | Image | image_find, image_find_all, image_click, image_wait, image_wait_vanish (find a picture on screen) |
 | Screen | screenshot (monitor, window or region), screen_size, pixel_get, pixel_matches |
 | Web | browser_open, browser_navigate, browser_type, browser_click, browser_wait, browser_wait_text, browser_get_text, browser_screenshot (page, full page or element), browser_eval, browser_close (Edge/Chrome; elements by **element id** or CSS selector) |
-| Dialog | message_box (alert/confirm), input_box (prompt/password) |
+| Email | send_email (SMTP: Gmail, Microsoft 365, any server; attachments), outlook_send (Outlook desktop app; draft or send) |
+| Dialog | message_box (alert/confirm), input_box (prompt/password, optional picture) |
 | Clipboard | clipboard_set, clipboard_get |
 
 Each step can also set `retries`, `retry_delay_ms`, `on_error: continue`, `delay_before_ms`,
@@ -187,6 +188,27 @@ With a header row, every row becomes a record that you use in a loop as `${row.C
 rows the flow will get. Text files work with `file_read`, and `for_each` loops over the lines.
 Example: `examples/data_import_demo.json`. The GST example reads its GSTINs from
 `examples/data/gstins.xlsx`.
+
+## Sending e-mail
+
+| Action | How it sends |
+|---|---|
+| `outlook_send` | Through the **Outlook desktop app**, with the account already signed in, so no password is needed. It can open the mail as a **draft for you to check**, or send it straight away (`send_now`). |
+| `send_email` | Over **SMTP**. Gmail, Microsoft 365, Outlook.com, Yahoo and Zoho are preset, or use any server. Supports STARTTLS, TLS or none. |
+
+Both support To/Cc/Bcc, HTML or text bodies, and **attachments** (`${variables}` allowed).
+Passwords are never stored in flows. Store them once in **Windows Credential Manager**:
+
+```powershell
+.\target\release\autoflow.exe secret set gmail
+```
+
+Or click **🔑 Set password…** on a `send_email` step in Studio. Then reference the name with
+`"password_secret": "gmail"`. Gmail requires an **App Password** (Google Account → Security →
+2-Step Verification → App passwords). For Outlook and Microsoft 365 accounts, `outlook_send`
+is the dependable choice, because Microsoft is disabling password logins over SMTP. See
+`examples/tally_export_and_mail.json`: it exports the Tally Balance Sheet and mails it as an
+attachment.
 
 ## Web automation
 

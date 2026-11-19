@@ -377,6 +377,22 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             need(issues, "path", &x.path);
             need(issues, "output_var", &x.output_var);
         }
+        Action::SendEmail(x) => {
+            need(issues, "to", &format!("{}{}{}", x.to, x.cc, x.bcc));
+            if x.subject.trim().is_empty() {
+                issues.push(warn(loc, "send_email: subject is empty".into()));
+            }
+            if !x.username.trim().is_empty() && x.password_secret.trim().is_empty() {
+                issues.push(err(loc, "send_email: set password_secret (the name of the password stored with `autoflow secret set NAME`)".into()));
+            }
+            if crate::mail::provider_defaults(&x.provider).is_none() && x.smtp_host.trim().is_empty() {
+                issues.push(err(loc, format!("send_email: provider `{}` is not known; use gmail / outlook365 / outlook.com / yahoo / zoho, or set smtp_host", x.provider)));
+            }
+            if x.username.trim().is_empty() && x.from.trim().is_empty() {
+                issues.push(err(loc, "send_email: set username (your e-mail address) or from".into()));
+            }
+        }
+        Action::OutlookSend(x) => need(issues, "to", &format!("{}{}{}", x.to, x.cc, x.bcc)),
         Action::ReadPdf(x) => {
             need(issues, "path", &x.path);
             need(issues, "output_var", &x.output_var);
