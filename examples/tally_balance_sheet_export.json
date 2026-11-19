@@ -1,7 +1,7 @@
 {
   "$schema": "../schema/flow.schema.json",
   "name": "Tally: export Balance Sheet",
-  "description": "Opens Tally, navigates to the Balance Sheet, exports it as XML named with a timestamp, then quits Tally.",
+  "description": "Opens TallyPrime, waits until its License screen is ready, navigates to the Balance Sheet, exports it as XML named with a timestamp, waits for the file to appear, verifies it, then quits Tally. Fails with a clear message if Tally does not start or the export file is not created.",
   "version": 1,
   "settings": {
     "key_delay_ms": 150,
@@ -13,12 +13,17 @@
   },
   "variables": {
     "tally_exe": "D:\\TallyPrime\\tally.exe",
-    "export_file": "BalanceSheet_${timestamp}.xml"
+    "export_dir": "D:\\TallyPrime",
+    "export_file": "BalanceSheet_${timestamp}.xml",
+    "export_path": "${export_dir}\\${export_file}"
   },
   "steps": [
-    { "id": "s01_open", "action": "run_program", "program": "${tally_exe}", "working_dir": "D:\\TallyPrime" },
-    { "id": "s02_wait_start", "action": "wait", "ms": 20000 },
-    { "id": "s02b_focus", "action": "window_activate", "title": "Tally", "timeout_ms": 30000, "comment": "Safety: make sure keys go to Tally, not another window" },
+    { "id": "s01_open", "action": "run_program", "program": "${tally_exe}", "working_dir": "${export_dir}" },
+    {
+      "id": "s02_wait_ready", "action": "image_wait", "image": "images/tally_ready.png", "confidence": 0.9, "timeout_ms": 60000,
+      "comment": "Instead of a fixed 20 s: wait until the 'T: Continue In Educational Mode' button is on screen"
+    },
+    { "id": "s02b_focus", "action": "window_activate", "title": "TallyPrime", "timeout_ms": 10000, "comment": "Make sure keys go to Tally, not another window" },
     { "id": "s03_t", "action": "key_press", "keys": "t" },
     { "id": "s04_wait", "action": "wait", "ms": 2000 },
     { "id": "s05_enter", "action": "key_press", "keys": "enter" },
@@ -34,11 +39,39 @@
     { "id": "s15_enter", "action": "key_press", "keys": "enter" },
     { "id": "s16_ctrl_a", "action": "key_press", "keys": "ctrl+a" },
     { "id": "s17_e", "action": "key_press", "keys": "e" },
-    { "id": "s18_wait_export", "action": "wait", "ms": 10000 },
-    { "id": "s18b_log", "action": "log", "message": "Exported ${export_file}" },
+    { "id": "s18_deadline", "action": "set_variable", "name": "deadline", "value": "${unix}", "comment": "Instead of a fixed 10 s: poll for the XML for up to 30 s" },
+    { "id": "s18_plus30", "action": "increment", "name": "deadline", "by": 30 },
+    {
+      "id": "s18_wait_file", "action": "while", "max_iterations": 200,
+      "condition": { "left": "${unix}", "op": "less_than", "right": "${deadline}" },
+      "steps": [
+        { "id": "s18a_exists", "action": "file_exists", "path": "${export_path}", "output_var": "exported" },
+        {
+          "id": "s18b_done", "action": "if",
+          "condition": { "left": "${exported}", "op": "is_true" },
+          "then": [ { "id": "s18c_break", "action": "break" } ],
+          "else": [ { "id": "s18d_wait", "action": "wait", "ms": 500 } ]
+        }
+      ]
+    },
+    {
+      "id": "s18e_verify", "action": "if",
+      "condition": { "left": "${export_path}", "op": "path_exists" },
+      "then": [
+        { "id": "s18f_info", "action": "file_info", "path": "${export_path}", "output_var": "xml" },
+        { "id": "s18g_log", "action": "log", "message": "Exported ${xml.name} (${xml.size} bytes) to ${xml.parent}" }
+      ],
+      "else": [
+        { "id": "s18h_fail", "action": "stop", "success": false, "message": "Export failed: ${export_path} was not created within 30 s. Tally was left open so you can see where it stopped." }
+      ]
+    },
     { "id": "s19_close", "action": "key_press", "keys": "alt+f4" },
     { "id": "s20_esc", "action": "key_press", "keys": "esc" },
     { "id": "s21_esc", "action": "key_press", "keys": "esc" },
-    { "id": "s22_yes", "action": "key_press", "keys": "y" }
+    { "id": "s22_yes", "action": "key_press", "keys": "y" },
+    {
+      "id": "s23_closed", "action": "window_wait_close", "title": "TallyPrime", "timeout_ms": 15000, "on_error": "continue",
+      "comment": "Confirm Tally really quit; only warns if it is still open"
+    }
   ]
 }
