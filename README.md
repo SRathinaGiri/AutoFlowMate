@@ -1,33 +1,43 @@
 # AutoFlowMate
 
-A Windows Robotic Process Automation (RPA) proof of concept in Rust. Flows are plain **JSON**,
-so you can build them in a GUI, write them by hand, or have an **AI agent** generate them.
+A Robotic Process Automation (RPA) tool for Windows, written in Rust. It automates desktop
+applications, web pages, files, Excel, CSV and PDF data, databases, e-mail, web APIs and AI
+models, reads text on screen with OCR, and runs on a schedule.
+Flows are plain **JSON**, so you can build them in a visual editor, write them by hand, or have
+an **AI agent** generate them.
 
 - **AutoFlowMate Studio** (`autoflow-studio.exe`): a visual editor with a **flowchart view**
   (drag actions from the palette onto any connector, drag nodes to reorder, if/else branches and
-  loop frames), a list and a JSON view, a property form, Run/Dry-run/Stop, a live log, an
+  loop frames), a list and a JSON view, a property form, Run/Dry-run/Stop, **breakpoints and
+  step-by-step running** with the variables shown at each pause, **undo/redo**, a live log, an
   element picker, image snipping and a live mouse-position bar.
 - **`autoflow` CLI**: run, validate, inspect, and generate templates/schema/docs. Every command has
   `--json` output for automation.
 - **AI skill** ([skills/autoflowmate/SKILL.md](skills/autoflowmate/SKILL.md)): teaches agents such
   as Claude Code to author, validate and run flows.
 
-## What it can automate (74 actions)
+## What it can automate (94 actions)
 
 | Category | Actions |
 |---|---|
-| Flow | set_variable, increment, log, wait, if, repeat, while, for_each, break, stop, run_flow |
+| Flow | set_variable, increment, log, wait, if, repeat, while, for_each, break, stop, run_flow, **try** (catch / finally) |
 | File | file_copy, file_move, file_delete, file_write, file_read, file_exists, file_info, dir_create, dir_delete, dir_list |
-| Data | read_excel (sheet or one column), read_csv, read_pdf |
+| Data | read_excel (sheet or one column), read_csv, read_pdf, list_append, write_csv, write_excel |
+| Text | text_transform, text_replace, text_extract (regular expressions), text_split, text_join |
+| Date & Math | date_calc (format, add, difference, parts), calculate (expressions with rounding) |
+| Database | db_query, db_execute (SQLite built in; SQL Server, MySQL, Access, Excel, TallyPrime and others through ODBC) |
+| Internet | http_request (REST APIs, downloads) |
+| AI | ai_prompt (LM Studio, Ollama, OpenAI, Gemini, Claude; force one of given labels, or JSON) |
 | Program | run_program (with output capture/timeout), kill_program, open (file/folder/URL) |
 | Window | window_activate, window_wait, window_wait_close, window_close, window_set_state, window_exists |
 | Mouse | mouse_move (duration + easing), mouse_click, mouse_down, mouse_up, mouse_scroll, mouse_drag, mouse_position |
 | Keyboard | type_text (keys / unicode / paste modes), key_press (`ctrl+shift+s`, `win+r`, ...), key_down, key_up |
 | UI Element | ui_click, ui_set_text, ui_get_text, ui_wait, ui_exists (Windows UI Automation selectors) |
 | Image | image_find, image_find_all, image_click, image_wait, image_wait_vanish (find a picture on screen) |
+| OCR | ocr_read, ocr_find, ocr_click (Windows' built-in OCR, offline) |
 | Screen | screenshot (monitor, window or region), screen_size, pixel_get, pixel_matches |
 | Web | browser_open, browser_navigate, browser_type, browser_click, browser_wait, browser_wait_text, browser_get_text, browser_screenshot (page, full page or element), browser_eval, browser_close (Edge/Chrome; elements by **element id** or CSS selector) |
-| Email | send_email (SMTP: Gmail, Microsoft 365, any server; attachments), outlook_send (Outlook desktop app; draft or send) |
+| Email | send_email (SMTP: Gmail, Microsoft 365, any server; attachments), outlook_send (Outlook desktop app; draft or send), read_email (IMAP), outlook_read (save attachments, mark read, move) |
 | Dialog | message_box (alert/confirm), input_box (prompt/password, optional picture) |
 | Clipboard | clipboard_set, clipboard_get |
 
@@ -149,7 +159,7 @@ push to `main`. To build the same zip locally, run `scripts\package.ps1`.
 .\target\release\autoflow.exe run examples\notepad_keyboard.json --key-delay 200
 ```
 
-Other commands: `actions`, `template <action>`, `windows`, `mouse`, `locate <image>`, `schedule`, `schema`, `docs`, `new`.
+Other commands: `actions`, `template <action>`, `windows`, `mouse`, `locate <image>`, `ocr`, `secret`, `schedule`, `schema`, `docs`, `new`.
 
 The right-hand panel has three tabs:
 
@@ -172,7 +182,13 @@ insertion point for palette clicks. Ctrl+mouse wheel zooms. The **List** and **J
 the same flow. Edit fields on the right. **⌖ Pick element** captures the control under the mouse
 after 3 seconds and fills the selected `ui_*` or mouse step, or adds a new `ui_click`. For
 `image_*` steps, **📷 Snip image** opens the Windows snipping tool and saves the picture next to the
-flow. F5 runs, Ctrl+S saves.
+flow. F5 runs, Ctrl+S saves, Ctrl+Z / Ctrl+Y undo and redo.
+
+**Debugging:** press **F9** on a step (or click the dot in the List view, or right-click a node)
+to set a breakpoint. **▶ Run** stops before that step; **⏭ Step (F10)** runs one step at a time
+from the start. While paused, a window shows every variable's current value (typed passwords are
+masked), and you can **Continue (F5)**, **Step (F10)** or **Stop**. Studio asks before closing or
+opening another flow when there are unsaved changes.
 
 ## Reading Excel, CSV and PDF files
 
@@ -189,7 +205,77 @@ rows the flow will get. Text files work with `file_read`, and `for_each` loops o
 Example: `examples/data_import_demo.json`. The GST example reads its GSTINs from
 `examples/data/gstins.xlsx`.
 
-## Sending e-mail
+## Writing results, text, dates and maths
+
+Collect results with `list_append` (a record per row) and save them with `write_csv` (Excel
+friendly UTF-8, appending without a second header) or `write_excel` (bold frozen header, fitted
+columns, numbers stay numbers). `text_extract` pulls values out of text with a regular
+expression, for example an invoice number from a PDF, and `text_replace`, `text_split`,
+`text_join` and `text_transform` do the rest. `date_calc` formats, adds to and compares dates
+(day-first input such as 31/01/2026 and Excel date numbers are understood), and `calculate`
+evaluates arithmetic like `${amount} * 18 / 100` with rounding.
+
+Wrap risky steps in **`try`**: when a step fails, `catch` runs with the message in `${error}` and
+the flow carries on; `finally` always runs. See `examples/gst_invoice_register.json`, which runs
+offline. It reads GSTINs from a PDF, works out CGST/SGST or IGST, adds due dates, stores the
+invoices in SQLite and writes an Excel register.
+
+## AI: classify, summarise, extract
+
+`ai_prompt` sends a prompt (with `${variables}`) to a language model and stores the reply:
+
+| `provider` | Where it runs |
+|---|---|
+| `lmstudio` (default) | On your PC: LM Studio's local server (Developer tab → Start Server) with any chat model loaded |
+| `ollama` | On your PC: Ollama |
+| `openai_compatible` | Any OpenAI-style server (`base_url`) |
+| `openai`, `gemini`, `anthropic` | Cloud: OpenAI, Google Gemini, Anthropic Claude (API key stored with `autoflow secret set NAME`) |
+
+Give `labels` such as `["Fav", "UnFav", "Neutral"]` and the stored answer is always exactly one of
+them. That is all a classification needs. `json: true` returns structured data instead.
+`examples/classify_comments.json` reads customer comments from Excel, labels each one, and saves
+a CSV and an Excel file:
+
+```powershell
+.\target\release\autoflow.exe run examples\classify_comments.json
+```
+
+```powershell
+.\target\release\autoflow.exe run examples\classify_comments.json --var provider=openai --var api_key_secret=openai
+```
+
+With a local model the comments never leave your PC; cloud providers receive the text you send.
+`http_request` calls any other web API (JSON in and out, bearer tokens from Credential Manager,
+file downloads).
+
+## Databases
+
+`db_query` returns rows as records for `for_each`, `write_csv` or `write_excel`; `db_execute` runs
+INSERT/UPDATE/DELETE/CREATE. Values go in through `?` placeholders and `params`, never pasted into
+the SQL.
+
+| `connection` | Database |
+|---|---|
+| `sqlite:output/app.db` | A SQLite file (built in, created if missing) |
+| `Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes` | SQL Server |
+| `Driver={Microsoft Excel Driver (*.xls, *.xlsx, *.xlsm, *.xlsb)};DBQ=C:\data\book.xlsx;ReadOnly=1` | An Excel workbook as tables (`[Sheet1$]`) |
+| `DSN=TallyODBC64_9000` | TallyPrime's ODBC server |
+
+Any database with an ODBC driver works (MySQL, PostgreSQL, Oracle, Access). A password is written
+as `PWD={password}` and taken from Credential Manager (`password_secret`).
+
+## Reading text on screen (OCR)
+
+`ocr_read` reads the text of a window, a screen region or a picture; `ocr_find` and `ocr_click`
+locate and click a label such as a menu item or button. This helps with apps that show nothing to
+UI Automation, like some Tally screens or remote desktops. It uses the OCR engine built into
+Windows 10/11, so it is offline and adds almost nothing to the download. See what it reads with:
+
+```powershell
+.\target\release\autoflow.exe ocr --window "Notepad" --find "File"
+```
+
+## Sending and reading e-mail
 
 | Action | How it sends |
 |---|---|
@@ -209,6 +295,12 @@ Or click **🔑 Set password…** on a `send_email` step in Studio. Then referen
 is the dependable choice, because Microsoft is disabling password logins over SMTP. See
 `examples/tally_export_and_mail.json`: it exports the Tally Balance Sheet and mails it as an
 attachment.
+
+To **read** mail, use `read_email` (IMAP: Gmail, Yahoo, Zoho or any server) or `outlook_read`
+(the Outlook desktop app). Filter by unread, sender, subject words and date. Attachments are
+saved to a folder (`*.pdf` filters, nothing is overwritten), and messages can be marked read or
+moved afterwards. `examples/invoice_inbox.json` saves PDF invoices from the inbox, extracts the
+invoice number and amount, and records them in SQLite and Excel.
 
 ## Web automation
 
@@ -303,4 +395,12 @@ docs/                  architecture and roadmap
 Built on [enigo](https://crates.io/crates/enigo) (mouse/keyboard),
 [uiautomation](https://crates.io/crates/uiautomation) (Windows UI Automation),
 [egui/eframe](https://crates.io/crates/eframe) (GUI), [xcap](https://crates.io/crates/xcap)
-(screenshots) and [arboard](https://crates.io/crates/arboard) (clipboard).
+(screenshots), [arboard](https://crates.io/crates/arboard) (clipboard),
+[headless_chrome](https://crates.io/crates/headless_chrome) (web),
+[calamine](https://crates.io/crates/calamine) and
+[rust_xlsxwriter](https://crates.io/crates/rust_xlsxwriter) (Excel),
+[lettre](https://crates.io/crates/lettre), [imap](https://crates.io/crates/imap) and
+[mail-parser](https://crates.io/crates/mail-parser) (e-mail),
+[ureq](https://crates.io/crates/ureq) (HTTP), [rusqlite](https://crates.io/crates/rusqlite) and
+[odbc-api](https://crates.io/crates/odbc-api) (databases), [fasteval](https://crates.io/crates/fasteval)
+(maths) and the [windows](https://crates.io/crates/windows) crate (Windows OCR).

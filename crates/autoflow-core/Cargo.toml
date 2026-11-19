@@ -23,6 +23,15 @@ csv.workspace = true
 pdf-extract.workspace = true
 lettre.workspace = true
 keyring.workspace = true
+ureq.workspace = true
+rust_xlsxwriter.workspace = true
+regex.workspace = true
+fasteval.workspace = true
+imap.workspace = true
+mail-parser.workspace = true
+odbc-api.workspace = true
+rusqlite.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 uiautomation.workspace = true
+windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_System_WinRT"] }

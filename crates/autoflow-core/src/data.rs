@@ -282,3 +282,196 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+// ------------------------------------------------------------------ writing
+
+/// A table to write: optional header names and rows of cells.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Table {
+    pub headers: Vec<String>,
+    pub rows: Vec<Vec<Value>>,
+}
+
+/// Turn a variable into a table:
+/// * a list of records (objects) -> one column per key (in first-seen order,
+///   or the order of `columns`, which also limits and renames nothing);
+/// * a list of lists -> rows as they are (`columns` becomes the header row);
+/// * a list of plain values -> one column (`columns[0]`, default "value");
+/// * a single record -> one row.
+pub fn to_table(data: &Value, columns: &[String]) -> Result<Table> {
+    let items: Vec<Value> = match data {
+        Value::Array(a) => a.clone(),
+        Value::Null => vec![],
+        Value::Object(_) => vec![data.clone()],
+        Value::String(s) if s.trim().is_empty() => vec![],
+        other => bail!("data must be a list (e.g. \"${{results}}\"), got {}", crate::vars::to_text(other)),
+    };
+    let cols: Vec<String> = columns.iter().map(|c| c.trim().to_string()).filter(|c| !c.is_empty()).collect();
+    if items.iter().any(Value::is_object) {
+        let headers = if cols.is_empty() {
+            let mut seen = Vec::<String>::new();
+            for it in &items {
+                if let Value::Object(m) = it {
+                    for k in m.keys() {
+                        if !seen.contains(k) {
+                            seen.push(k.clone());
+                        }
+                    }
+                }
+            }
+            seen
+        } else {
+            cols
+        };
+        let rows = items
+            .iter()
+            .map(|it| match it {
+                Value::Object(m) => headers.iter().map(|h| lookup(m, h)).collect(),
+                other => vec![other.clone()],
+            })
+            .collect();
+        return Ok(Table { headers, rows });
+    }
+    if items.iter().any(Value::is_array) {
+        let rows = items.into_iter().map(|it| if let Value::Array(r) = it { r } else { vec![it] }).collect();
+        return Ok(Table { headers: cols, rows });
+    }
+    let headers = vec![cols.into_iter().next().unwrap_or_else(|| "value".into())];
+    Ok(Table { headers, rows: items.into_iter().map(|v| vec![v]).collect() })
+}
+
+/// Object field by exact name, else case-insensitively; missing = "".
+fn lookup(m: &Map<String, Value>, key: &str) -> Value {
+    m.get(key)
+        .or_else(|| m.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, v)| v))
+        .cloned()
+        .unwrap_or(Value::String(String::new()))
+}
+
+fn cell_text(v: &Value) -> String {
+    match v {
+        Value::Null => String::new(),
+        other => crate::vars::to_text(other),
+    }
+}
+
+/// Write a table as CSV. With `append` and an existing file, the header is not repeated.
+/// `bom` adds the UTF-8 marker Excel needs to show non-English text correctly.
+pub fn write_csv(path: &Path, t: &Table, delimiter: &str, header: bool, append: bool, bom: bool) -> Result<usize> {
+    use std::io::Write;
+    let delim = match delimiter {
+        "" | "," => b',',
+        "\\t" | "\t" | "tab" => b'\t',
+        d if d.len() == 1 => d.as_bytes()[0],
+        d => bail!("delimiter must be one character (or \\t), got `{d}`"),
+    };
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let existing = append && path.metadata().map(|m| m.len() > 0).unwrap_or(false);
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(existing)
+        .truncate(!existing)
+        .open(path)
+        .with_context(|| format!("cannot write {} (is it open in Excel?)", path.display()))?;
+    if bom && !existing {
+        file.write_all(b"\xEF\xBB\xBF")?;
+    }
+    let mut w = csv::WriterBuilder::new().delimiter(delim).flexible(true).from_writer(file);
+    if header && !existing && !t.headers.is_empty() {
+        w.write_record(&t.headers)?;
+    }
+    for r in &t.rows {
+        w.write_record(r.iter().map(cell_text))?;
+    }
+    w.flush()?;
+    Ok(t.rows.len())
+}
+
+/// Write a table to a new .xlsx workbook (replacing the file). Numbers and
+/// booleans stay numbers/booleans; text starting with `=` becomes a formula.
+pub fn write_excel(path: &Path, sheet: &str, t: &Table, header: bool, autofit: bool) -> Result<usize> {
+    use rust_xlsxwriter::{Format, Workbook};
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let mut wb = Workbook::new();
+    let ws = wb.add_worksheet();
+    let name = if sheet.trim().is_empty() { "Sheet1" } else { sheet.trim() };
+    ws.set_name(name).map_err(|e| anyhow!("sheet name `{name}`: {e}"))?;
+    let bold = Format::new().set_bold();
+    let mut row: u32 = 0;
+    if header && !t.headers.is_empty() {
+        for (c, h) in t.headers.iter().enumerate() {
+            ws.write_string_with_format(0, c as u16, h, &bold)?;
+        }
+        ws.set_freeze_panes(1, 0)?;
+        row = 1;
+    }
+    for r in &t.rows {
+        for (c, v) in r.iter().enumerate() {
+            let c = c as u16;
+            match v {
+                Value::Null => {}
+                Value::Bool(b) => {
+                    ws.write_boolean(row, c, *b)?;
+                }
+                Value::Number(n) => {
+                    ws.write_number(row, c, n.as_f64().unwrap_or(0.0))?;
+                }
+                Value::String(s) if s.starts_with('=') && s.len() > 1 => {
+                    ws.write_formula(row, c, s.as_str())?;
+                }
+                Value::String(s) => {
+                    ws.write_string(row, c, s)?;
+                }
+                other => {
+                    ws.write_string(row, c, other.to_string())?;
+                }
+            }
+        }
+        row += 1;
+    }
+    if autofit {
+        ws.autofit();
+    }
+    wb.save(path).map_err(|e| anyhow!("cannot save {} (is it open in Excel?): {e}", path.display()))?;
+    Ok(t.rows.len())
+}
+
+#[cfg(test)]
+mod write_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tables() {
+        let t = to_table(&json!([{"Comment": "good", "Label": "Fav"}, {"Label": "UnFav", "Comment": "bad, \"awful\""}]), &[]).unwrap();
+        assert_eq!(t.headers, vec!["Comment", "Label"]);
+        assert_eq!(t.rows[1], vec![json!("bad, \"awful\""), json!("UnFav")]);
+        let t = to_table(&json!([{"a": 1, "b": 2}]), &["b".into(), "c".into()]).unwrap();
+        assert_eq!(t.rows[0], vec![json!(2), json!("")]);
+        let t = to_table(&json!(["x", "y"]), &[]).unwrap();
+        assert_eq!(t.headers, vec!["value"]);
+        assert_eq!(t.rows.len(), 2);
+    }
+
+    #[test]
+    fn csv_round_trip() {
+        let dir = std::env::temp_dir().join(format!("afm_csv_{}", std::process::id()));
+        let p = dir.join("out.csv");
+        let t = to_table(&json!([{"Comment": "bad, \"awful\"", "Label": "UnFav"}]), &[]).unwrap();
+        write_csv(&p, &t, ",", true, false, true).unwrap();
+        write_csv(&p, &t, ",", true, true, true).unwrap();
+        let rows = read_csv_raw(&p, ",").unwrap();
+        assert_eq!(rows.len(), 3, "header once, two data rows: {rows:?}");
+        assert_eq!(rows[1][0], json!("bad, \"awful\""));
+        let x = dir.join("out.xlsx");
+        write_excel(&x, "Results", &t, true, true).unwrap();
+        let (_, raw) = read_excel_raw(&x, "Results", "").unwrap();
+        assert_eq!(raw[1][1], json!("UnFav"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+}

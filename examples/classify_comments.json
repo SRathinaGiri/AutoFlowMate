@@ -1,0 +1,59 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Classify customer comments with AI",
+  "description": "Reads customer comments from data/customer_comments.xlsx, asks an AI model to label each one Fav, UnFav or Neutral, and saves the results as CSV and Excel in output/. Works with LM Studio's local server out of the box (start it in LM Studio's Developer tab and load any chat model); for OpenAI, Gemini or Claude set provider and store the API key once with `autoflow secret set NAME`.",
+  "version": 1,
+  "variables": {
+    "provider": "lmstudio",
+    "model": "",
+    "api_key_secret": "",
+    "input_file": "data/customer_comments.xlsx",
+    "output_csv": "output/comment_labels_${now:yyyyMMdd_HHmmss}.csv",
+    "results": [],
+    "label": "",
+    "models": "",
+    "ping_status": 0
+  },
+  "variable_types": {
+    "provider": "text",
+    "model": "text",
+    "api_key_secret": "text",
+    "input_file": "file",
+    "output_csv": "file"
+  },
+  "steps": [
+    { "id": "read", "action": "read_excel", "path": "${input_file}", "sheet": "Comments", "has_header": true,
+      "output_var": "comments", "count_var": "total", "comment": "One record per row: ${row.Id}, ${row.Customer}, ${row.Comment}" },
+    { "id": "local_check", "action": "if", "condition": { "left": "${provider}", "op": "equals", "right": "lmstudio", "ignore_case": true },
+      "comment": "Fail fast with one clear message instead of one error per row when LM Studio is not running",
+      "then": [
+        { "id": "ping", "action": "http_request", "url": "http://localhost:1234/v1/models", "timeout_ms": 5000, "output_var": "models", "status_var": "ping_status", "on_error": "continue" },
+        { "id": "no_server", "action": "if", "condition": { "left": "${ping_status}", "op": "not_equals", "right": "200" },
+          "then": [ { "id": "stop_no_server", "action": "stop", "success": false,
+                      "message": "LM Studio's local server is not running or has no model loaded. In LM Studio: Developer tab > Start Server, then load a chat model." } ] }
+      ] },
+    { "id": "start", "action": "log", "message": "Classifying ${total} comments with ${provider}" },
+    {
+      "id": "each", "action": "for_each", "items": "${comments}", "item_var": "row", "index_var": "i",
+      "steps": [
+        { "id": "classify", "action": "ai_prompt",
+          "provider": "${provider}", "model": "${model}", "api_key_secret": "${api_key_secret}",
+          "system": "You label customer feedback for a retail company. Fav = the customer is happy or praises us. UnFav = the customer complains or is unhappy. Neutral = neither.",
+          "prompt": "Customer comment: ${row.Comment}",
+          "labels": ["Fav", "UnFav", "Neutral"],
+          "temperature": 0,
+          "output_var": "label",
+          "retries": 1, "retry_delay_ms": 2000, "on_error": "continue",
+          "comment": "labels makes the stored value exactly Fav, UnFav or Neutral; retries cover a model that answers off-script" },
+        { "id": "failed", "action": "if", "condition": { "left": "${label}", "op": "is_empty" },
+          "then": [ { "id": "mark", "action": "set_variable", "name": "label", "value": "Error" } ] },
+        { "id": "collect", "action": "list_append", "name": "results",
+          "value": { "Id": "${row.Id}", "Customer": "${row.Customer}", "Comment": "${row.Comment}", "Label": "${label}" } },
+        { "id": "reset", "action": "set_variable", "name": "label", "value": "" }
+      ]
+    },
+    { "id": "csv", "action": "write_csv", "path": "${output_csv}", "data": "${results}", "columns": ["Id", "Customer", "Comment", "Label"], "count_var": "written" },
+    { "id": "xlsx", "action": "write_excel", "path": "output/comment_labels.xlsx", "sheet": "Labels", "data": "${results}" },
+    { "id": "done", "action": "log", "message": "Saved ${written} labelled comments to ${output_csv}" }
+  ]
+}

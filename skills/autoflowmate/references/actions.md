@@ -151,6 +151,21 @@ Run another flow file as a sub-flow.
 {"action":"run_flow","path":"","variables":{},"share_variables":false}
 ```
 
+### `try`
+
+Run steps; on failure run `catch` instead of stopping; always run `finally`.
+
+| field | default | description |
+|---|---|---|
+| `steps` | `[]` | Steps to try. |
+| `catch` | `[]` | Steps run when one of `steps` fails (the error text is in error_var). |
+| `finally` | `[]` | Steps run afterwards in every case (e.g. close the browser or the program). |
+| `error_var` | `"error"` | Variable receiving the error message (it names the step that failed). |
+
+```json
+{"action":"try","steps":[],"catch":[],"finally":[],"error_var":"error"}
+```
+
 ## File
 
 ### `file_copy`
@@ -342,6 +357,258 @@ Read the text of a PDF (all or some pages) into a variable.
 
 ```json
 {"action":"read_pdf","path":"","pages":"","output_var":"pdf_text","page_count_var":""}
+```
+
+### `list_append`
+
+Add a value or record to a list variable (collect results).
+
+| field | default | description |
+|---|---|---|
+| `name` | `""` | List variable to add to (missing = a new empty list). |
+| `value` | `null` | Value to add. Strings are interpolated; an object such as {"Comment": "${row.Comment}", "Label": "${label}"} adds a record (a row for write_csv / write_excel). |
+
+```json
+{"action":"list_append","name":"","value":null}
+```
+
+### `write_csv`
+
+Write a list of records to a CSV file (Excel-friendly).
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | CSV file to write (folders are created). |
+| `data` | `""` | The rows: usually "${results}" - a list of records, a list of lists or a list of values. |
+| `columns` | `[]` | Columns to write, in order (empty = every key of the records, in first-seen order). |
+| `delimiter` | `","` | Field separator: "," (default), ";" or "\t" for tab. |
+| `header` | `true` | Write a header row with the column names. |
+| `append` | `false` | Add to the end of an existing file (the header is not repeated). |
+| `excel_bom` | `true` | Start the file with a UTF-8 marker so Excel shows non-English text correctly. |
+| `count_var` | `""` | Variable receiving the number of rows written (optional). |
+
+```json
+{"action":"write_csv","path":"","data":"","columns":[],"delimiter":",","header":true,"append":false,"excel_bom":true,"count_var":""}
+```
+
+### `write_excel`
+
+Write a list of records to a new Excel workbook.
+
+| field | default | description |
+|---|---|---|
+| `path` | `""` | .xlsx workbook to create (an existing file is replaced; close it in Excel first). |
+| `sheet` | `"Sheet1"` | Sheet name. |
+| `data` | `""` | The rows: usually "${results}" - a list of records, a list of lists or a list of values. Numbers stay numbers; text starting with = is written as a formula. |
+| `columns` | `[]` | Columns to write, in order (empty = every key of the records, in first-seen order). |
+| `header` | `true` | Write a bold, frozen header row with the column names. |
+| `autofit` | `true` | Size the columns to fit their contents. |
+| `count_var` | `""` | Variable receiving the number of rows written (optional). |
+
+```json
+{"action":"write_excel","path":"","sheet":"Sheet1","data":"","columns":[],"header":true,"autofit":true,"count_var":""}
+```
+
+## Text
+
+### `text_transform`
+
+Trim, change case, count or URL-encode text.
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | The text (interpolated), e.g. "${row.Name}". |
+| `operation` | `"trim"` | trim, upper, lower, title (Each Word Capitalised), length (number of characters), url_encode (for a URL query value) or remove_spaces. |
+| `output_var` | `""` | Variable receiving the result. |
+
+```json
+{"action":"text_transform","input":"","operation":"trim","output_var":""}
+```
+
+### `text_replace`
+
+Replace text (plain or regular expression).
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | The text (interpolated). |
+| `find` | `""` | Text to look for (a regular expression when `regex` is true). |
+| `replace_with` | `""` | Replacement. With regex, $1 / ${name} insert captured groups. |
+| `regex` | `false` | Treat `find` as a regular expression. |
+| `ignore_case` | `false` | Match regardless of upper/lower case. |
+| `output_var` | `""` | Variable receiving the result. |
+
+```json
+{"action":"text_replace","input":"","find":"","replace_with":"","regex":false,"ignore_case":false,"output_var":""}
+```
+
+### `text_extract`
+
+Pick out text with a regular expression (first match or all).
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | The text to search (interpolated), e.g. "${pdf_text}". |
+| `pattern` | `""` | Regular expression, e.g. "Invoice No[.:]\\s*(\\S+)" or "\\d{2}[A-Z]{5}\\d{4}[A-Z]\\d[Z][A-Z\\d]" (GSTIN). |
+| `group` | `0` | Capture group to return: 0 = the whole match, 1 = the first ( ) group... |
+| `all` | `false` | Return every match as a list instead of the first one. |
+| `ignore_case` | `false` | Match regardless of upper/lower case. |
+| `output_var` | `"match"` | Variable receiving the match ("" when nothing matches) or the list of matches. |
+| `found_var` | `""` | Variable receiving "true"/"false": was anything found? (optional) |
+
+```json
+{"action":"text_extract","input":"","pattern":"","group":0,"all":false,"ignore_case":false,"output_var":"match","found_var":""}
+```
+
+### `text_split`
+
+Split text into a list (by comma, line, tab or pattern).
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | The text to split (interpolated). |
+| `separator` | `","` | Separator, e.g. "," or "\n" for lines or "\t" for tabs (a regular expression when `regex` is true). |
+| `regex` | `false` | Treat `separator` as a regular expression, e.g. "[,;]\\s*". |
+| `trim` | `true` | Trim spaces around each part. |
+| `skip_empty` | `true` | Leave out empty parts. |
+| `output_var` | `"parts"` | Variable receiving the list of parts. |
+
+```json
+{"action":"text_split","input":"","separator":",","regex":false,"trim":true,"skip_empty":true,"output_var":"parts"}
+```
+
+### `text_join`
+
+Join a list into one text.
+
+| field | default | description |
+|---|---|---|
+| `items` | `""` | The list to join, e.g. "${names}". |
+| `separator` | `", "` | Put between the items, e.g. ", " or "\n". |
+| `output_var` | `"text"` | Variable receiving the text. |
+
+```json
+{"action":"text_join","items":"","separator":", ","output_var":"text"}
+```
+
+## Date & Math
+
+### `date_calc`
+
+Format, add to, subtract or compare dates.
+
+| field | default | description |
+|---|---|---|
+| `operation` | `"format"` | format, add, diff or parts. |
+| `date` | `""` | The date (interpolated); empty = now, "today" = today 00:00. Excel date numbers work too. |
+| `input_format` | `""` | How `date` is written, e.g. dd/MM/yyyy (empty = recognise common formats, day first). |
+| `amount` | `0` | add: how many units (negative to go back). |
+| `unit` | `"days"` | add / diff: seconds, minutes, hours, days, weeks, months or years. |
+| `other_date` | `""` | diff: the later date (empty = now). |
+| `format` | `"dd-MM-yyyy"` | Output format (tokens as in ${now:...}): yyyy MM dd HH hh mm ss tt MMM dddd. |
+| `output_var` | `"date"` | Variable receiving the result. |
+
+```json
+{"action":"date_calc","operation":"format","date":"","input_format":"","amount":0,"unit":"days","other_date":"","format":"dd-MM-yyyy","output_var":"date"}
+```
+
+### `calculate`
+
+Evaluate arithmetic such as ${amount} * 18 / 100.
+
+| field | default | description |
+|---|---|---|
+| `expression` | `""` | Expression (interpolated), e.g. "${amount} * 18 / 100". Supports + - * / % ^ ( ), comparisons (result 1 or 0) and round(x), round(0.01, x), int, floor, ceil, abs, min, max, sqrt. |
+| `decimals` | `null` | Round the result to this many decimal places (empty = no rounding). |
+| `output_var` | `"result"` | Variable receiving the number. |
+
+```json
+{"action":"calculate","expression":"","decimals":null,"output_var":"result"}
+```
+
+## Database
+
+### `db_query`
+
+Run a SELECT on SQLite or any ODBC database (SQL Server, MySQL, Access, Tally) into a list of records.
+
+| field | default | description |
+|---|---|---|
+| `connection` | `""` | A SQLite file (sqlite:data/app.db, or a path ending in .db) or an ODBC connection string, e.g. DSN=TallyODBC64_9000 or Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes. Write {password} where the password goes; it is taken from password_secret. |
+| `password_secret` | `""` | Name of the database password stored with `autoflow secret set NAME` (replaces {password}). |
+| `sql` | `""` | SELECT statement. Use ? for values and list them in params, e.g. "SELECT * FROM Ledger WHERE Parent = ?". |
+| `params` | `[]` | Values for the ? placeholders, in order (interpolated), e.g. ["${group}"]. |
+| `max_rows` | `0` | Return at most this many rows (0 = all). |
+| `output_var` | `"rows"` | Variable receiving the rows as a list of records {column: value}. |
+| `count_var` | `""` | Variable receiving the number of rows (optional). |
+
+```json
+{"action":"db_query","connection":"","password_secret":"","sql":"","params":[],"max_rows":0,"output_var":"rows","count_var":""}
+```
+
+### `db_execute`
+
+Run INSERT / UPDATE / DELETE / CREATE on SQLite or an ODBC database.
+
+| field | default | description |
+|---|---|---|
+| `connection` | `""` | A SQLite file (sqlite:data/app.db, or a path ending in .db) or an ODBC connection string, e.g. DSN=TallyODBC64_9000 or Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes. Write {password} where the password goes; it is taken from password_secret. |
+| `password_secret` | `""` | Name of the database password stored with `autoflow secret set NAME` (replaces {password}). |
+| `sql` | `""` | INSERT / UPDATE / DELETE / CREATE statement with ? placeholders, e.g. "INSERT INTO Labels (Comment, Label) VALUES (?, ?)". Without params, SQLite runs a whole script. |
+| `params` | `[]` | Values for the ? placeholders, in order (interpolated), e.g. ["${row.Comment}", "${label}"]. |
+| `affected_var` | `""` | Variable receiving the number of rows changed (optional). |
+
+```json
+{"action":"db_execute","connection":"","password_secret":"","sql":"","params":[],"affected_var":""}
+```
+
+## Internet
+
+### `http_request`
+
+Call a web API or download a file (GET/POST/...).
+
+| field | default | description |
+|---|---|---|
+| `method` | `"GET"` | GET, POST, PUT, PATCH, DELETE or HEAD. |
+| `url` | `""` | Address (interpolated), e.g. https://api.example.com/items?q=${query}. |
+| `headers` | `{}` | Extra request headers, e.g. {"Accept": "application/json"} (values are interpolated). |
+| `body` | `""` | Request body. A string is sent as-is; an object or list is sent as JSON. |
+| `bearer_secret` | `""` | Name of a token stored with `autoflow secret set NAME`, sent as "Authorization: Bearer <token>" (optional). |
+| `save_to` | `""` | Save the response body to this file (for downloads); output_var then receives the path. |
+| `fail_on_error_status` | `true` | Fail the step when the server answers with an error status (400 and above). |
+| `parse_json` | `true` | Store a JSON response as an object/list (so ${response.field} works) instead of text. |
+| `timeout_ms` | `60000` | How long to wait for the whole request, in ms. |
+| `output_var` | `"response"` | Variable receiving the response body. |
+| `status_var` | `""` | Variable receiving the HTTP status code (optional). |
+
+```json
+{"action":"http_request","method":"GET","url":"","headers":{},"body":"","bearer_secret":"","save_to":"","fail_on_error_status":true,"parse_json":true,"timeout_ms":60000,"output_var":"response","status_var":""}
+```
+
+## AI
+
+### `ai_prompt`
+
+Ask a local (LM Studio, Ollama) or cloud (OpenAI, Gemini, Claude) AI model; optionally force one of given labels.
+
+| field | default | description |
+|---|---|---|
+| `provider` | `"lmstudio"` | lmstudio (local, default), ollama (local), openai_compatible, openai, gemini or anthropic. |
+| `model` | `""` | Model name. Empty = the model loaded in LM Studio/Ollama, or a default for cloud providers. |
+| `base_url` | `""` | Server address; empty = the provider's default (LM Studio: http://localhost:1234/v1). |
+| `api_key_secret` | `""` | Name of the API key stored with `autoflow secret set NAME` (not needed for local servers). |
+| `system` | `""` | Instructions for the model (interpolated), e.g. "You classify customer comments." |
+| `prompt` | `""` | The prompt (interpolated), e.g. "Classify this comment: ${row.Comment}". |
+| `labels` | `[]` | Allowed answers, e.g. ["Fav", "UnFav", "Neutral"]. The model is told to reply with one, and the stored value is always exactly one of them (the step fails otherwise). |
+| `json` | `false` | Ask for JSON and store the parsed object (so ${reply.field} works). |
+| `temperature` | `null` | Randomness, 0 = most predictable (empty = provider default; ignored by Claude). |
+| `max_tokens` | `4096` | Longest reply, in tokens (thinking models need room to think). |
+| `timeout_ms` | `120000` | How long to wait for the reply, in ms. |
+| `output_var` | `"reply"` | Variable receiving the reply (or the label / parsed JSON). |
+
+```json
+{"action":"ai_prompt","provider":"lmstudio","model":"","base_url":"","api_key_secret":"","system":"","prompt":"","labels":[],"json":false,"temperature":null,"max_tokens":4096,"timeout_ms":120000,"output_var":"reply"}
 ```
 
 ## Program
@@ -911,6 +1178,80 @@ Wait until a picture is no longer on screen.
 {"action":"image_wait_vanish","image":"","confidence":0.9,"region":null,"timeout_ms":5000}
 ```
 
+## OCR
+
+### `ocr_read`
+
+Read the text on screen, in a window or in a picture (Windows OCR, offline).
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | Read this picture file (PNG/JPG/BMP) instead of the screen. |
+| `window` | `""` | Read this window (part of its title), e.g. "Tally" or "Notepad". |
+| `region` | `null` | Read only this screen rectangle {x, y, width, height}; null = whole window / monitor. |
+| `monitor` | `0` | Monitor to read when no window or region is given (0 = primary). |
+| `language` | `""` | Language tag such as en-US or hi (empty = the Windows display languages). |
+| `scale` | `2.0` | Enlarge the picture before reading; 2 helps with small screen fonts. |
+| `output_var` | `"ocr_text"` | Variable receiving the recognised text (one line per text line). |
+| `lines_var` | `""` | Variable receiving the list of lines (optional). |
+| `words_var` | `""` | Variable receiving every word with its screen position: {text, x, y, width, height, center_x, center_y} (optional). |
+
+```json
+{"action":"ocr_read","image":"","window":"","region":null,"monitor":0,"language":"","scale":2.0,"output_var":"ocr_text","lines_var":"","words_var":""}
+```
+
+### `ocr_find`
+
+Look for text on screen; store found/x/y (never fails).
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | Read this picture file (PNG/JPG/BMP) instead of the screen. |
+| `window` | `""` | Read this window (part of its title), e.g. "Tally" or "Notepad". |
+| `region` | `null` | Read only this screen rectangle {x, y, width, height}; null = whole window / monitor. |
+| `monitor` | `0` | Monitor to read when no window or region is given (0 = primary). |
+| `language` | `""` | Language tag such as en-US or hi (empty = the Windows display languages). |
+| `scale` | `2.0` | Enlarge the picture before reading; 2 helps with small screen fonts. |
+| `text` | `""` | Text to look for (interpolated); may be several words, e.g. "Save As". |
+| `ignore_case` | `true` | Match regardless of upper/lower case. |
+| `occurrence` | `1` | Which match to use when the text appears more than once (1 = first, top to bottom). |
+| `timeout_ms` | `5000` | Keep looking for up to this many ms (the screen may still be changing). |
+| `found_var` | `"found"` | Variable receiving "true"/"false" (ocr_find never fails when the text is missing). |
+| `x_var` | `""` | Variable receiving the centre X of the text on screen. |
+| `y_var` | `""` | Variable receiving the centre Y of the text on screen. |
+
+```json
+{"action":"ocr_find","image":"","window":"","region":null,"monitor":0,"language":"","scale":2.0,"text":"","ignore_case":true,"occurrence":1,"timeout_ms":5000,"found_var":"found","x_var":"","y_var":""}
+```
+
+### `ocr_click`
+
+Wait for text on screen and click it (e.g. a button or menu without UI Automation).
+
+| field | default | description |
+|---|---|---|
+| `image` | `""` | Read this picture file (PNG/JPG/BMP) instead of the screen. |
+| `window` | `""` | Read this window (part of its title), e.g. "Tally" or "Notepad". |
+| `region` | `null` | Read only this screen rectangle {x, y, width, height}; null = whole window / monitor. |
+| `monitor` | `0` | Monitor to read when no window or region is given (0 = primary). |
+| `language` | `""` | Language tag such as en-US or hi (empty = the Windows display languages). |
+| `scale` | `2.0` | Enlarge the picture before reading; 2 helps with small screen fonts. |
+| `text` | `""` | Text to look for (interpolated); may be several words, e.g. "Save As". |
+| `ignore_case` | `true` | Match regardless of upper/lower case. |
+| `occurrence` | `1` | Which match to use when the text appears more than once (1 = first, top to bottom). |
+| `timeout_ms` | `5000` | Keep looking for up to this many ms (the screen may still be changing). |
+| `found_var` | `""` | Variable receiving "true"/"false" (ocr_find never fails when the text is missing). |
+| `x_var` | `""` | Variable receiving the centre X of the text on screen. |
+| `y_var` | `""` | Variable receiving the centre Y of the text on screen. |
+| `offset_x` | `0` | Click this many pixels right of the text centre (negative = left), e.g. into the box next to a label. |
+| `offset_y` | `0` | Click this many pixels below the text centre (negative = above). |
+| `button` | `"left"` | left, right or middle. |
+| `clicks` | `1` | 1 = single, 2 = double click. |
+
+```json
+{"action":"ocr_click","image":"","window":"","region":null,"monitor":0,"language":"","scale":2.0,"text":"","ignore_case":true,"occurrence":1,"timeout_ms":5000,"found_var":"","x_var":"","y_var":"","offset_x":0,"offset_y":0,"button":"left","clicks":1}
+```
+
 ## Web
 
 ### `browser_open`
@@ -1105,6 +1446,60 @@ Create an e-mail in the Outlook desktop app and send it (or show it as a draft).
 
 ```json
 {"action":"outlook_send","to":"","cc":"","bcc":"","subject":"","body":"","html":false,"attachments":[],"send_now":false,"account":""}
+```
+
+### `read_email`
+
+Read messages from an IMAP mailbox (Gmail...) and save their attachments.
+
+| field | default | description |
+|---|---|---|
+| `provider` | `"gmail"` | gmail, outlook365, yahoo, zoho, zoho.in, or custom (then set imap_host). |
+| `imap_host` | `""` | IMAP server; empty = the provider's. |
+| `imap_port` | `0` | IMAP port (0 = 993, TLS). |
+| `username` | `""` | Mailbox login, usually the e-mail address. |
+| `password_secret` | `""` | Name of the password stored with `autoflow secret set NAME` (Gmail: an App Password). |
+| `folder` | `"INBOX"` | Folder to read, e.g. INBOX (IMAP) or Inbox/Invoices (Outlook). |
+| `unread_only` | `true` | Only messages not read yet. |
+| `from` | `""` | Only messages from this sender (address or part of it). |
+| `subject_contains` | `""` | Only messages whose subject contains this text. |
+| `since` | `""` | Only messages received on or after this date (e.g. 01-11-2026, "today"; empty = any date). |
+| `max` | `20` | Read at most this many messages. |
+| `newest_first` | `true` | Newest messages first. |
+| `mark_read` | `false` | Mark the messages read afterwards. |
+| `move_to` | `""` | Move the messages to this folder afterwards (e.g. Processed); empty = leave them. |
+| `save_attachments_to` | `""` | Save attachments into this folder (empty = only list their names). |
+| `attachment_filter` | `""` | Only attachments matching this pattern, e.g. *.pdf or *.xlsx. |
+| `output_var` | `"emails"` | Variable receiving the list of messages: {from, from_name, to, subject, date, body, attachments (saved paths), attachment_names}. |
+| `count_var` | `""` | Variable receiving how many messages were read (optional). |
+
+```json
+{"action":"read_email","provider":"gmail","imap_host":"","imap_port":0,"username":"","password_secret":"","folder":"INBOX","unread_only":true,"from":"","subject_contains":"","since":"","max":20,"newest_first":true,"mark_read":false,"move_to":"","save_attachments_to":"","attachment_filter":"","output_var":"emails","count_var":""}
+```
+
+### `outlook_read`
+
+Read messages from an Outlook desktop folder and save their attachments.
+
+| field | default | description |
+|---|---|---|
+| `account` | `""` | Outlook account / mailbox name to read (empty = the default one). |
+| `folder` | `"Inbox"` | Folder to read, e.g. INBOX (IMAP) or Inbox/Invoices (Outlook). |
+| `unread_only` | `true` | Only messages not read yet. |
+| `from` | `""` | Only messages from this sender (address or part of it). |
+| `subject_contains` | `""` | Only messages whose subject contains this text. |
+| `since` | `""` | Only messages received on or after this date (e.g. 01-11-2026, "today"; empty = any date). |
+| `max` | `20` | Read at most this many messages. |
+| `newest_first` | `true` | Newest messages first. |
+| `mark_read` | `false` | Mark the messages read afterwards. |
+| `move_to` | `""` | Move the messages to this folder afterwards (e.g. Processed); empty = leave them. |
+| `save_attachments_to` | `""` | Save attachments into this folder (empty = only list their names). |
+| `attachment_filter` | `""` | Only attachments matching this pattern, e.g. *.pdf or *.xlsx. |
+| `output_var` | `"emails"` | Variable receiving the list of messages: {from, from_name, to, subject, date, body, attachments (saved paths), attachment_names}. |
+| `count_var` | `""` | Variable receiving how many messages were read (optional). |
+
+```json
+{"action":"outlook_read","account":"","folder":"Inbox","unread_only":true,"from":"","subject_contains":"","since":"","max":20,"newest_first":true,"mark_read":false,"move_to":"","save_attachments_to":"","attachment_filter":"","output_var":"emails","count_var":""}
 ```
 
 ## Dialog

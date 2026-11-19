@@ -1,0 +1,73 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Invoice inbox: save PDF attachments and log them",
+  "description": "Reads unread mails whose subject contains 'Invoice' (Gmail over IMAP, or Outlook), saves their PDF attachments to inbox/invoices, pulls the invoice number and amount out of each PDF with regular expressions, records everything in a SQLite database and an Excel sheet, and moves the processed Gmail messages to a 'Processed' label. Store the Gmail App Password once with `autoflow secret set gmail`. Each mail is wrapped in try, so one bad PDF does not stop the rest.",
+  "version": 1,
+  "variables": {
+    "use_outlook": false,
+    "gmail_user": "you@gmail.com",
+    "subject_filter": "Invoice",
+    "attachments_dir": "inbox/invoices",
+    "database": "sqlite:output/invoice_inbox.db",
+    "results": [],
+    "error": ""
+  },
+  "variable_types": {
+    "use_outlook": "boolean",
+    "gmail_user": "text",
+    "subject_filter": "text",
+    "attachments_dir": "folder",
+    "database": "text"
+  },
+  "steps": [
+    {
+      "id": "fetch", "action": "if", "condition": { "left": "${use_outlook}", "op": "is_true" },
+      "then": [
+        { "id": "outlook", "action": "outlook_read", "folder": "Inbox", "unread_only": true, "subject_contains": "${subject_filter}",
+          "max": 50, "mark_read": true, "save_attachments_to": "${attachments_dir}", "attachment_filter": "*.pdf", "output_var": "mails" }
+      ],
+      "else": [
+        { "id": "gmail", "action": "read_email", "provider": "gmail", "username": "${gmail_user}", "password_secret": "gmail",
+          "folder": "INBOX", "unread_only": true, "subject_contains": "${subject_filter}", "max": 50,
+          "mark_read": true, "move_to": "Processed", "save_attachments_to": "${attachments_dir}", "attachment_filter": "*.pdf",
+          "output_var": "mails", "comment": "Create the Processed label in Gmail first" }
+      ]
+    },
+    { "id": "table", "action": "db_execute", "connection": "${database}",
+      "sql": "CREATE TABLE IF NOT EXISTS invoices (received TEXT, sender TEXT, subject TEXT, file TEXT, invoice_no TEXT, amount REAL)" },
+    {
+      "id": "each_mail", "action": "for_each", "items": "${mails}", "item_var": "mail",
+      "steps": [
+        {
+          "id": "each_pdf", "action": "for_each", "items": "${mail.attachments}", "item_var": "pdf",
+          "steps": [
+            {
+              "id": "one", "action": "try",
+              "steps": [
+                { "id": "text", "action": "read_pdf", "path": "${pdf}", "output_var": "pdf_text" },
+                { "id": "no", "action": "text_extract", "input": "${pdf_text}", "pattern": "Invoice\\s*(?:No|Number|#)[.:]?\\s*([A-Z0-9/-]+)",
+                  "group": 1, "ignore_case": true, "output_var": "invoice_no" },
+                { "id": "amt_text", "action": "text_extract", "input": "${pdf_text}", "pattern": "(?:Grand\\s+)?Total[^0-9]{0,20}([0-9][0-9,]*\\.?[0-9]*)",
+                  "group": 1, "ignore_case": true, "output_var": "amount_text" },
+                { "id": "amt_clean", "action": "text_replace", "input": "${amount_text}", "find": ",", "replace_with": "", "output_var": "amount_text" },
+                { "id": "amt_zero", "action": "if", "condition": { "left": "${amount_text}", "op": "is_empty" },
+                  "then": [ { "id": "zero", "action": "set_variable", "name": "amount_text", "value": "0" } ] },
+                { "id": "amt", "action": "calculate", "expression": "${amount_text}", "decimals": 2, "output_var": "amount" },
+                { "id": "store", "action": "db_execute", "connection": "${database}",
+                  "sql": "INSERT INTO invoices VALUES (?, ?, ?, ?, ?, ?)",
+                  "params": ["${mail.date}", "${mail.from}", "${mail.subject}", "${pdf}", "${invoice_no}", "${amount}"] },
+                { "id": "collect", "action": "list_append", "name": "results",
+                  "value": { "Received": "${mail.date}", "From": "${mail.from}", "Subject": "${mail.subject}", "File": "${pdf}", "Invoice": "${invoice_no}", "Amount": "${amount}" } }
+              ],
+              "catch": [
+                { "id": "bad_pdf", "action": "log", "level": "warn", "message": "Skipped ${pdf}: ${error}" }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    { "id": "sheet", "action": "write_excel", "path": "output/invoice_inbox_${now:yyyyMMdd_HHmmss}.xlsx", "sheet": "Invoices", "data": "${results}", "count_var": "n" },
+    { "id": "done", "action": "log", "message": "Processed ${n} invoice PDF(s)" }
+  ]
+}

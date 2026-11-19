@@ -31,6 +31,14 @@ pdf-extract = "0.12"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "builder", "rustls", "ring", "webpki-roots"] }
 keyring = { version = "3", features = ["windows-native"] }
 rpassword = "7"
+ureq = { version = "3", features = ["json", "charset"] }
+rust_xlsxwriter = "0.103"
+regex = "1"
+fasteval = "0.2"
+imap = "=3.0.0-alpha.15"
+mail-parser = "1"
+odbc-api = { version = "30", default-features = false, features = ["odbc_version_3_80"] }
+rusqlite = { version = "0.43", features = ["bundled"] }
 
 [profile.release]
 opt-level = 3

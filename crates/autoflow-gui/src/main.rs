@@ -7,10 +7,10 @@ mod form;
 mod tree;
 mod variables;
 
-use autoflow_core::{catalog, run_flow, validate_json, Action, ActionInfo, Event, Flow, RunOptions, Severity, Step};
+use autoflow_core::{catalog, run_flow, validate_json, Action, ActionInfo, Debugger, Event, Flow, RunOptions, Severity, Step};
 use eframe::egui::{self, Color32, RichText};
 use serde_json::{Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
@@ -48,6 +48,28 @@ struct Running {
     rx: Receiver<Event>,
     stop: Arc<AtomicBool>,
     current: Option<String>,
+    debug: Arc<Debugger>,
+    /// Paused before this step, with the variable values at that moment.
+    paused: Option<(String, String, Map<String, Value>)>,
+}
+
+/// Undo / redo by whole-flow snapshots. Quick successive edits (typing) form one step.
+#[derive(Default)]
+struct History {
+    undo: Vec<String>,
+    redo: Vec<String>,
+    snap: String,
+    last_change: Option<std::time::Instant>,
+}
+
+const HISTORY_LIMIT: usize = 200;
+
+/// What to do once the user has answered "save changes?".
+#[derive(Clone)]
+enum Pending {
+    New,
+    Open(Option<PathBuf>),
+    Close,
 }
 
 struct Studio {
@@ -85,6 +107,10 @@ struct Studio {
     table_cache: HashMap<String, (Option<std::time::SystemTime>, form::TableInfo)>,
     preview: Option<(String, Result<Value, String>)>,
     secret_dialog: Option<SecretDialog>,
+    history: History,
+    breakpoints: HashSet<String>,
+    pending: Option<Pending>,
+    allow_close: bool,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -157,12 +183,215 @@ impl Studio {
             table_cache: HashMap::new(),
             preview: None,
             secret_dialog: None,
+            history: History::default(),
+            breakpoints: HashSet::new(),
+            pending: None,
+            allow_close: false,
         };
         if let Some(p) = path {
             s.open_path(p);
         }
         s.sync_vars_buf();
+        s.reset_history();
         s
+    }
+
+    // ---------------------------------------------------------------- undo
+
+    fn reset_history(&mut self) {
+        self.history = History { snap: self.flow.to_json(), ..History::default() };
+    }
+
+    /// Called once per frame: record a snapshot when the flow changed.
+    fn track_history(&mut self) {
+        let now = self.flow.to_json();
+        if now == self.history.snap {
+            return;
+        }
+        let h = &mut self.history;
+        let burst = h.last_change.is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(700));
+        if !burst {
+            h.undo.push(std::mem::take(&mut h.snap));
+            if h.undo.len() > HISTORY_LIMIT {
+                h.undo.remove(0);
+            }
+        }
+        h.redo.clear();
+        h.snap = now;
+        h.last_change = Some(std::time::Instant::now());
+    }
+
+    fn undo(&mut self) {
+        if let Some(prev) = self.history.undo.pop() {
+            let cur = std::mem::replace(&mut self.history.snap, prev.clone());
+            self.history.redo.push(cur);
+            self.restore(&prev);
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(next) = self.history.redo.pop() {
+            let cur = std::mem::replace(&mut self.history.snap, next.clone());
+            self.history.undo.push(cur);
+            self.restore(&next);
+        }
+    }
+
+    fn restore(&mut self, json: &str) {
+        match serde_json::from_str::<Flow>(json) {
+            Ok(f) => {
+                self.flow = f;
+                self.dirty = true;
+                self.history.last_change = None;
+                self.json_buffers.clear();
+                self.buffers_for = None;
+                self.settings_buf.clear();
+                self.sync_vars_buf();
+                if let Selection::Step(p) = &self.sel {
+                    if tree::step_ref(&self.flow.steps, p).is_none() {
+                        self.sel = Selection::None;
+                    }
+                } else {
+                    self.sel = Selection::None;
+                }
+            }
+            Err(e) => self.info(LogKind::Error, format!("undo failed: {e}")),
+        }
+    }
+
+    // ---------------------------------------------------------------- unsaved changes
+
+    /// Do `p` now, or first ask whether to save the changes.
+    fn guard(&mut self, p: Pending, ctx: &egui::Context) {
+        if self.dirty {
+            self.pending = Some(p);
+        } else {
+            self.proceed(p, ctx);
+        }
+    }
+
+    fn proceed(&mut self, p: Pending, ctx: &egui::Context) {
+        match p {
+            Pending::New => self.new_flow(),
+            Pending::Open(None) => self.open_dialog(),
+            Pending::Open(Some(path)) => self.open_path(path),
+            Pending::Close => {
+                self.allow_close = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
+    }
+
+    fn unsaved_window(&mut self, ctx: &egui::Context) {
+        let Some(p) = self.pending.clone() else { return };
+        let name = self.path.as_ref().and_then(|p| p.file_name()).map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| "this flow".into());
+        let mut answer: Option<u8> = None;
+        egui::Window::new("Unsaved changes").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            ui.label(format!("Save the changes to {name} first?"));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("💾 Save").strong()).clicked() {
+                    answer = Some(0);
+                }
+                if ui.button("Don't save").clicked() {
+                    answer = Some(1);
+                }
+                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    answer = Some(2);
+                }
+            });
+        });
+        match answer {
+            Some(0) => {
+                self.save(false);
+                self.pending = None;
+                if !self.dirty {
+                    self.proceed(p, ctx);
+                }
+            }
+            Some(1) => {
+                self.pending = None;
+                self.dirty = false;
+                self.proceed(p, ctx);
+            }
+            Some(_) => self.pending = None,
+            None => {}
+        }
+    }
+
+    // ---------------------------------------------------------------- breakpoints
+
+    fn toggle_breakpoint(&mut self, p: &StepPath) {
+        if tree::step_ref(&self.flow.steps, p).is_some_and(|s| s.id.is_empty()) {
+            self.flow.assign_ids();
+        }
+        let Some(id) = tree::step_ref(&self.flow.steps, p).map(|s| s.id.clone()) else { return };
+        if !self.breakpoints.remove(&id) {
+            self.breakpoints.insert(id.clone());
+        }
+        if let Some(r) = &self.running {
+            *r.debug.breakpoints.lock().unwrap() = self.breakpoints.clone();
+        }
+    }
+
+    fn is_paused(&self) -> bool {
+        self.running.as_ref().is_some_and(|r| r.paused.is_some())
+    }
+
+    /// Continue a paused run, to the next step only or to the next breakpoint.
+    fn resume(&mut self, step: bool, ctx: &egui::Context) {
+        if let Some(r) = self.running.as_mut() {
+            if r.paused.take().is_some() {
+                r.debug.resume(step);
+                if self.minimize_on_run && !self.dry_run && !step {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+            }
+        }
+    }
+
+    fn paused_window(&mut self, ctx: &egui::Context) {
+        let Some((id, action, vars)) = self.running.as_ref().and_then(|r| r.paused.clone()) else { return };
+        let mut act: Option<bool> = None;
+        let mut stop = false;
+        egui::Window::new("⏸ Paused").default_pos([380.0, 120.0]).default_width(380.0).show(ctx, |ui| {
+            ui.label(RichText::new(format!("Before step {id}  ({} {action})", icons::action_icon(&action))).strong());
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new("▶ Continue (F5)").color(Color32::from_rgb(80, 180, 90))).clicked() {
+                    act = Some(false);
+                }
+                if ui.button("⏭ Step (F10)").on_hover_text("Run this step, then pause again").clicked() {
+                    act = Some(true);
+                }
+                if ui.button(RichText::new("■ Stop").color(Color32::from_rgb(220, 80, 80))).clicked() {
+                    stop = true;
+                }
+            });
+            ui.separator();
+            ui.weak("Variables now:");
+            egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+                egui::Grid::new("paused_vars").striped(true).num_columns(2).show(ui, |ui| {
+                    for (k, v) in &vars {
+                        ui.monospace(k);
+                        let mut text = match v {
+                            Value::String(s) => format!("\"{s}\""),
+                            other => other.to_string(),
+                        };
+                        if text.chars().count() > 120 {
+                            text = text.chars().take(120).collect::<String>() + "…";
+                        }
+                        ui.label(RichText::new(text).monospace()).on_hover_text(serde_json::to_string_pretty(v).unwrap_or_default());
+                        ui.end_row();
+                    }
+                });
+            });
+        });
+        if let Some(step) = act {
+            self.resume(step, ctx);
+        }
+        if stop {
+            self.stop();
+        }
     }
 
     fn info(&mut self, kind: LogKind, msg: impl Into<String>) {
@@ -183,7 +412,9 @@ impl Studio {
                 self.path = Some(p);
                 self.dirty = false;
                 self.sel = Selection::None;
+                self.breakpoints.clear();
                 self.sync_vars_buf();
+                self.reset_history();
             }
             Err(e) => self.info(LogKind::Error, format!("{e:#}")),
         }
@@ -220,7 +451,9 @@ impl Studio {
         self.path = None;
         self.dirty = false;
         self.sel = Selection::None;
+        self.breakpoints.clear();
         self.sync_vars_buf();
+        self.reset_history();
     }
 
     // ---------------------------------------------------------------- run
@@ -238,7 +471,7 @@ impl Studio {
         ok
     }
 
-    fn run(&mut self, ctx: &egui::Context) {
+    fn run(&mut self, ctx: &egui::Context, stepping: bool) {
         if self.running.is_some() {
             return;
         }
@@ -257,7 +490,8 @@ impl Studio {
             .and_then(|p| p.parent().map(|d| d.to_path_buf()))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
         // Timing and fail-safe come from flow.settings (edited in the toolbar / flow settings).
-        let opts = RunOptions { dry_run: self.dry_run, stop: stop.clone(), flow_dir, ..RunOptions::default() };
+        let debug = Arc::new(Debugger::new(self.breakpoints.iter().cloned(), stepping));
+        let opts = RunOptions { dry_run: self.dry_run, stop: stop.clone(), flow_dir, debug: Some(debug.clone()), ..RunOptions::default() };
         let (tx, rx) = channel();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
@@ -267,11 +501,15 @@ impl Studio {
             };
             run_flow(&flow, Map::new(), &opts, &mut sink);
         });
-        if self.minimize_on_run && !self.dry_run {
+        if self.minimize_on_run && !self.dry_run && !stepping {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
-        self.info(LogKind::Info, if self.dry_run { "dry run started" } else { "run started" });
-        self.running = Some(Running { rx, stop, current: None });
+        self.info(LogKind::Info, match (self.dry_run, stepping) {
+            (_, true) => "step-by-step run started: F10 runs the next step, F5 continues",
+            (true, _) => "dry run started",
+            _ => "run started",
+        });
+        self.running = Some(Running { rx, stop, current: None, debug, paused: None });
     }
 
     fn poll_run(&mut self, ctx: &egui::Context) {
@@ -301,6 +539,14 @@ impl Studio {
                     out.push((if success { LogKind::Ok } else { LogKind::Error }, format!("{} {message}", if success { "✔ SUCCESS" } else { "✖ FAILED" })));
                     finished = true;
                 }
+                Event::Paused { id, action, variables } => {
+                    out.push((LogKind::Warn, format!("⏸ paused before [{id}] {action}")));
+                    r.current = Some(id.clone());
+                    r.paused = Some((id, action, variables));
+                    // Show the editor so the user can look around.
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
             }
         }
         self.log.extend(out);
@@ -314,8 +560,10 @@ impl Studio {
     }
 
     fn stop(&mut self) {
-        if let Some(r) = &self.running {
+        if let Some(r) = &mut self.running {
             r.stop.store(true, Ordering::Relaxed);
+            r.paused = None;
+            r.debug.resume(false);
         }
     }
 
@@ -418,6 +666,7 @@ impl Studio {
 
     fn apply(&mut self, op: TreeOp) {
         match op {
+            TreeOp::Breakpoint(p) => self.toggle_breakpoint(&p),
             TreeOp::Select(s) => self.sel = s,
             TreeOp::Toggle(p) => {
                 if let Some(s) = tree::step_mut(&mut self.flow.steps, &p) {
@@ -466,11 +715,11 @@ impl Studio {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 if ui.button("New").clicked() {
-                    self.new_flow();
+                    self.guard(Pending::New, &ctx);
                     ui.close();
                 }
                 if ui.button("Open…  (Ctrl+O)").clicked() {
-                    self.open_dialog();
+                    self.guard(Pending::Open(None), &ctx);
                     ui.close();
                 }
                 if ui.button("Save  (Ctrl+S)").clicked() {
@@ -479,6 +728,31 @@ impl Studio {
                 }
                 if ui.button("Save as…").clicked() {
                     self.save(true);
+                    ui.close();
+                }
+            });
+            ui.menu_button("Edit", |ui| {
+                if ui.add_enabled(!self.history.undo.is_empty(), egui::Button::new("Undo  (Ctrl+Z)")).clicked() {
+                    self.undo();
+                    ui.close();
+                }
+                if ui.add_enabled(!self.history.redo.is_empty(), egui::Button::new("Redo  (Ctrl+Y)")).clicked() {
+                    self.redo();
+                    ui.close();
+                }
+                ui.separator();
+                let sel_step = if let Selection::Step(p) = &self.sel { Some(p.clone()) } else { None };
+                if ui.add_enabled(sel_step.is_some(), egui::Button::new("Toggle breakpoint  (F9)")).clicked() {
+                    if let Some(p) = sel_step {
+                        self.toggle_breakpoint(&p);
+                    }
+                    ui.close();
+                }
+                if ui.add_enabled(!self.breakpoints.is_empty(), egui::Button::new("Clear all breakpoints")).clicked() {
+                    self.breakpoints.clear();
+                    if let Some(r) = &self.running {
+                        r.debug.breakpoints.lock().unwrap().clear();
+                    }
                     ui.close();
                 }
             });
@@ -492,8 +766,24 @@ impl Studio {
             });
             ui.separator();
             let running = self.running.is_some();
-            if ui.add_enabled(!running, egui::Button::new(RichText::new("▶ Run (F5)").color(Color32::from_rgb(80, 180, 90)))).clicked() {
-                self.run(&ctx);
+            let paused = self.is_paused();
+            if ui.add_enabled(!self.history.undo.is_empty(), egui::Button::new("⟲")).on_hover_text("Undo (Ctrl+Z)").clicked() {
+                self.undo();
+            }
+            if ui.add_enabled(!self.history.redo.is_empty(), egui::Button::new("⟳")).on_hover_text("Redo (Ctrl+Y)").clicked() {
+                self.redo();
+            }
+            ui.separator();
+            let run_label = if paused { "▶ Continue (F5)" } else { "▶ Run (F5)" };
+            if ui.add_enabled(!running || paused, egui::Button::new(RichText::new(run_label).color(Color32::from_rgb(80, 180, 90)))).clicked() {
+                if paused { self.resume(false, &ctx) } else { self.run(&ctx, false) }
+            }
+            if ui
+                .add_enabled(!running || paused, egui::Button::new("⏭ Step (F10)"))
+                .on_hover_text("Run one step at a time, pausing before each (shows the variables). Breakpoints: F9 on a step.")
+                .clicked()
+            {
+                if paused { self.resume(true, &ctx) } else { self.run(&ctx, true) }
             }
             if ui.add_enabled(running, egui::Button::new(RichText::new("■ Stop").color(Color32::from_rgb(220, 80, 80)))).clicked() {
                 self.stop();
@@ -612,6 +902,7 @@ impl Studio {
         });
         ui.separator();
         let current = self.running.as_ref().and_then(|r| r.current.clone());
+        let paused_at = self.running.as_ref().and_then(|r| r.paused.as_ref().map(|p| p.0.clone()));
         match self.view {
             View::Flowchart => {
                 let mut ops = vec![];
@@ -623,6 +914,8 @@ impl Studio {
                 egui::ScrollArea::both().id_salt("chart").auto_shrink([false, false]).show(ui, |ui| {
                     let chart = flowchart::Chart {
                         sel: &self.sel,
+                        breakpoints: &self.breakpoints,
+                        paused: paused_at.as_deref(),
                         current: current.as_deref(),
                         failed: &self.failed_steps,
                         zoom: self.zoom,
@@ -638,6 +931,7 @@ impl Studio {
                         flowchart::ChartOp::Delete(p) => self.apply(TreeOp::Delete(p)),
                         flowchart::ChartOp::Duplicate(p) => self.apply(TreeOp::Duplicate(p)),
                         flowchart::ChartOp::Drop(item, lp, idx) => self.drop_item(item, lp, idx),
+                        flowchart::ChartOp::Breakpoint(p) => self.toggle_breakpoint(&p),
                     }
                 }
             }
@@ -648,7 +942,7 @@ impl Studio {
                         ui.add_space(20.0);
                         ui.weak("No steps yet. Pick an action on the left, or use ⌖ Pick element.");
                     }
-                    let ctx = RowCtx { sel: &self.sel, current: current.as_deref(), failed: &self.failed_steps };
+                    let ctx = RowCtx { sel: &self.sel, current: current.as_deref(), failed: &self.failed_steps, breakpoints: &self.breakpoints };
                     draw_list(ui, &self.flow.steps, &vec![], 0, &ctx, &mut ops);
                 });
                 for op in ops {
@@ -1550,22 +1844,48 @@ impl eframe::App for Studio {
         // Keep the live mouse position in the status bar fresh.
         ctx.request_repaint_after(std::time::Duration::from_millis(if self.pick_rx.is_some() || self.snip_rx.is_some() { 150 } else { 250 }));
 
-        // Shortcuts
-        let (save, open, run) = ctx.input(|i| {
+        // Closing the window with unsaved changes asks first.
+        if ctx.input(|i| i.viewport().close_requested()) && self.dirty && !self.allow_close {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.pending = Some(Pending::Close);
+        }
+
+        // Shortcuts. Undo/redo only when no text box has the focus (it has its own undo).
+        let typing = ctx.memory(|m| m.focused().is_some());
+        let (save, open, run, step, bp, undo, redo) = ctx.input(|i| {
             (
                 i.modifiers.command && i.key_pressed(egui::Key::S),
                 i.modifiers.command && i.key_pressed(egui::Key::O),
                 i.key_pressed(egui::Key::F5),
+                i.key_pressed(egui::Key::F10),
+                i.key_pressed(egui::Key::F9),
+                !typing && i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
+                !typing && i.modifiers.command && (i.key_pressed(egui::Key::Y) || (i.modifiers.shift && i.key_pressed(egui::Key::Z))),
             )
         });
         if save {
             self.save(false);
         }
         if open {
-            self.open_dialog();
+            self.guard(Pending::Open(None), &ctx);
         }
+        let paused = self.is_paused();
         if run {
-            self.run(&ctx);
+            if paused { self.resume(false, &ctx) } else { self.run(&ctx, false) }
+        }
+        if step {
+            if paused { self.resume(true, &ctx) } else { self.run(&ctx, true) }
+        }
+        if bp {
+            if let Selection::Step(p) = self.sel.clone() {
+                self.toggle_breakpoint(&p);
+            }
+        }
+        if undo {
+            self.undo();
+        }
+        if redo {
+            self.redo();
         }
 
         // Window title
@@ -1583,6 +1903,8 @@ impl eframe::App for Studio {
         self.about_window(&ctx);
         self.preview_window(&ctx);
         self.secret_window(&ctx);
+        self.paused_window(&ctx);
+        self.unsaved_window(&ctx);
         self.splash(&ctx);
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").exact_size(22.0).show(ui, |ui| self.status_bar(ui));
@@ -1604,12 +1926,14 @@ impl eframe::App for Studio {
                 painter.text(pos + egui::vec2(14.0, 10.0), egui::Align2::LEFT_TOP, &text, egui::FontId::proportional(14.0), Color32::WHITE);
             }
         }
+        self.track_history();
     }
 }
 
 // -------------------------------------------------------------------- tree rows
 
 enum TreeOp {
+    Breakpoint(StepPath),
     Select(Selection),
     Toggle(StepPath),
     Move(StepPath, isize),
@@ -1621,6 +1945,7 @@ struct RowCtx<'a> {
     sel: &'a Selection,
     current: Option<&'a str>,
     failed: &'a [String],
+    breakpoints: &'a HashSet<String>,
 }
 
 fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize, cx: &RowCtx, ops: &mut Vec<TreeOp>) {
@@ -1630,6 +1955,11 @@ fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize
         let running = cx.current == Some(step.id.as_str()) && !step.id.is_empty();
         let failed = cx.failed.iter().any(|f| f == &step.id);
         ui.horizontal(|ui| {
+            let bp = !step.id.is_empty() && cx.breakpoints.contains(&step.id);
+            let dot = RichText::new("●").color(if bp { Color32::from_rgb(220, 60, 60) } else { Color32::from_gray(90).gamma_multiply(0.35) });
+            if ui.add(egui::Label::new(dot).sense(egui::Sense::click())).on_hover_text("Breakpoint: pause before this step (F9)").clicked() {
+                ops.push(TreeOp::Breakpoint(path.clone()));
+            }
             ui.add_space(depth as f32 * 22.0);
             let mut en = step.enabled;
             if ui.checkbox(&mut en, "").on_hover_text("enabled").changed() {
@@ -1676,7 +2006,7 @@ fn summarize(step: &Step) -> String {
     let Some(o) = v.as_object() else { return String::new() };
     let mut parts = vec![];
     for (k, val) in o {
-        if matches!(k.as_str(), "action" | "then" | "else" | "steps" | "timeout_ms" | "exact" | "name_contains" | "invoke") {
+        if matches!(k.as_str(), "action" | "then" | "else" | "steps" | "catch" | "finally" | "timeout_ms" | "exact" | "name_contains" | "invoke") {
             continue;
         }
         let s = match val {
@@ -1716,7 +2046,13 @@ fn cat_color(cat: &str) -> Color32 {
         "Web" => Color32::from_rgb(60, 150, 235),
         "Data" => Color32::from_rgb(30, 160, 120),
         "Email" => Color32::from_rgb(200, 80, 60),
+        "Internet" => Color32::from_rgb(70, 130, 200),
+        "Database" => Color32::from_rgb(120, 140, 90),
+        "AI" => Color32::from_rgb(160, 90, 230),
+        "Text" => Color32::from_rgb(190, 150, 90),
+        "Date & Math" => Color32::from_rgb(80, 170, 200),
         "Image" => Color32::from_rgb(235, 120, 60),
+        "OCR" => Color32::from_rgb(210, 140, 40),
         "Screen" => Color32::from_rgb(150, 120, 220),
         "Dialog" => Color32::from_rgb(200, 100, 180),
         "Clipboard" => Color32::from_rgb(120, 160, 120),

@@ -67,6 +67,32 @@
   battery allowed. Listing uses PowerShell's `Get-ScheduledTask` because it returns structured,
   locale-independent fields. Scheduled runs call `autoflow run --scheduled`, which hides the
   console and logs to `logs\<flow>.log`.
+- **Data out** (`data.rs`): `to_table` turns a list of records/lists/values into headers and
+  rows; `write_csv` (csv crate, optional UTF-8 BOM, append without a second header) and
+  `write_excel` (rust_xlsxwriter) write it. **Text, dates and maths** (`textops.rs`): regex via
+  `regex`, day-first date parsing plus Excel serials with chrono, and `fasteval` for expressions
+  (MIT; all-float, so 7/2 = 3.5).
+- **HTTP and AI** (`http.rs`, `ai.rs`): ureq with rustls/ring. `ai_prompt` speaks the OpenAI
+  chat-completions format (LM Studio, Ollama, OpenAI, compatible servers), Gemini
+  `generateContent` and Anthropic Messages. API keys come from Credential Manager at run time.
+  `labels` adds an instruction to the system prompt, and `pick_label` maps the reply to exactly
+  one label (whole-word match, so "UnFav" is not "Fav"). `<think>` blocks from local reasoning
+  models are stripped.
+- **Mail reading** (`mailread.rs`): IMAP through `imap` (native TLS = Windows SChannel;
+  plaintext only for localhost), messages parsed with `mail-parser`, `BODY.PEEK[]` so reading does
+  not mark mail read. Outlook is read through COM from a PowerShell script that returns JSON.
+- **Databases** (`db.rs`): `rusqlite` (bundled SQLite) and `odbc-api` (the Windows ODBC driver
+  manager). Parameters are always bound (`?`), and ODBC values are converted to numbers/bools
+  using the column type. Connections are cached in the run context per connection string.
+- **OCR** (`ocr.rs`): Windows.Media.Ocr through the `windows` crate (WinRT). The capture is
+  scaled up (default 2x), passed as a BGRA `SoftwareBitmap`, and word boxes are mapped back to
+  screen coordinates. Multi-word search narrows the box to the matched characters.
+- **Errors and debugging** (`engine.rs`): `try` catches step failures (but never cancellation)
+  and always runs `finally`. A shared `Debugger` (breakpoint ids, a stepping flag, a condvar)
+  makes `run_step` emit `Event::Paused` with the variables, typed passwords masked, and wait
+  until Studio resumes or stops the run. Sub-flows run without breakpoints.
+- **Studio undo/redo** keeps whole-flow JSON snapshots, taken at the end of each frame when the
+  flow changed; edits within 0.7 s merge into one undo step.
 - **Windows specifics** are behind `cfg(windows)` (`uia.rs`, window and `ui_*` actions), so the
   core still compiles elsewhere. That leaves room for Linux/macOS backends later.
 
@@ -86,10 +112,10 @@ The GUI form, palette and CLI pick up the action with no further changes.
 
 | Area | Idea | Likely crate/approach |
 |---|---|---|
-| Web | XPath targets, multiple tabs, file upload/download, cookies, attach to the user's logged-in browser, full-page screenshots | `headless_chrome` CDP calls |
-| Vision | OCR (`ocr_read`, `text_click`), multi-scale image search | Windows.Media.Ocr via `windows` crate |
+| Web | XPath targets, multiple tabs, file upload/download, cookies, attach to the user's logged-in browser | `headless_chrome` CDP calls |
+| Vision | Multi-scale image search | pyramid matcher |
 | Recorder | Record mouse/keyboard/UIA events into steps | low-level hooks (`rdev`) plus `inspect_point` per click |
-| Data | `excel_read/write`, `csv_read`, JSON/regex helpers, arithmetic expressions | `calamine`, `rust_xlsxwriter`, `csv`, `evalexpr` |
+| Documents | Word read/write, PDF tables, zip/unzip | `docx-rs`, `zip` |
 | Triggers | File-arrival / folder-watch trigger (`autoflow watch`, started at log-on by a scheduled task), e-mail trigger | polling or `notify` crate |
 | Agents | MCP server exposing run/validate/inspect/windows as tools | `rmcp` |
-| Studio | Undo/redo, unsaved-changes prompt on close, breakpoints and step-through, variable watch | egui |
+| Studio | Edit variable values while paused, run from the selected step | egui |

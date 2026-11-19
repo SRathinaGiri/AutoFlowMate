@@ -24,6 +24,45 @@ pub enum Event {
     StepFinished { id: String, action: String, ok: bool, error: Option<String>, millis: u64 },
     Log { level: LogLevel, message: String },
     Finished { success: bool, message: String },
+    /// Waiting before step `id` (breakpoint or step-by-step); `variables` are the current values.
+    Paused { id: String, action: String, variables: Map<String, Value> },
+}
+
+/// Breakpoints and step-by-step running, shared between the run thread and the editor.
+#[derive(Debug, Default)]
+pub struct Debugger {
+    /// Step ids to pause before.
+    pub breakpoints: Mutex<std::collections::HashSet<String>>,
+    /// Pause before every step.
+    pub stepping: AtomicBool,
+    go: Mutex<bool>,
+    wake: std::sync::Condvar,
+}
+
+impl Debugger {
+    pub fn new(breakpoints: impl IntoIterator<Item = String>, stepping: bool) -> Self {
+        Self { breakpoints: Mutex::new(breakpoints.into_iter().collect()), stepping: AtomicBool::new(stepping), ..Default::default() }
+    }
+
+    fn should_pause(&self, id: &str) -> bool {
+        self.stepping.load(Ordering::Relaxed) || self.breakpoints.lock().map(|b| b.contains(id)).unwrap_or(false)
+    }
+
+    /// Let a paused run go on: to the next step only (`step`), or until the next breakpoint.
+    pub fn resume(&self, step: bool) {
+        self.stepping.store(step, Ordering::Relaxed);
+        *self.go.lock().unwrap() = true;
+        self.wake.notify_all();
+    }
+
+    /// Block until resumed or the run is stopped.
+    fn wait(&self, stop: &AtomicBool) {
+        let mut go = self.go.lock().unwrap();
+        *go = false;
+        while !*go && !stop.load(Ordering::Relaxed) {
+            go = self.wake.wait_timeout(go, Duration::from_millis(50)).unwrap().0;
+        }
+    }
 }
 
 /// How to run a flow. `None` fields use the flow's own `settings`.
@@ -43,6 +82,8 @@ pub struct RunOptions {
     pub failsafe: Option<bool>,
     /// Folder used for `${flow_dir}` and relative paths. Usually the flow file's folder.
     pub flow_dir: PathBuf,
+    /// Breakpoints / step-by-step (the editor's debugger); None = run straight through.
+    pub debug: Option<Arc<Debugger>>,
 }
 
 impl Default for RunOptions {
@@ -55,6 +96,7 @@ impl Default for RunOptions {
             input_pause_ms: None,
             failsafe: None,
             flow_dir: std::env::current_dir().unwrap_or_default(),
+            debug: None,
         }
     }
 }
@@ -101,7 +143,7 @@ pub fn run_flow(flow: &Flow, overrides: Map<String, Value>, opts: &RunOptions, s
         crate::failsafe::start(opts.stop.clone(), reason.clone(), settings.failsafe, &hotkey).map(Some)
     };
 
-    let mut ctx = Context { vars, opts, settings, reason, sink, input: None, #[cfg(windows)] uia: None, web: None, depth: 0 };
+    let mut ctx = Context { vars, opts, settings, reason, sink, input: None, #[cfg(windows)] uia: None, web: None, dbs: Default::default(), secret_vars: Default::default(), depth: 0 };
     let result = guard.and_then(|g| {
         if g.is_some() {
             let s = &ctx.settings;
@@ -187,6 +229,10 @@ struct Context<'a> {
     #[cfg(windows)]
     uia: Option<crate::uia::Uia>,
     web: Option<crate::web::WebSession>,
+    /// Open database connections, by connection string (reused across steps).
+    dbs: std::collections::HashMap<String, crate::db::Conn>,
+    /// Variables holding typed passwords (masked when the debugger shows values).
+    secret_vars: std::collections::HashSet<String>,
     depth: usize,
 }
 
@@ -240,6 +286,19 @@ impl<'a> Context<'a> {
         self.check_cancel()?;
         let id = step.id.clone();
         let action = step.action.name().to_string();
+        if let Some(d) = self.opts.debug.clone() {
+            if d.should_pause(&id) {
+                let mut variables = self.vars.map.clone();
+                for name in &self.secret_vars {
+                    if variables.contains_key(name) {
+                        variables.insert(name.clone(), json!("••••••"));
+                    }
+                }
+                (self.sink)(Event::Paused { id: id.clone(), action: action.clone(), variables });
+                d.wait(&self.opts.stop);
+                self.check_cancel()?;
+            }
+        }
         (self.sink)(Event::StepStarted { id: id.clone(), action: action.clone(), depth });
         let dry = self.opts.dry_run;
         if step.delay_before_ms > 0 && !dry {
@@ -494,6 +553,26 @@ impl<'a> Context<'a> {
                     }
                 }
             }
+            Action::Try(a) => {
+                let outcome = match self.run_steps(&a.steps, depth + 1) {
+                    Ok(ctl) => Ok(ctl),
+                    Err(e) if e.is::<Cancelled>() => return Err(e),
+                    Err(e) => {
+                        let msg = match e.downcast_ref::<Handled>() {
+                            Some(Handled(m)) => m.clone(),
+                            None => format!("{e:#}"),
+                        };
+                        self.log(LogLevel::Warn, format!("caught: {msg}"));
+                        self.set_var(&a.error_var, json!(msg))?;
+                        self.vars.set_str("last_error", msg).ok();
+                        self.run_steps(&a.catch, depth + 1)
+                    }
+                };
+                // `finally` runs whether the steps succeeded, failed or broke out of a loop.
+                let fin = self.run_steps(&a.finally, depth + 1)?;
+                let ctl = outcome?;
+                return Ok(if matches!(fin, Ctl::Next) { ctl } else { fin });
+            }
             Action::Break(_) => return Ok(Ctl::Break),
             Action::Stop(a) => return Ok(Ctl::Stop { success: a.success, message: self.text(&a.message)? }),
             Action::RunFlow(a) => self.run_subflow(a)?,
@@ -606,6 +685,177 @@ impl<'a> Context<'a> {
                 self.set_var(&a.output_var, json!(text))?;
                 self.set_var(&a.page_count_var, json!(pages))?;
             }
+            Action::ListAppend(a) => {
+                let name = self.text(&a.name)?;
+                if name.trim().is_empty() {
+                    bail!("list_append needs a list variable name");
+                }
+                let v = self.vars.resolve_value(&a.value)?;
+                let mut list = match self.vars.get(&name) {
+                    None | Some(Value::Null) => vec![],
+                    Some(Value::String(s)) if s.is_empty() => vec![],
+                    Some(Value::Array(l)) => l,
+                    Some(other) => bail!("variable `{name}` is not a list (it holds {})", crate::vars::to_text(&other)),
+                };
+                list.push(v);
+                self.vars.set(&name, Value::Array(list))?;
+            }
+            Action::WriteCsv(a) => {
+                let p = self.path(&a.path)?;
+                let data = self.vars.resolve_value(&a.data)?;
+                let cols: Vec<String> = a.columns.iter().map(|c| self.text(c)).collect::<Result<_>>()?;
+                let table = crate::data::to_table(&data, &cols)?;
+                let what = format!("{} {} row(s) to {}", if a.append { "append" } else { "write" }, table.rows.len(), p.display());
+                if !self.dry(what.clone()) {
+                    let n = crate::data::write_csv(&p, &table, &self.text(&a.delimiter)?, a.header, a.append, a.excel_bom)?;
+                    self.log(LogLevel::Info, format!("{} {n} row(s) to {}", if a.append { "appended" } else { "wrote" }, p.display()));
+                }
+                self.set_var(&a.count_var, json!(table.rows.len()))?;
+            }
+            Action::WriteExcel(a) => {
+                let p = self.path(&a.path)?;
+                let data = self.vars.resolve_value(&a.data)?;
+                let cols: Vec<String> = a.columns.iter().map(|c| self.text(c)).collect::<Result<_>>()?;
+                let table = crate::data::to_table(&data, &cols)?;
+                let sheet = self.text(&a.sheet)?;
+                if !self.dry(format!("write {} row(s) to {} [{sheet}]", table.rows.len(), p.display())) {
+                    let n = crate::data::write_excel(&p, &sheet, &table, a.header, a.autofit)?;
+                    self.log(LogLevel::Info, format!("wrote {n} row(s) to {} [{sheet}]", p.display()));
+                }
+                self.set_var(&a.count_var, json!(table.rows.len()))?;
+            }
+
+            // ---------------- database
+            Action::DbQuery(a) => {
+                let sql = self.text(&a.sql)?;
+                let params = self.db_params(&a.params)?;
+                let conn = self.db(&a.db)?;
+                let rows = crate::db::query(conn, &sql, &params, a.max_rows as usize)?;
+                self.log(LogLevel::Info, format!("query returned {} row(s)", rows.len()));
+                self.set_var(&a.count_var, json!(rows.len()))?;
+                self.set_var(&a.output_var, Value::Array(rows))?;
+            }
+            Action::DbExecute(a) => {
+                let sql = self.text(&a.sql)?;
+                let params = self.db_params(&a.params)?;
+                let short: String = sql.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(80).collect();
+                if !self.dry(format!("run SQL: {short}")) {
+                    let conn = self.db(&a.db)?;
+                    let n = crate::db::execute(conn, &sql, &params)?;
+                    self.log(LogLevel::Info, format!("{n} row(s) changed: {short}"));
+                    self.set_var(&a.affected_var, json!(n))?;
+                }
+            }
+
+            // ---------------- internet
+            Action::HttpRequest(a) => self.http_request(a)?,
+
+            // ---------------- AI
+            Action::AiPrompt(a) => self.ai_prompt(a)?,
+
+            // ---------------- text
+            Action::TextTransform(a) => {
+                use crate::textops::*;
+                let s = self.text(&a.input)?;
+                let v = match a.operation {
+                    TextOperation::Trim => json!(s.trim()),
+                    TextOperation::Upper => json!(s.to_uppercase()),
+                    TextOperation::Lower => json!(s.to_lowercase()),
+                    TextOperation::Title => json!(title_case(&s)),
+                    TextOperation::Length => json!(s.chars().count()),
+                    TextOperation::UrlEncode => json!(url_encode(&s)),
+                    TextOperation::RemoveSpaces => json!(s.chars().filter(|c| !c.is_whitespace()).collect::<String>()),
+                };
+                self.set_var(&a.output_var, v)?;
+            }
+            Action::TextReplace(a) => {
+                let s = self.text(&a.input)?;
+                let find = self.text(&a.find)?;
+                let with = self.text(&a.replace_with)?;
+                let out = if find.is_empty() {
+                    s
+                } else if a.regex || a.ignore_case {
+                    let pat = if a.regex { find } else { regex::escape(&find) };
+                    let re = regex::RegexBuilder::new(&pat).case_insensitive(a.ignore_case).build().map_err(|e| anyhow!("bad pattern: {e}"))?;
+                    let with = if a.regex { with } else { with.replace('$', "$$") };
+                    re.replace_all(&s, with.as_str()).into_owned()
+                } else {
+                    s.replace(&find, &with)
+                };
+                self.set_var(&a.output_var, json!(out))?;
+            }
+            Action::TextExtract(a) => {
+                let s = self.text(&a.input)?;
+                let pat = self.text(&a.pattern)?;
+                let re = regex::RegexBuilder::new(&pat).case_insensitive(a.ignore_case).build().map_err(|e| anyhow!("bad pattern `{pat}`: {e}"))?;
+                let g = a.group as usize;
+                if g >= re.captures_len() {
+                    bail!("pattern `{pat}` has no group {g} (it has {})", re.captures_len() - 1);
+                }
+                let pick = |c: regex::Captures| c.get(g).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let (v, found) = if a.all {
+                    let all: Vec<String> = re.captures_iter(&s).map(pick).collect();
+                    let f = !all.is_empty();
+                    (json!(all), f)
+                } else {
+                    match re.captures(&s) {
+                        Some(c) => (json!(pick(c)), true),
+                        None => (json!(""), false),
+                    }
+                };
+                self.set_var(&a.output_var, v)?;
+                self.set_var(&a.found_var, json!(found.to_string()))?;
+            }
+            Action::TextSplit(a) => {
+                let s = self.text(&a.input)?;
+                let sep = unescape(&self.text(&a.separator)?);
+                let mut parts: Vec<String> = if sep.is_empty() {
+                    s.chars().map(String::from).collect()
+                } else if a.regex {
+                    regex::Regex::new(&sep).map_err(|e| anyhow!("bad pattern: {e}"))?.split(&s).map(str::to_string).collect()
+                } else if sep == "\n" {
+                    s.lines().map(str::to_string).collect()
+                } else {
+                    s.split(sep.as_str()).map(str::to_string).collect()
+                };
+                if a.trim {
+                    parts = parts.into_iter().map(|p| p.trim().to_string()).collect();
+                }
+                if a.skip_empty {
+                    parts.retain(|p| !p.trim().is_empty());
+                }
+                self.set_var(&a.output_var, json!(parts))?;
+            }
+            Action::TextJoin(a) => {
+                let items = match self.vars.resolve_value(&a.items)? {
+                    Value::Array(v) => v,
+                    Value::Null => vec![],
+                    other => vec![other],
+                };
+                let sep = unescape(&self.text(&a.separator)?);
+                let s = items.iter().map(crate::vars::to_text).collect::<Vec<_>>().join(&sep);
+                self.set_var(&a.output_var, json!(s))?;
+            }
+
+            // ---------------- dates and maths
+            Action::DateCalc(a) => {
+                use crate::textops::*;
+                let fmt_in = self.text(&a.input_format)?;
+                let d = parse_date(&self.text(&a.date)?, &fmt_in)?;
+                let fmt = self.text(&a.format)?;
+                let v = match a.operation {
+                    DateOperation::Format => json!(format_date(&d, &fmt)),
+                    DateOperation::Add => json!(format_date(&add(d, self.int(&a.amount)?, &self.text(&a.unit)?)?, &fmt)),
+                    DateOperation::Diff => json!(diff(d, parse_date(&self.text(&a.other_date)?, &fmt_in)?, &self.text(&a.unit)?)?),
+                    DateOperation::Parts => parts(&d),
+                };
+                self.set_var(&a.output_var, v)?;
+            }
+            Action::Calculate(a) => {
+                let e = self.text(&a.expression)?;
+                let n = crate::textops::calculate(&e)?;
+                self.set_var(&a.output_var, crate::textops::number_value(n, a.decimals))?;
+            }
 
             // ---------------- email
             Action::SendEmail(a) => {
@@ -672,6 +922,29 @@ impl<'a> Context<'a> {
                     let reply = crate::mail::send_smtp(&settings, &mail)?;
                     self.log(LogLevel::Info, format!("sent {what} ({reply})"));
                 }
+            }
+            Action::ReadEmail(a) => {
+                let q = self.mail_query(&a.filter)?;
+                let provider = self.text(&a.provider)?;
+                let (host, port) = match (self.text(&a.imap_host)?, crate::mailread::imap_defaults(&provider)) {
+                    (h, _) if !h.trim().is_empty() => (h.trim().to_string(), if a.imap_port == 0 { 993 } else { a.imap_port }),
+                    (_, Some((h, p))) => (h.to_string(), if a.imap_port == 0 { p } else { a.imap_port }),
+                    _ => bail!("set imap_host (or provider gmail / outlook365 / yahoo / zoho)"),
+                };
+                let username = self.text(&a.username)?;
+                let password = crate::mail::secrets::get(&self.text(&a.password_secret)?)?;
+                let settings = crate::mailread::ImapSettings { host: host.clone(), port, username: username.clone(), password };
+                let mails = crate::mailread::read_imap(&settings, &q)?;
+                self.log(LogLevel::Info, format!("read {} message(s) from {username} / {}", mails.len(), q.folder));
+                self.set_var(&a.filter.count_var, json!(mails.len()))?;
+                self.set_var(&a.filter.output_var, Value::Array(mails))?;
+            }
+            Action::OutlookRead(a) => {
+                let q = self.mail_query(&a.filter)?;
+                let mails = crate::mailread::read_outlook(&q, &self.text(&a.account)?)?;
+                self.log(LogLevel::Info, format!("read {} message(s) from Outlook {}", mails.len(), q.folder));
+                self.set_var(&a.filter.count_var, json!(mails.len()))?;
+                self.set_var(&a.filter.output_var, Value::Array(mails))?;
             }
             Action::OutlookSend(a) => {
                 let attachments: Vec<PathBuf> = a.attachments.iter().filter(|s| !s.trim().is_empty()).map(|s| self.path(s)).collect::<Result<_>>()?;
@@ -995,6 +1268,40 @@ impl<'a> Context<'a> {
                 }
             }
 
+            // ---------------- OCR
+            Action::OcrRead(a) => {
+                let (img, ox, oy) = self.ocr_capture(&a.source)?;
+                let out = crate::ocr::recognize(&img, &self.text(&a.source.language)?, a.source.scale)?;
+                self.log(LogLevel::Info, format!("OCR read {} line(s), {} characters", out.lines.len(), out.text.chars().count()));
+                self.set_var(&a.lines_var, json!(out.lines.iter().map(|l| l.text.clone()).collect::<Vec<_>>()))?;
+                self.set_var(&a.words_var, crate::ocr::words_json(&out, ox, oy))?;
+                self.set_var(&a.output_var, json!(out.text))?;
+            }
+            Action::OcrFind(a) => {
+                let at = self.ocr_locate(a)?;
+                self.set_var(&a.found_var, json!(at.is_some().to_string()))?;
+                if let Some((x, y)) = at {
+                    self.set_var(&a.x_var, json!(x))?;
+                    self.set_var(&a.y_var, json!(y))?;
+                }
+            }
+            Action::OcrClick(a) => {
+                if !a.find.source.image.trim().is_empty() {
+                    bail!("ocr_click reads the screen; remove `image`");
+                }
+                if !self.dry(format!("click the text \"{}\"", a.find.text)) {
+                    let Some((x, y)) = self.ocr_locate(&a.find)? else {
+                        bail!("text \"{}\" not found on screen within {} ms", self.text(&a.find.text)?, a.find.timeout_ms);
+                    };
+                    self.set_var(&a.find.found_var, json!("true"))?;
+                    self.set_var(&a.find.x_var, json!(x))?;
+                    self.set_var(&a.find.y_var, json!(y))?;
+                    self.move_mouse(x + a.offset_x, y + a.offset_y, None, Tween::Linear)?;
+                    std::thread::sleep(Duration::from_millis(30));
+                    self.input()?.click_with(a.button, a.clicks, 60)?;
+                }
+            }
+
             // ---------------- web
             Action::BrowserOpen(a) => {
                 let url = crate::web::to_url(&self.text(&a.url)?, &self.opts.flow_dir);
@@ -1100,7 +1407,12 @@ impl<'a> Context<'a> {
                 } else {
                     let image = if a.image.trim().is_empty() { None } else { Some(self.path(&a.image)?) };
                     match crate::dialogs::input_box(&title, &prompt, &default, a.password, image.as_deref())? {
-                        Some(v) => self.set_var(&a.output_var, json!(v))?,
+                        Some(v) => {
+                            if a.password {
+                                self.secret_vars.insert(self.text(&a.output_var)?);
+                            }
+                            self.set_var(&a.output_var, json!(v))?
+                        }
                         None if a.fail_on_cancel => bail!("cancelled by the user"),
                         None => self.set_var(&a.output_var, json!(""))?,
                     }
@@ -1111,6 +1423,213 @@ impl<'a> Context<'a> {
             other => bail!("action `{}` is only supported on Windows", other.name()),
         }
         Ok(Ctl::Next)
+    }
+
+    fn db_params(&self, params: &[Value]) -> Result<Vec<Value>> {
+        params.iter().map(|p| self.vars.resolve_value(p)).collect()
+    }
+
+    /// The open connection for this connection string (opened on first use).
+    fn db(&mut self, d: &DbConnection) -> Result<&mut crate::db::Conn> {
+        let mut conn = self.text(&d.connection)?;
+        if conn.trim().is_empty() {
+            bail!("set the database connection (a .db file or an ODBC connection string)");
+        }
+        if conn.contains("{password}") {
+            let name = self.text(&d.password_secret)?;
+            if name.trim().is_empty() {
+                bail!("the connection contains {{password}}: set password_secret");
+            }
+            conn = conn.replace("{password}", &crate::mail::secrets::get(name.trim())?);
+        }
+        if !self.dbs.contains_key(&conn) {
+            let c = crate::db::open(&conn, &self.opts.flow_dir)?;
+            let shown = crate::db::redact(&self.text(&d.connection)?);
+            self.log(LogLevel::Info, format!("connected to {shown}"));
+            self.dbs.insert(conn.clone(), c);
+        }
+        Ok(self.dbs.get_mut(&conn).unwrap())
+    }
+
+    fn mail_query(&self, f: &MailFilter) -> Result<crate::mailread::Query> {
+        let since = match self.text(&f.since)? {
+            s if s.trim().is_empty() => None,
+            s => Some(crate::textops::parse_date(&s, "")?.date()),
+        };
+        let save = self.text(&f.save_attachments_to)?;
+        Ok(crate::mailread::Query {
+            folder: self.text(&f.folder)?,
+            unread_only: f.unread_only,
+            from: self.text(&f.from)?,
+            subject_contains: self.text(&f.subject_contains)?,
+            since,
+            max: f.max.max(1) as usize,
+            newest_first: f.newest_first,
+            mark_read: f.mark_read && !self.opts.dry_run,
+            move_to: if self.opts.dry_run { String::new() } else { self.text(&f.move_to)? },
+            save_dir: if save.trim().is_empty() { None } else { Some(self.path(&save)?) },
+            attachment_filter: self.text(&f.attachment_filter)?,
+        })
+    }
+
+    /// The picture OCR reads, and where its top-left corner is on screen.
+    fn ocr_capture(&self, s: &OcrSource) -> Result<(xcap::image::RgbaImage, i32, i32)> {
+        if !s.image.trim().is_empty() {
+            let p = self.path(&s.image)?;
+            let img = xcap::image::open(&p).with_context(|| format!("cannot open image {}", p.display()))?;
+            return Ok((img.to_rgba8(), 0, 0));
+        }
+        if let Some(r) = s.region {
+            return crate::vision::capture(Some(r))?.into_iter().next().ok_or_else(|| anyhow!("capture failed"));
+        }
+        let window = self.text(&s.window)?;
+        if !window.trim().is_empty() {
+            let want = window.to_lowercase();
+            let w = xcap::Window::all()?
+                .into_iter()
+                .find(|w| w.title().map(|t| t.to_lowercase().contains(&want)).unwrap_or(false) && !w.is_minimized().unwrap_or(true))
+                .ok_or_else(|| anyhow!("no visible window titled \"{window}\""))?;
+            return Ok((w.capture_image()?, w.x()?, w.y()?));
+        }
+        let mut monitors = xcap::Monitor::all()?;
+        monitors.sort_by_key(|m| !m.is_primary().unwrap_or(false));
+        let m = monitors.get(s.monitor as usize).ok_or_else(|| anyhow!("monitor {} not found ({} available)", s.monitor, monitors.len()))?;
+        Ok((m.capture_image()?, m.x()?, m.y()?))
+    }
+
+    /// Look for text until found or timed out. Returns the screen centre of the chosen match.
+    fn ocr_locate(&mut self, a: &OcrFind) -> Result<Option<(i32, i32)>> {
+        let needle = self.text(&a.text)?;
+        if needle.trim().is_empty() {
+            bail!("set the text to look for");
+        }
+        let lang = self.text(&a.source.language)?;
+        let end = Instant::now() + Duration::from_millis(a.timeout_ms);
+        loop {
+            self.check_cancel()?;
+            let (img, ox, oy) = self.ocr_capture(&a.source)?;
+            let out = crate::ocr::recognize(&img, &lang, a.source.scale)?;
+            let mut hits = crate::ocr::find(&out, &needle, a.ignore_case);
+            hits.sort_by(|p, q| (p.y as i32 / 8, p.x as i32).cmp(&(q.y as i32 / 8, q.x as i32)));
+            if let Some(h) = hits.get(a.occurrence.max(1) as usize - 1) {
+                let (cx, cy) = h.center();
+                return Ok(Some((ox + cx.round() as i32, oy + cy.round() as i32)));
+            }
+            if Instant::now() >= end || !a.source.image.trim().is_empty() {
+                let seen: String = out.text.replace('\n', " | ").chars().take(160).collect();
+                self.log(LogLevel::Info, format!("text \"{needle}\" not found; OCR saw: {seen}"));
+                return Ok(None);
+            }
+            self.sleep(300)?;
+        }
+    }
+
+    fn http_request(&mut self, a: &HttpRequest) -> Result<()> {
+        let method = match self.text(&a.method)?.trim().to_ascii_uppercase() {
+            m if m.is_empty() => "GET".to_string(),
+            m => m,
+        };
+        let url = self.text(&a.url)?;
+        if url.trim().is_empty() {
+            bail!("http_request needs a url");
+        }
+        let mut headers: Vec<(String, String)> = Vec::new();
+        for (k, v) in &a.headers {
+            headers.push((k.clone(), crate::vars::to_text(&self.vars.resolve_value(v)?)));
+        }
+        let has = |h: &[(String, String)], name: &str| h.iter().any(|(k, _)| k.eq_ignore_ascii_case(name));
+        let body = match self.vars.resolve_value(&a.body)? {
+            Value::Null => None,
+            Value::String(s) if s.is_empty() => None,
+            Value::String(s) => Some(s.into_bytes()),
+            v => {
+                if !has(&headers, "content-type") {
+                    headers.push(("Content-Type".into(), "application/json".into()));
+                }
+                Some(serde_json::to_vec(&v)?)
+            }
+        };
+        let save_to = if a.save_to.trim().is_empty() { None } else { Some(self.path(&a.save_to)?) };
+        let read_only = matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS");
+        if (!read_only || save_to.is_some()) && self.dry(format!("{method} {url}")) {
+            return Ok(());
+        }
+        if !a.bearer_secret.trim().is_empty() && !has(&headers, "authorization") {
+            let token = crate::mail::secrets::get(&self.text(&a.bearer_secret)?)?;
+            headers.push(("Authorization".into(), format!("Bearer {token}")));
+        }
+        let r = crate::http::send(&method, &url, &headers, body, Duration::from_millis(a.timeout_ms.max(1_000)))?;
+        self.set_var(&a.status_var, json!(r.status))?;
+        if r.status >= 400 && a.fail_on_error_status {
+            bail!("{method} {url} failed: {}", r.error_summary());
+        }
+        self.log(LogLevel::Info, format!("{method} {url} -> {} ({} bytes)", r.status, r.body.len()));
+        if let Some(p) = save_to {
+            if let Some(dir) = p.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(&p, &r.body).with_context(|| format!("write {}", p.display()))?;
+            self.set_var(&a.output_var, json!(p.display().to_string()))?;
+            return Ok(());
+        }
+        let value = match r.json() {
+            Some(v) if a.parse_json && (r.is_json() || matches!(v, Value::Object(_) | Value::Array(_))) => v,
+            _ => json!(r.text()),
+        };
+        self.set_var(&a.output_var, value)
+    }
+
+    fn ai_prompt(&mut self, a: &AiPrompt) -> Result<()> {
+        let provider = crate::ai::Provider::parse(&self.text(&a.provider)?)?;
+        let labels: Vec<String> = a.labels.iter().map(|l| self.text(l)).collect::<Result<Vec<_>>>()?.into_iter().filter(|l| !l.trim().is_empty()).collect();
+        let mut system = self.text(&a.system)?;
+        if !labels.is_empty() {
+            system = format!("{}{}{}", system.trim_end(), if system.trim().is_empty() { "" } else { "\n\n" }, crate::ai::label_instruction(&labels));
+        } else if a.json {
+            system = format!("{}{}Reply with a single JSON value and nothing else.", system.trim_end(), if system.trim().is_empty() { "" } else { "\n\n" });
+        }
+        let prompt = self.text(&a.prompt)?;
+        if prompt.trim().is_empty() {
+            bail!("ai_prompt needs a prompt");
+        }
+        if self.dry(format!("ask {provider:?}: {}", prompt.chars().take(80).collect::<String>())) {
+            let v = labels.first().map(|l| json!(l)).unwrap_or_else(|| json!("[dry-run reply]"));
+            return self.set_var(&a.output_var, v);
+        }
+        let secret = self.text(&a.api_key_secret)?;
+        let api_key = if secret.trim().is_empty() {
+            String::new()
+        } else {
+            crate::mail::secrets::get(secret.trim())?
+        };
+        let req = crate::ai::Request {
+            provider,
+            model: self.text(&a.model)?,
+            base_url: self.text(&a.base_url)?,
+            api_key,
+            system,
+            prompt,
+            temperature: a.temperature,
+            max_tokens: a.max_tokens.max(16),
+            json: a.json && labels.is_empty(),
+            timeout: Duration::from_millis(a.timeout_ms.max(5_000)),
+        };
+        let started = Instant::now();
+        let (reply, model) = crate::ai::complete(&req)?;
+        let secs = started.elapsed().as_secs_f32();
+        let value = if !labels.is_empty() {
+            match crate::ai::pick_label(&reply, &labels) {
+                Some(l) => json!(l),
+                None => bail!("the model replied `{}`, which is none of the labels {}", reply.chars().take(120).collect::<String>(), labels.join(", ")),
+            }
+        } else if a.json {
+            crate::ai::extract_json(&reply).ok_or_else(|| anyhow!("the model did not reply with JSON: {}", reply.chars().take(200).collect::<String>()))?
+        } else {
+            json!(reply)
+        };
+        let shown = crate::vars::to_text(&value);
+        self.log(LogLevel::Info, format!("{model} ({secs:.1}s): {}", shown.chars().take(120).collect::<String>()));
+        self.set_var(&a.output_var, value)
     }
 
     fn web(&self) -> Result<&crate::web::WebSession> {
@@ -1291,7 +1810,8 @@ impl<'a> Context<'a> {
             .collect();
         init_vars(&mut vars, &declared, Map::new())?;
         vars.map.extend(passed);
-        let opts = RunOptions { flow_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(), ..self.opts.clone() };
+        // Breakpoints refer to this flow's step ids, so a sub-flow runs straight through.
+        let opts = RunOptions { flow_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(), debug: None, ..self.opts.clone() };
         self.log(LogLevel::Info, format!("running sub-flow {}", path.display()));
         let (ctl, map) = {
             let mut child = Context {
@@ -1304,6 +1824,8 @@ impl<'a> Context<'a> {
                 #[cfg(windows)]
                 uia: self.uia.take(),
                 web: self.web.take(),
+                dbs: std::mem::take(&mut self.dbs),
+                secret_vars: self.secret_vars.clone(),
                 depth: self.depth + 1,
             };
             let ctl = child.run_steps(&sub.steps, 0);
@@ -1314,6 +1836,7 @@ impl<'a> Context<'a> {
             }
             {
                 self.web = child.web.take();
+                self.dbs = std::mem::take(&mut child.dbs);
             }
             (ctl, child.vars.map)
         };
@@ -1419,4 +1942,9 @@ fn screenshot(path: &Path, monitor: u32, window: &str, region: Option<Region>) -
     }
     img.save(path).with_context(|| format!("save {}", path.display()))?;
     Ok(())
+}
+
+/// "\n", "\t" and "\\" typed in a separator field mean newline, tab and backslash.
+fn unescape(s: &str) -> String {
+    s.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
 }

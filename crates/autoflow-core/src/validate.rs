@@ -94,14 +94,18 @@ fn check_raw_steps(steps: &[Value], base: &str, issues: &mut Vec<Issue>) {
                 issues.push(warn(&loc, format!("unknown field \"{key}\" for {name} (ignored). Valid fields: {}", valid.join(", "))));
             }
         }
-        // Type errors for this step alone, so the message points at the right step.
-        if let Err(e) = serde_json::from_value::<Step>(s.clone()) {
-            issues.push(err(&loc, format!("{name}: {e}")));
-            continue;
-        }
-        for key in ["then", "else", "steps"] {
+        // Nested steps first, so a mistake inside `then` / `catch` is reported at that step.
+        let before = issues.iter().filter(|i| i.severity == Severity::Error).count();
+        for key in ["then", "else", "steps", "catch", "finally"] {
             if let Some(children) = obj.get(key).and_then(Value::as_array) {
                 check_raw_steps(children, &format!("{loc}.{key}"), issues);
+            }
+        }
+        let child_errors = issues.iter().filter(|i| i.severity == Severity::Error).count() > before;
+        // Type errors for this step alone (unless they come from a child already reported).
+        if !child_errors {
+            if let Err(e) = serde_json::from_value::<Step>(s.clone()) {
+                issues.push(err(&loc, format!("{name}: {e}")));
             }
         }
     }
@@ -268,13 +272,47 @@ fn collect_refs(v: &Value, out: &mut Vec<String>, top: bool) {
         Value::Array(a) => a.iter().for_each(|x| collect_refs(x, out, false)),
         Value::Object(o) => {
             for (k, x) in o {
-                if top && matches!(k.as_str(), "then" | "else" | "steps") {
+                if top && matches!(k.as_str(), "then" | "else" | "steps" | "catch" | "finally") {
                     continue;
                 }
                 collect_refs(x, out, false);
             }
         }
         _ => {}
+    }
+}
+
+/// Number of `?` placeholders outside quoted strings.
+fn placeholders(sql: &str) -> usize {
+    let (mut n, mut quote) = (0, None::<char>);
+    for c in sql.chars() {
+        match (quote, c) {
+            (None, '\'' | '"') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '?') => n += 1,
+            _ => {}
+        }
+    }
+    n
+}
+
+fn check_sql(issues: &mut Vec<Issue>, loc: &str, name: &str, db: &crate::actions::DbConnection, sql: &str, params: &[Value]) {
+    let lower = db.connection.to_ascii_lowercase().replace(' ', "");
+    if (lower.contains("pwd=") || lower.contains("password=")) && !db.connection.contains("{password}") {
+        issues.push(warn(loc, format!("{name}: the connection contains a password; write PWD={{password}} and set password_secret instead")));
+    }
+    if db.connection.contains("{password}") && db.password_secret.trim().is_empty() {
+        issues.push(err(loc, format!("{name}: the connection uses {{password}}: set password_secret")));
+    }
+    if sql.contains("${") {
+        issues.push(warn(
+            loc,
+            format!("{name}: a ${{variable}} inside the SQL is pasted in as-is (a quote in the value breaks the statement); use ? and params for values"),
+        ));
+    }
+    let q = placeholders(sql);
+    if q != params.len() && !(params.is_empty() && name == "db_execute" && q == 0) {
+        issues.push(err(loc, format!("{name}: the SQL has {q} ? placeholder(s) but {} param(s) are given", params.len())));
     }
 }
 
@@ -376,6 +414,135 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
         Action::ReadCsv(x) => {
             need(issues, "path", &x.path);
             need(issues, "output_var", &x.output_var);
+        }
+        Action::ListAppend(x) => need(issues, "name", &x.name),
+        Action::DbQuery(x) => {
+            need(issues, "connection", &x.db.connection);
+            need(issues, "sql", &x.sql);
+            check_sql(issues, loc, "db_query", &x.db, &x.sql, &x.params);
+        }
+        Action::DbExecute(x) => {
+            need(issues, "connection", &x.db.connection);
+            need(issues, "sql", &x.sql);
+            check_sql(issues, loc, "db_execute", &x.db, &x.sql, &x.params);
+        }
+        Action::ReadEmail(x) => {
+            need(issues, "username", &x.username);
+            if x.password_secret.trim().is_empty() {
+                issues.push(err(loc, "read_email: set password_secret (the name of the password stored with `autoflow secret set NAME`)".into()));
+            }
+            if crate::mailread::imap_defaults(&x.provider).is_none() && x.imap_host.trim().is_empty() && !x.provider.contains("${") {
+                issues.push(err(loc, format!("read_email: unknown provider `{}`; set imap_host", x.provider)));
+            }
+            need(issues, "output_var", &x.filter.output_var);
+        }
+        Action::OutlookRead(x) => need(issues, "output_var", &x.filter.output_var),
+        Action::OcrRead(x) => {
+            need(issues, "output_var", &x.output_var);
+            if x.source.region.is_some_and(|r| r.width == 0 || r.height == 0) {
+                issues.push(err(loc, "ocr_read: region width and height must be > 0".into()));
+            }
+        }
+        Action::OcrFind(x) => need(issues, "text", &x.text),
+        Action::OcrClick(x) => {
+            need(issues, "text", &x.find.text);
+            if !x.find.source.image.trim().is_empty() {
+                issues.push(err(loc, "ocr_click reads the screen; remove `image` (use ocr_find to search a picture)".into()));
+            }
+        }
+        Action::Try(x) => {
+            if x.steps.is_empty() {
+                issues.push(warn(loc, "try: no steps to try".into()));
+            }
+        }
+        Action::TextTransform(x) => need(issues, "output_var", &x.output_var),
+        Action::TextReplace(x) => {
+            need(issues, "find", &x.find);
+            need(issues, "output_var", &x.output_var);
+            if x.regex && !x.find.contains("${") {
+                if let Err(e) = regex::Regex::new(&x.find) {
+                    issues.push(err(loc, format!("text_replace: bad regular expression: {e}")));
+                }
+            }
+        }
+        Action::TextExtract(x) => {
+            need(issues, "pattern", &x.pattern);
+            need(issues, "output_var", &x.output_var);
+            if !x.pattern.contains("${") {
+                match regex::Regex::new(&x.pattern) {
+                    Err(e) => issues.push(err(loc, format!("text_extract: bad regular expression: {e}"))),
+                    Ok(re) if x.group as usize >= re.captures_len() => {
+                        issues.push(err(loc, format!("text_extract: the pattern has no group {}", x.group)))
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Action::TextSplit(x) => need(issues, "output_var", &x.output_var),
+        Action::TextJoin(x) => need(issues, "output_var", &x.output_var),
+        Action::DateCalc(x) => {
+            need(issues, "output_var", &x.output_var);
+            let unit = x.unit.trim().to_ascii_lowercase();
+            let ok = unit.contains("${")
+                || matches!(unit.trim_end_matches('s'), "" | "second" | "sec" | "minute" | "min" | "hour" | "day" | "week" | "month" | "year");
+            if !ok && matches!(x.operation, crate::actions::DateOperation::Add | crate::actions::DateOperation::Diff) {
+                issues.push(err(loc, format!("date_calc: unknown unit `{}` (seconds, minutes, hours, days, weeks, months, years)", x.unit)));
+            }
+        }
+        Action::Calculate(x) => {
+            need(issues, "expression", &x.expression);
+            need(issues, "output_var", &x.output_var);
+        }
+        Action::WriteCsv(x) => {
+            need(issues, "path", &x.path);
+            if x.data.is_null() || x.data.as_str().is_some_and(|s| s.trim().is_empty()) {
+                issues.push(err(loc, "write_csv: \"data\" is required, e.g. \"${results}\"".into()));
+            }
+            if !matches!(x.delimiter.as_str(), "" | "\\t" | "\t" | "tab") && x.delimiter.chars().count() != 1 {
+                issues.push(err(loc, format!("write_csv: delimiter must be one character or \\t, got `{}`", x.delimiter)));
+            }
+        }
+        Action::WriteExcel(x) => {
+            need(issues, "path", &x.path);
+            if x.data.is_null() || x.data.as_str().is_some_and(|s| s.trim().is_empty()) {
+                issues.push(err(loc, "write_excel: \"data\" is required, e.g. \"${results}\"".into()));
+            }
+            let p = x.path.to_ascii_lowercase();
+            if !p.contains("${") && !p.ends_with(".xlsx") {
+                issues.push(warn(loc, "write_excel: path should end in .xlsx".into()));
+            }
+        }
+        Action::HttpRequest(x) => {
+            need(issues, "url", &x.url);
+            let m = x.method.trim().to_ascii_uppercase();
+            if !m.contains("${") && !matches!(m.as_str(), "" | "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS") {
+                issues.push(err(loc, format!("http_request: unknown method `{}`", x.method)));
+            }
+            for (k, v) in &x.headers {
+                if k.eq_ignore_ascii_case("authorization") && v.as_str().is_some_and(|s| !s.contains("${") && s.len() > 12) {
+                    issues.push(warn(loc, "http_request: a literal Authorization header puts a secret in the flow; use bearer_secret instead".into()));
+                }
+            }
+        }
+        Action::AiPrompt(x) => {
+            need(issues, "prompt", &x.prompt);
+            need(issues, "output_var", &x.output_var);
+            if !x.provider.contains("${") {
+                match crate::ai::Provider::parse(&x.provider) {
+                    Err(e) => issues.push(err(loc, format!("ai_prompt: {e}"))),
+                    Ok(p) if p.needs_key() && x.api_key_secret.trim().is_empty() => issues.push(err(
+                        loc,
+                        format!("ai_prompt: provider {} needs api_key_secret (store the key with `autoflow secret set NAME`)", x.provider.trim()),
+                    )),
+                    Ok(crate::ai::Provider::OpenAiCompatible) if x.base_url.trim().is_empty() => {
+                        issues.push(err(loc, "ai_prompt: openai_compatible needs base_url".into()))
+                    }
+                    _ => {}
+                }
+            }
+            if x.json && !x.labels.is_empty() {
+                issues.push(warn(loc, "ai_prompt: json is ignored when labels are given".into()));
+            }
         }
         Action::SendEmail(x) => {
             need(issues, "to", &format!("{}{}{}", x.to, x.cc, x.bcc));

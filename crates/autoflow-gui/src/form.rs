@@ -71,8 +71,8 @@ const BUILTIN_VARS: &[(&str, &str)] = &[
 
 /// Numeric fields that also accept a `${variable}`.
 const INT_EXPR: &[&str] = &["x", "y", "ms", "times", "amount", "from_x", "from_y", "to_x", "to_y", "by"];
-const MULTILINE: &[&str] = &["content", "text", "message", "comment", "script", "prompt"];
-const SKIP: &[&str] = &["action", "then", "else", "steps"];
+const MULTILINE: &[&str] = &["content", "text", "message", "comment", "script", "prompt", "system", "body", "sql", "input"];
+const SKIP: &[&str] = &["action", "then", "else", "steps", "catch", "finally"];
 
 #[derive(Clone, Copy)]
 enum PathKind {
@@ -96,11 +96,15 @@ fn path_kind(action: &str, key: &str) -> Option<PathKind> {
         ("run_flow", "path") => PathKind::Open("Flows", &["json"]),
         ("open", "target") => PathKind::FileOrFolder,
         ("screenshot" | "browser_screenshot", "path") => PathKind::Save("PNG image", &["png"]),
-        (a, "image") if a.starts_with("image_") => PathKind::Open("Images", &["png", "jpg", "jpeg", "bmp"]),
+        (a, "image") if a.starts_with("image_") || a.starts_with("ocr_") => PathKind::Open("Images", &["png", "jpg", "jpeg", "bmp"]),
         ("browser_open" | "browser_navigate", "url") => PathKind::Open("Web pages", &["html", "htm"]),
         ("read_excel", "path") => PathKind::Open("Workbooks", &["xlsx", "xlsm", "xls", "xlsb", "ods"]),
         ("read_csv", "path") => PathKind::Open("CSV / text tables", &["csv", "tsv", "txt"]),
         ("read_pdf", "path") => PathKind::Open("PDF", &["pdf"]),
+        (_, "save_attachments_to") => PathKind::Folder,
+        ("write_csv", "path") => PathKind::Save("CSV", &["csv", "tsv", "txt"]),
+        ("write_excel", "path") => PathKind::Save("Excel workbook", &["xlsx"]),
+        ("http_request", "save_to") => PathKind::Save("Files", ANY),
         ("input_box", "image") => PathKind::Open("Images", &["png", "jpg", "jpeg", "bmp"]),
         _ => return None,
     })
@@ -118,6 +122,12 @@ fn pretty(key: &str) -> String {
         "width_var" => Some("Width → variable"),
         "height_var" => Some("Height → variable"),
         "count_var" => Some("Count → variable"),
+        "status_var" => Some("Status → variable"),
+        "api_key_secret" => Some("API key (secret name)"),
+        "bearer_secret" => Some("Bearer token (secret name)"),
+        "password_secret" => Some("Password (secret name)"),
+        "base_url" => Some("Server URL"),
+        "excel_bom" => Some("Excel UTF-8 marker"),
         "page_count_var" => Some("Page count → variable"),
         "item_var" => Some("Item variable"),
         "index_var" => Some("Index variable"),
@@ -235,7 +245,7 @@ impl Form<'_> {
                     c
                 }
             }
-            Value::String(_) if key != "password_secret" => self.text(ui, path, key, v),
+            Value::String(_) if !key.ends_with("_secret") => self.text(ui, path, key, v),
             Value::Object(o) if key == "condition" => {
                 let mut changed = false;
                 ui.vertical(|ui| changed = self.object(ui, path, o));
@@ -279,9 +289,9 @@ impl Form<'_> {
                 });
                 changed
             }
-            Value::String(_) if key == "password_secret" => {
+            Value::String(_) if key.ends_with("_secret") => {
                 let mut s = v.as_str().unwrap_or("").to_string();
-                let mut changed = ui.add_sized([120.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text("e.g. gmail")).changed();
+                let mut changed = ui.add_sized([120.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text(if key == "password_secret" { "e.g. gmail" } else { "e.g. openai" })).changed();
                 let stored = !s.trim().is_empty() && !s.contains("${") && autoflow_core::mail::secrets::exists(&s);
                 if stored {
                     ui.colored_label(Color32::from_rgb(70, 170, 90), "✔ stored");
@@ -289,8 +299,8 @@ impl Form<'_> {
                     ui.colored_label(Color32::from_rgb(220, 140, 40), "not stored");
                 }
                 if ui
-                    .button("🔑 Set password…")
-                    .on_hover_text("Store the password (Gmail: an App Password) in Windows Credential Manager. It is never saved in the flow.")
+                    .button(if key == "password_secret" { "🔑 Set password…" } else { "🔑 Set key…" })
+                    .on_hover_text("Store the password / API key in Windows Credential Manager under this name. It is never saved in the flow.")
                     .clicked()
                     && !s.trim().is_empty()
                 {
@@ -303,12 +313,12 @@ impl Form<'_> {
                 }
                 changed
             }
-            Value::Array(a) if a.iter().all(Value::is_string) && key == "args" => {
+            Value::Array(a) if a.iter().all(Value::is_string) && matches!(key, "args" | "labels" | "columns" | "params") => {
                 let buf = self
                     .json_buffers
                     .entry(path.to_string())
                     .or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
-                let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(300.0).hint_text("one argument per line"));
+                let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(300.0).hint_text(match key { "labels" => "one label per line, e.g. Fav", "columns" => "one column per line (empty = all)", "params" => "one value per ? placeholder, in order", _ => "one argument per line" }));
                 if resp.changed() {
                     *a = buf.lines().map(|l| Value::String(l.to_string())).collect();
                     return true;
@@ -495,7 +505,7 @@ impl Form<'_> {
         } else if MULTILINE.contains(&key) {
             ui.vertical(|ui| {
                 changed |= ui
-                    .add(egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(key == "script"))
+                    .add(egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(matches!(key, "script" | "sql")))
                     .changed();
                 changed |= self.insert_var_menu(ui, path, &mut s, key);
             });

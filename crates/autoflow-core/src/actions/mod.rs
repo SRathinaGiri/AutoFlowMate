@@ -876,6 +876,104 @@ pub struct ImageWait {
     pub target: ImageTarget,
 }
 
+// ------------------------------------------------------------------------ OCR
+
+/// Where OCR reads from: an image file, a window, a screen region or a monitor.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OcrSource {
+    /// Read this picture file (PNG/JPG/BMP) instead of the screen.
+    pub image: String,
+    /// Read this window (part of its title), e.g. "Tally" or "Notepad".
+    pub window: String,
+    /// Read only this screen rectangle {x, y, width, height}; null = whole window / monitor.
+    pub region: Option<Region>,
+    /// Monitor to read when no window or region is given (0 = primary).
+    pub monitor: u32,
+    /// Language tag such as en-US or hi (empty = the Windows display languages).
+    pub language: String,
+    /// Enlarge the picture before reading; 2 helps with small screen fonts.
+    pub scale: f32,
+}
+impl Default for OcrSource {
+    fn default() -> Self {
+        Self { image: String::new(), window: String::new(), region: None, monitor: 0, language: String::new(), scale: 2.0 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OcrRead {
+    #[serde(flatten)]
+    pub source: OcrSource,
+    /// Variable receiving the recognised text (one line per text line).
+    pub output_var: String,
+    /// Variable receiving the list of lines (optional).
+    pub lines_var: String,
+    /// Variable receiving every word with its screen position: {text, x, y, width, height, center_x, center_y} (optional).
+    pub words_var: String,
+}
+impl Default for OcrRead {
+    fn default() -> Self {
+        Self { source: OcrSource::default(), output_var: "ocr_text".into(), lines_var: String::new(), words_var: String::new() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OcrFind {
+    #[serde(flatten)]
+    pub source: OcrSource,
+    /// Text to look for (interpolated); may be several words, e.g. "Save As".
+    pub text: String,
+    /// Match regardless of upper/lower case.
+    pub ignore_case: bool,
+    /// Which match to use when the text appears more than once (1 = first, top to bottom).
+    pub occurrence: u32,
+    /// Keep looking for up to this many ms (the screen may still be changing).
+    pub timeout_ms: u64,
+    /// Variable receiving "true"/"false" (ocr_find never fails when the text is missing).
+    pub found_var: String,
+    /// Variable receiving the centre X of the text on screen.
+    pub x_var: String,
+    /// Variable receiving the centre Y of the text on screen.
+    pub y_var: String,
+}
+impl Default for OcrFind {
+    fn default() -> Self {
+        Self {
+            source: OcrSource::default(),
+            text: String::new(),
+            ignore_case: true,
+            occurrence: 1,
+            timeout_ms: 5000,
+            found_var: "found".into(),
+            x_var: String::new(),
+            y_var: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OcrClick {
+    #[serde(flatten)]
+    pub find: OcrFind,
+    /// Click this many pixels right of the text centre (negative = left), e.g. into the box next to a label.
+    pub offset_x: i32,
+    /// Click this many pixels below the text centre (negative = above).
+    pub offset_y: i32,
+    /// left, right or middle.
+    pub button: MouseButton,
+    /// 1 = single, 2 = double click.
+    pub clicks: u32,
+}
+impl Default for OcrClick {
+    fn default() -> Self {
+        Self { find: OcrFind { found_var: String::new(), ..OcrFind::default() }, offset_x: 0, offset_y: 0, button: MouseButton::Left, clicks: 1 }
+    }
+}
+
 // ------------------------------------------------------------------------- data
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -1189,6 +1287,103 @@ pub struct BrowserEval {
 #[serde(default)]
 pub struct BrowserClose {}
 
+/// Which messages to read, shared by read_email and outlook_read.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MailFilter {
+    /// Folder to read, e.g. INBOX (IMAP) or Inbox/Invoices (Outlook).
+    pub folder: String,
+    /// Only messages not read yet.
+    pub unread_only: bool,
+    /// Only messages from this sender (address or part of it).
+    pub from: String,
+    /// Only messages whose subject contains this text.
+    pub subject_contains: String,
+    /// Only messages received on or after this date (e.g. 01-11-2026, "today"; empty = any date).
+    pub since: String,
+    /// Read at most this many messages.
+    pub max: u32,
+    /// Newest messages first.
+    pub newest_first: bool,
+    /// Mark the messages read afterwards.
+    pub mark_read: bool,
+    /// Move the messages to this folder afterwards (e.g. Processed); empty = leave them.
+    pub move_to: String,
+    /// Save attachments into this folder (empty = only list their names).
+    pub save_attachments_to: String,
+    /// Only attachments matching this pattern, e.g. *.pdf or *.xlsx.
+    pub attachment_filter: String,
+    /// Variable receiving the list of messages:
+    /// {from, from_name, to, subject, date, body, attachments (saved paths), attachment_names}.
+    pub output_var: String,
+    /// Variable receiving how many messages were read (optional).
+    pub count_var: String,
+}
+impl Default for MailFilter {
+    fn default() -> Self {
+        Self {
+            folder: String::new(),
+            unread_only: true,
+            from: String::new(),
+            subject_contains: String::new(),
+            since: String::new(),
+            max: 20,
+            newest_first: true,
+            mark_read: false,
+            move_to: String::new(),
+            save_attachments_to: String::new(),
+            attachment_filter: String::new(),
+            output_var: "emails".into(),
+            count_var: String::new(),
+        }
+    }
+}
+
+/// Read e-mail from an IMAP mailbox (Gmail, Zoho, Yahoo, any IMAP server).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ReadEmail {
+    /// gmail, outlook365, yahoo, zoho, zoho.in, or custom (then set imap_host).
+    pub provider: String,
+    /// IMAP server; empty = the provider's.
+    pub imap_host: String,
+    /// IMAP port (0 = 993, TLS).
+    pub imap_port: u16,
+    /// Mailbox login, usually the e-mail address.
+    pub username: String,
+    /// Name of the password stored with `autoflow secret set NAME` (Gmail: an App Password).
+    pub password_secret: String,
+    #[serde(flatten)]
+    pub filter: MailFilter,
+}
+impl Default for ReadEmail {
+    fn default() -> Self {
+        Self {
+            provider: "gmail".into(),
+            imap_host: String::new(),
+            imap_port: 0,
+            username: String::new(),
+            password_secret: String::new(),
+            filter: MailFilter { folder: "INBOX".into(), ..MailFilter::default() },
+        }
+    }
+}
+
+/// Read e-mail from a folder of the Outlook desktop app (classic Outlook).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct OutlookRead {
+    /// Outlook account / mailbox name to read (empty = the default one).
+    pub account: String,
+    #[serde(flatten)]
+    pub filter: MailFilter,
+}
+impl Default for OutlookRead {
+    fn default() -> Self {
+        Self { account: String::new(), filter: MailFilter { folder: "Inbox".into(), ..MailFilter::default() } }
+    }
+}
+
 // ---------------------------------------------------------------------- dialogs
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1267,6 +1462,429 @@ impl Default for InputBox {
     }
 }
 
+// --------------------------------------------------------- error handling
+
+/// Run steps; if one fails, run `catch` instead of stopping the flow; always run `finally`.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Try {
+    /// Steps to try.
+    pub steps: Vec<Step>,
+    /// Steps run when one of `steps` fails (the error text is in error_var).
+    pub catch: Vec<Step>,
+    /// Steps run afterwards in every case (e.g. close the browser or the program).
+    pub finally: Vec<Step>,
+    /// Variable receiving the error message (it names the step that failed).
+    pub error_var: String,
+}
+impl Default for Try {
+    fn default() -> Self {
+        Self { steps: vec![], catch: vec![], finally: vec![], error_var: "error".into() }
+    }
+}
+
+// ----------------------------------------------------------------------- text
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TextOperation {
+    #[default]
+    Trim,
+    Upper,
+    Lower,
+    Title,
+    Length,
+    UrlEncode,
+    RemoveSpaces,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TextTransform {
+    /// The text (interpolated), e.g. "${row.Name}".
+    pub input: String,
+    /// trim, upper, lower, title (Each Word Capitalised), length (number of characters),
+    /// url_encode (for a URL query value) or remove_spaces.
+    pub operation: TextOperation,
+    /// Variable receiving the result.
+    pub output_var: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TextReplace {
+    /// The text (interpolated).
+    pub input: String,
+    /// Text to look for (a regular expression when `regex` is true).
+    pub find: String,
+    /// Replacement. With regex, $1 / ${name} insert captured groups.
+    pub replace_with: String,
+    /// Treat `find` as a regular expression.
+    pub regex: bool,
+    /// Match regardless of upper/lower case.
+    pub ignore_case: bool,
+    /// Variable receiving the result.
+    pub output_var: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TextExtract {
+    /// The text to search (interpolated), e.g. "${pdf_text}".
+    pub input: String,
+    /// Regular expression, e.g. "Invoice No[.:]\\s*(\\S+)" or "\\d{2}[A-Z]{5}\\d{4}[A-Z]\\d[Z][A-Z\\d]" (GSTIN).
+    pub pattern: String,
+    /// Capture group to return: 0 = the whole match, 1 = the first ( ) group...
+    pub group: u32,
+    /// Return every match as a list instead of the first one.
+    pub all: bool,
+    /// Match regardless of upper/lower case.
+    pub ignore_case: bool,
+    /// Variable receiving the match ("" when nothing matches) or the list of matches.
+    pub output_var: String,
+    /// Variable receiving "true"/"false": was anything found? (optional)
+    pub found_var: String,
+}
+impl Default for TextExtract {
+    fn default() -> Self {
+        Self { input: String::new(), pattern: String::new(), group: 0, all: false, ignore_case: false, output_var: "match".into(), found_var: String::new() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TextSplit {
+    /// The text to split (interpolated).
+    pub input: String,
+    /// Separator, e.g. "," or "\n" for lines or "\t" for tabs (a regular expression when `regex` is true).
+    pub separator: String,
+    /// Treat `separator` as a regular expression, e.g. "[,;]\\s*".
+    pub regex: bool,
+    /// Trim spaces around each part.
+    pub trim: bool,
+    /// Leave out empty parts.
+    pub skip_empty: bool,
+    /// Variable receiving the list of parts.
+    pub output_var: String,
+}
+impl Default for TextSplit {
+    fn default() -> Self {
+        Self { input: String::new(), separator: ",".into(), regex: false, trim: true, skip_empty: true, output_var: "parts".into() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TextJoin {
+    /// The list to join, e.g. "${names}".
+    pub items: Value,
+    /// Put between the items, e.g. ", " or "\n".
+    pub separator: String,
+    /// Variable receiving the text.
+    pub output_var: String,
+}
+impl Default for TextJoin {
+    fn default() -> Self {
+        Self { items: Value::String(String::new()), separator: ", ".into(), output_var: "text".into() }
+    }
+}
+
+// ------------------------------------------------------------ dates and maths
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DateOperation {
+    /// Re-write the date in `format`.
+    #[default]
+    Format,
+    /// Add `amount` `unit`s (negative to subtract), then format.
+    Add,
+    /// Whole `unit`s from `date` to `other_date` (a number).
+    Diff,
+    /// An object with year, month, day, hour, minute, second, weekday (1 = Monday), weekday_name, month_name, day_of_year.
+    Parts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct DateCalc {
+    /// format, add, diff or parts.
+    pub operation: DateOperation,
+    /// The date (interpolated); empty = now, "today" = today 00:00. Excel date numbers work too.
+    pub date: String,
+    /// How `date` is written, e.g. dd/MM/yyyy (empty = recognise common formats, day first).
+    pub input_format: String,
+    /// add: how many units (negative to go back).
+    pub amount: Int,
+    /// add / diff: seconds, minutes, hours, days, weeks, months or years.
+    pub unit: String,
+    /// diff: the later date (empty = now).
+    pub other_date: String,
+    /// Output format (tokens as in ${now:...}): yyyy MM dd HH hh mm ss tt MMM dddd.
+    pub format: String,
+    /// Variable receiving the result.
+    pub output_var: String,
+}
+impl Default for DateCalc {
+    fn default() -> Self {
+        Self {
+            operation: DateOperation::Format,
+            date: String::new(),
+            input_format: String::new(),
+            amount: Int::Num(0),
+            unit: "days".into(),
+            other_date: String::new(),
+            format: "dd-MM-yyyy".into(),
+            output_var: "date".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Calculate {
+    /// Expression (interpolated), e.g. "${amount} * 18 / 100". Supports + - * / % ^ ( ),
+    /// comparisons (result 1 or 0) and round(x), round(0.01, x), int, floor, ceil, abs, min, max, sqrt.
+    pub expression: String,
+    /// Round the result to this many decimal places (empty = no rounding).
+    pub decimals: Option<u32>,
+    /// Variable receiving the number.
+    pub output_var: String,
+}
+impl Default for Calculate {
+    fn default() -> Self {
+        Self { expression: String::new(), decimals: None, output_var: "result".into() }
+    }
+}
+
+// ------------------------------------------------------------- data writing
+
+/// Append a value (text, number or record) to a list variable, creating it if needed.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ListAppend {
+    /// List variable to add to (missing = a new empty list).
+    pub name: String,
+    /// Value to add. Strings are interpolated; an object such as
+    /// {"Comment": "${row.Comment}", "Label": "${label}"} adds a record (a row for write_csv / write_excel).
+    pub value: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WriteCsv {
+    /// CSV file to write (folders are created).
+    pub path: String,
+    /// The rows: usually "${results}" - a list of records, a list of lists or a list of values.
+    pub data: Value,
+    /// Columns to write, in order (empty = every key of the records, in first-seen order).
+    pub columns: Vec<String>,
+    /// Field separator: "," (default), ";" or "\t" for tab.
+    pub delimiter: String,
+    /// Write a header row with the column names.
+    pub header: bool,
+    /// Add to the end of an existing file (the header is not repeated).
+    pub append: bool,
+    /// Start the file with a UTF-8 marker so Excel shows non-English text correctly.
+    pub excel_bom: bool,
+    /// Variable receiving the number of rows written (optional).
+    pub count_var: String,
+}
+impl Default for WriteCsv {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            data: Value::String(String::new()),
+            columns: vec![],
+            delimiter: ",".into(),
+            header: true,
+            append: false,
+            excel_bom: true,
+            count_var: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct WriteExcel {
+    /// .xlsx workbook to create (an existing file is replaced; close it in Excel first).
+    pub path: String,
+    /// Sheet name.
+    pub sheet: String,
+    /// The rows: usually "${results}" - a list of records, a list of lists or a list of values.
+    /// Numbers stay numbers; text starting with = is written as a formula.
+    pub data: Value,
+    /// Columns to write, in order (empty = every key of the records, in first-seen order).
+    pub columns: Vec<String>,
+    /// Write a bold, frozen header row with the column names.
+    pub header: bool,
+    /// Size the columns to fit their contents.
+    pub autofit: bool,
+    /// Variable receiving the number of rows written (optional).
+    pub count_var: String,
+}
+impl Default for WriteExcel {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            sheet: "Sheet1".into(),
+            data: Value::String(String::new()),
+            columns: vec![],
+            header: true,
+            autofit: true,
+            count_var: String::new(),
+        }
+    }
+}
+
+// ------------------------------------------------------------------ database
+
+/// Where the data is. See the db_query description for connection examples.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct DbConnection {
+    /// A SQLite file (sqlite:data/app.db, or a path ending in .db) or an ODBC connection string, e.g.
+    /// DSN=TallyODBC64_9000 or Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes.
+    /// Write {password} where the password goes; it is taken from password_secret.
+    pub connection: String,
+    /// Name of the database password stored with `autoflow secret set NAME` (replaces {password}).
+    pub password_secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct DbQuery {
+    #[serde(flatten)]
+    pub db: DbConnection,
+    /// SELECT statement. Use ? for values and list them in params, e.g. "SELECT * FROM Ledger WHERE Parent = ?".
+    pub sql: String,
+    /// Values for the ? placeholders, in order (interpolated), e.g. ["${group}"].
+    pub params: Vec<Value>,
+    /// Return at most this many rows (0 = all).
+    pub max_rows: u32,
+    /// Variable receiving the rows as a list of records {column: value}.
+    pub output_var: String,
+    /// Variable receiving the number of rows (optional).
+    pub count_var: String,
+}
+impl Default for DbQuery {
+    fn default() -> Self {
+        Self { db: DbConnection::default(), sql: String::new(), params: vec![], max_rows: 0, output_var: "rows".into(), count_var: String::new() }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct DbExecute {
+    #[serde(flatten)]
+    pub db: DbConnection,
+    /// INSERT / UPDATE / DELETE / CREATE statement with ? placeholders, e.g.
+    /// "INSERT INTO Labels (Comment, Label) VALUES (?, ?)". Without params, SQLite runs a whole script.
+    pub sql: String,
+    /// Values for the ? placeholders, in order (interpolated), e.g. ["${row.Comment}", "${label}"].
+    pub params: Vec<Value>,
+    /// Variable receiving the number of rows changed (optional).
+    pub affected_var: String,
+}
+
+// ------------------------------------------------------------------ internet
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct HttpRequest {
+    /// GET, POST, PUT, PATCH, DELETE or HEAD.
+    pub method: String,
+    /// Address (interpolated), e.g. https://api.example.com/items?q=${query}.
+    pub url: String,
+    /// Extra request headers, e.g. {"Accept": "application/json"} (values are interpolated).
+    pub headers: Map<String, Value>,
+    /// Request body. A string is sent as-is; an object or list is sent as JSON.
+    pub body: Value,
+    /// Name of a token stored with `autoflow secret set NAME`, sent as "Authorization: Bearer <token>" (optional).
+    pub bearer_secret: String,
+    /// Save the response body to this file (for downloads); output_var then receives the path.
+    pub save_to: String,
+    /// Fail the step when the server answers with an error status (400 and above).
+    pub fail_on_error_status: bool,
+    /// Store a JSON response as an object/list (so ${response.field} works) instead of text.
+    pub parse_json: bool,
+    /// How long to wait for the whole request, in ms.
+    pub timeout_ms: u64,
+    /// Variable receiving the response body.
+    pub output_var: String,
+    /// Variable receiving the HTTP status code (optional).
+    pub status_var: String,
+}
+impl Default for HttpRequest {
+    fn default() -> Self {
+        Self {
+            method: "GET".into(),
+            url: String::new(),
+            headers: Map::new(),
+            body: Value::String(String::new()),
+            bearer_secret: String::new(),
+            save_to: String::new(),
+            fail_on_error_status: true,
+            parse_json: true,
+            timeout_ms: 60_000,
+            output_var: "response".into(),
+            status_var: String::new(),
+        }
+    }
+}
+
+// ------------------------------------------------------------------------ AI
+
+/// Send one prompt to a language model and store its reply.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AiPrompt {
+    /// lmstudio (local, default), ollama (local), openai_compatible, openai, gemini or anthropic.
+    pub provider: String,
+    /// Model name. Empty = the model loaded in LM Studio/Ollama, or a default for cloud providers.
+    pub model: String,
+    /// Server address; empty = the provider's default (LM Studio: http://localhost:1234/v1).
+    pub base_url: String,
+    /// Name of the API key stored with `autoflow secret set NAME` (not needed for local servers).
+    pub api_key_secret: String,
+    /// Instructions for the model (interpolated), e.g. "You classify customer comments."
+    pub system: String,
+    /// The prompt (interpolated), e.g. "Classify this comment: ${row.Comment}".
+    pub prompt: String,
+    /// Allowed answers, e.g. ["Fav", "UnFav", "Neutral"]. The model is told to reply with one,
+    /// and the stored value is always exactly one of them (the step fails otherwise).
+    pub labels: Vec<String>,
+    /// Ask for JSON and store the parsed object (so ${reply.field} works).
+    pub json: bool,
+    /// Randomness, 0 = most predictable (empty = provider default; ignored by Claude).
+    pub temperature: Option<f64>,
+    /// Longest reply, in tokens (thinking models need room to think).
+    pub max_tokens: u32,
+    /// How long to wait for the reply, in ms.
+    pub timeout_ms: u64,
+    /// Variable receiving the reply (or the label / parsed JSON).
+    pub output_var: String,
+}
+impl Default for AiPrompt {
+    fn default() -> Self {
+        Self {
+            provider: "lmstudio".into(),
+            model: String::new(),
+            base_url: String::new(),
+            api_key_secret: String::new(),
+            system: String::new(),
+            prompt: String::new(),
+            labels: vec![],
+            json: false,
+            temperature: None,
+            max_tokens: 4096,
+            timeout_ms: 120_000,
+            output_var: "reply".into(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------- registration
 
 /// Metadata about an action, for the editor palette, `autoflow actions` and docs.
@@ -1324,6 +1942,7 @@ actions! {
     "Flow", "break", Break(Break), "Leave the innermost repeat / while / for_each loop.";
     "Flow", "stop", Stop(Stop), "End the flow now, successfully or as a failure.";
     "Flow", "run_flow", RunFlow(RunFlow), "Run another flow file as a sub-flow.";
+    "Flow", "try", Try(Try), "Run steps; on failure run `catch` instead of stopping; always run `finally`.";
 
     "File", "file_copy", FileCopy(CopyMove), "Copy a file (to a file path or into a folder).";
     "File", "file_move", FileMove(CopyMove), "Move or rename a file or folder.";
@@ -1339,6 +1958,25 @@ actions! {
     "Data", "read_excel", ReadExcel(ReadExcel), "Read a sheet (or one column) of an Excel workbook into a list variable.";
     "Data", "read_csv", ReadCsv(ReadCsv), "Read a CSV/TSV table (or one column) into a list variable.";
     "Data", "read_pdf", ReadPdf(ReadPdf), "Read the text of a PDF (all or some pages) into a variable.";
+    "Data", "list_append", ListAppend(ListAppend), "Add a value or record to a list variable (collect results).";
+    "Data", "write_csv", WriteCsv(WriteCsv), "Write a list of records to a CSV file (Excel-friendly).";
+    "Data", "write_excel", WriteExcel(WriteExcel), "Write a list of records to a new Excel workbook.";
+
+    "Text", "text_transform", TextTransform(TextTransform), "Trim, change case, count or URL-encode text.";
+    "Text", "text_replace", TextReplace(TextReplace), "Replace text (plain or regular expression).";
+    "Text", "text_extract", TextExtract(TextExtract), "Pick out text with a regular expression (first match or all).";
+    "Text", "text_split", TextSplit(TextSplit), "Split text into a list (by comma, line, tab or pattern).";
+    "Text", "text_join", TextJoin(TextJoin), "Join a list into one text.";
+
+    "Date & Math", "date_calc", DateCalc(DateCalc), "Format, add to, subtract or compare dates.";
+    "Date & Math", "calculate", Calculate(Calculate), "Evaluate arithmetic such as ${amount} * 18 / 100.";
+
+    "Database", "db_query", DbQuery(DbQuery), "Run a SELECT on SQLite or any ODBC database (SQL Server, MySQL, Access, Tally) into a list of records.";
+    "Database", "db_execute", DbExecute(DbExecute), "Run INSERT / UPDATE / DELETE / CREATE on SQLite or an ODBC database.";
+
+    "Internet", "http_request", HttpRequest(HttpRequest), "Call a web API or download a file (GET/POST/...).";
+
+    "AI", "ai_prompt", AiPrompt(AiPrompt), "Ask a local (LM Studio, Ollama) or cloud (OpenAI, Gemini, Claude) AI model; optionally force one of given labels.";
 
     "Program", "run_program", RunProgram(RunProgram), "Start a program, optionally waiting and capturing its output.";
     "Program", "kill_program", KillProgram(KillProgram), "Terminate all processes with the given image name.";
@@ -1384,6 +2022,10 @@ actions! {
     "Image", "image_wait", ImageWait(ImageWait), "Wait until a picture appears on screen.";
     "Image", "image_wait_vanish", ImageWaitVanish(ImageWait), "Wait until a picture is no longer on screen.";
 
+    "OCR", "ocr_read", OcrRead(OcrRead), "Read the text on screen, in a window or in a picture (Windows OCR, offline).";
+    "OCR", "ocr_find", OcrFind(OcrFind), "Look for text on screen; store found/x/y (never fails).";
+    "OCR", "ocr_click", OcrClick(OcrClick), "Wait for text on screen and click it (e.g. a button or menu without UI Automation).";
+
     "Web", "browser_open", BrowserOpen(BrowserOpen), "Start Edge/Chrome and open a page (URL or local .html file).";
     "Web", "browser_navigate", BrowserNavigate(BrowserNavigate), "Load another page in the open browser.";
     "Web", "browser_type", BrowserType(BrowserType), "Type text into a page element given by id or selector.";
@@ -1397,6 +2039,8 @@ actions! {
 
     "Email", "send_email", SendEmail(SendEmail), "Send an e-mail with attachments through SMTP (Gmail, Microsoft 365, any server).";
     "Email", "outlook_send", OutlookSend(OutlookSend), "Create an e-mail in the Outlook desktop app and send it (or show it as a draft).";
+    "Email", "read_email", ReadEmail(ReadEmail), "Read messages from an IMAP mailbox (Gmail...) and save their attachments.";
+    "Email", "outlook_read", OutlookRead(OutlookRead), "Read messages from an Outlook desktop folder and save their attachments.";
 
     "Dialog", "message_box", MessageBox(MessageBox), "Show a message box and store which button was clicked.";
     "Dialog", "input_box", InputBox(InputBox), "Ask the user to type a value (optionally masked).";
@@ -1410,6 +2054,7 @@ impl Action {
             Action::Repeat(a) => vec![&a.steps],
             Action::While(a) => vec![&a.steps],
             Action::ForEach(a) => vec![&a.steps],
+            Action::Try(a) => vec![&a.steps, &a.catch, &a.finally],
             _ => vec![],
         }
     }
@@ -1420,6 +2065,7 @@ impl Action {
             Action::Repeat(a) => vec![&mut a.steps],
             Action::While(a) => vec![&mut a.steps],
             Action::ForEach(a) => vec![&mut a.steps],
+            Action::Try(a) => vec![&mut a.steps, &mut a.catch, &mut a.finally],
             _ => vec![],
         }
     }
@@ -1429,6 +2075,7 @@ impl Action {
         match self {
             Action::If(_) => &["then", "else"],
             Action::Repeat(_) | Action::While(_) | Action::ForEach(_) => &["steps"],
+            Action::Try(_) => &["steps", "catch", "finally"],
             _ => &[],
         }
     }
@@ -1436,6 +2083,6 @@ impl Action {
     /// True for actions that move the mouse or press keys (fail-safe applies).
     pub fn uses_input(&self) -> bool {
         (matches!(self.category(), "Mouse" | "Keyboard") && !matches!(self, Action::MousePosition(_)))
-            || matches!(self, Action::UiClick(_) | Action::UiSetText(_) | Action::ImageClick(_))
+            || matches!(self, Action::UiClick(_) | Action::UiSetText(_) | Action::ImageClick(_) | Action::OcrClick(_))
     }
 }

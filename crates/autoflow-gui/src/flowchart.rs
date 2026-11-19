@@ -3,10 +3,12 @@
 //! * plain steps are boxes joined by arrows,
 //! * `if` is a decision node with yes/no branches that merge again,
 //! * `repeat` / `while` / `for_each` are frames with a loop-back arrow,
+//! * `try` is a frame with its steps, then the `on error` and `finally` lists,
 //! * every connector is a drop zone: drag an action from the palette (or an
 //!   existing node) onto it, or click its ⊕ to make it the insertion point.
 
 use autoflow_core::{Action, Step};
+use std::collections::HashSet;
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Vec2};
 
 use crate::tree::{DragItem, ListPath, Selection, StepPath};
@@ -22,6 +24,7 @@ const LOOP_LEFT: f32 = 30.0;
 const EMPTY_W: f32 = 150.0;
 const MARGIN: f32 = 40.0;
 const TERM_H: f32 = 28.0;
+const LABEL_H: f32 = 22.0;
 
 pub enum ChartOp {
     Select(Selection),
@@ -29,10 +32,14 @@ pub enum ChartOp {
     Toggle(StepPath),
     Delete(StepPath),
     Duplicate(StepPath),
+    Breakpoint(StepPath),
 }
 
 pub struct Chart<'a> {
     pub sel: &'a Selection,
+    pub breakpoints: &'a HashSet<String>,
+    /// The step a debug run is paused before.
+    pub paused: Option<&'a str>,
     pub current: Option<&'a str>,
     pub failed: &'a [String],
     pub zoom: f32,
@@ -84,6 +91,10 @@ fn measure_step(s: &Step) -> Vec2 {
         Action::If(a) => {
             let (t, e) = (measure_list(&a.then), measure_list(&a.otherwise));
             Vec2::new(NODE_W.max(t.x + e.x + BR_GAP), NODE_H + IF_TOP + t.y.max(e.y) + IF_BOT)
+        }
+        Action::Try(a) => {
+            let (t, c, f) = (measure_list(&a.steps), measure_list(&a.catch), measure_list(&a.finally));
+            Vec2::new(NODE_W.max(t.x).max(c.x).max(f.x) + 2.0 * LOOP_PAD, LOOP_PAD + NODE_H + t.y + c.y + f.y + 2.0 * LABEL_H + LOOP_PAD)
         }
         a if is_loop(a) => {
             let b = measure_list(a.children()[0]);
@@ -226,6 +237,39 @@ impl Painter<'_, '_> {
                 self.vline(cx, merge, top + total_h);
                 self.painter.circle_filled(Pos2::new(cx, merge), 3.5 * z, self.line_color());
             }
+            Action::Try(a) => {
+                let size = measure_step(s) * z;
+                let frame = Rect::from_min_size(Pos2::new(cx - size.x / 2.0, top), size);
+                let col = (self.chart.color)(s.action.category());
+                self.painter.rect_filled(frame, CornerRadius::same(10), col.gamma_multiply(0.07));
+                self.painter.rect_stroke(frame, CornerRadius::same(10), Stroke::new(1.0, col.gamma_multiply(0.5)), StrokeKind::Inside);
+                let node = Rect::from_min_size(Pos2::new(cx - NODE_W * z / 2.0, top + LOOP_PAD * z), Vec2::new(NODE_W, NODE_H) * z);
+                self.vline(cx, top, node.top());
+                self.node(s, path, node, NodeShape::Loop, ops);
+                let mut y = node.bottom();
+                let sections: [(&[Step], &str, Color32); 3] = [
+                    (&a.steps, "", Color32::TRANSPARENT),
+                    (&a.catch, "on error", Color32::from_rgb(220, 100, 100)),
+                    (&a.finally, "finally (always)", Color32::from_rgb(120, 150, 220)),
+                ];
+                for (i, (steps, label, color)) in sections.into_iter().enumerate() {
+                    if !label.is_empty() {
+                        let ym = y + LABEL_H * z / 2.0;
+                        self.painter.line_segment(
+                            [Pos2::new(frame.left() + 8.0 * z, ym), Pos2::new(frame.right() - 8.0 * z, ym)],
+                            Stroke::new(1.0, color.gamma_multiply(0.6)),
+                        );
+                        let galley_pos = Pos2::new(cx + 6.0 * z, ym - 1.0);
+                        self.painter.text(galley_pos, Align2::LEFT_BOTTOM, label, FontId::proportional(11.0 * z), color);
+                        self.vline(cx, y, y + LABEL_H * z);
+                        y += LABEL_H * z;
+                    }
+                    let mut lp = path.parents.clone();
+                    lp.push((path.index, i));
+                    y = self.list(steps, &lp, cx, y, ops);
+                }
+                self.vline(cx, y, frame.bottom());
+            }
             a if is_loop(a) => {
                 let size = measure_step(s) * z;
                 let frame = Rect::from_min_size(Pos2::new(cx - size.x / 2.0, top), size);
@@ -266,6 +310,8 @@ impl Painter<'_, '_> {
         let selected = *self.chart.sel == Selection::Step(path.clone());
         let running = !s.id.is_empty() && self.chart.current == Some(s.id.as_str());
         let failed = self.chart.failed.iter().any(|f| f == &s.id);
+        let breakpoint = !s.id.is_empty() && self.chart.breakpoints.contains(&s.id);
+        let paused = !s.id.is_empty() && self.chart.paused == Some(s.id.as_str());
         let dim = if s.enabled { 1.0 } else { 0.4 };
 
         let id = self.ui.scope_id().with(("node", path.parents.clone(), path.index));
@@ -273,7 +319,9 @@ impl Painter<'_, '_> {
         resp.dnd_set_drag_payload(DragItem::Move(path.clone()));
 
         let fill = if resp.hovered() { v.widgets.hovered.bg_fill } else { v.widgets.inactive.bg_fill };
-        let border = if running {
+        let border = if paused {
+            Stroke::new(3.0 * z, Color32::from_rgb(235, 170, 40))
+        } else if running {
             Stroke::new(3.0 * z, Color32::from_rgb(80, 150, 240))
         } else if failed {
             Stroke::new(2.5 * z, Color32::from_rgb(225, 80, 80))
@@ -310,7 +358,9 @@ impl Painter<'_, '_> {
             a => format!("{} {}", crate::icons::action_icon(a.name()), a.name()),
         };
         let mut title_text = title;
-        if running {
+        if paused {
+            title_text = format!("⏸ {title_text}");
+        } else if running {
             title_text = format!("▶ {title_text}");
         } else if failed {
             title_text = format!("✖ {title_text}");
@@ -348,6 +398,11 @@ impl Painter<'_, '_> {
         if !s.enabled {
             self.painter.text(r.right_bottom() - Vec2::new(pad * 0.8, 7.0 * z), Align2::RIGHT_BOTTOM, "off", FontId::proportional(10.0 * z), v.weak_text_color());
         }
+        if breakpoint {
+            let c = Pos2::new(r.left() - 9.0 * z, r.center().y);
+            self.painter.circle_filled(c, 6.0 * z, Color32::from_rgb(220, 60, 60));
+            self.painter.circle_stroke(c, 6.0 * z, Stroke::new(1.0, Color32::from_rgb(140, 30, 30)));
+        }
 
         if resp.clicked() || resp.drag_started() {
             ops.push(ChartOp::Select(Selection::Step(path.clone())));
@@ -364,6 +419,10 @@ impl Painter<'_, '_> {
             }
             if ui.button("Duplicate").clicked() {
                 ops.push(ChartOp::Duplicate(path.clone()));
+                ui.close();
+            }
+            if ui.button(if breakpoint { "Remove breakpoint (F9)" } else { "Add breakpoint (F9)" }).clicked() {
+                ops.push(ChartOp::Breakpoint(path.clone()));
                 ui.close();
             }
             if ui.button("Delete").clicked() {

@@ -1,7 +1,7 @@
 //! `autoflow` — run, validate and author AutoFlowMate flows from the command line.
 //! Every command supports `--json` output so AI agents can drive it.
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context as _, Result};
 use autoflow_core::{catalog, run_flow, validate_json, Event, Flow, RunOptions, Severity, Step};
 use clap::{Parser, Subcommand};
 use serde_json::{json, Map, Value};
@@ -134,6 +134,26 @@ enum Cmd {
         /// Report every match, not just the best.
         #[arg(long)]
         all: bool,
+    },
+    /// Read text with Windows OCR (to test ocr_* steps): the primary screen, a window or a picture.
+    Ocr {
+        /// Read this picture file instead of the screen.
+        #[arg(long)]
+        image: Option<PathBuf>,
+        /// Read this window (part of its title).
+        #[arg(long)]
+        window: Option<String>,
+        /// Also report where this text is (screen coordinates).
+        #[arg(long)]
+        find: Option<String>,
+        /// Language tag, e.g. en-US (default: the Windows display languages).
+        #[arg(long, default_value = "")]
+        language: String,
+        #[arg(long, default_value_t = 2.0)]
+        scale: f32,
+        /// List the installed OCR languages and exit.
+        #[arg(long)]
+        languages: bool,
     },
 }
 
@@ -401,6 +421,43 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
             println!("{}", serde_json::to_string_pretty(&json!({"found": !found.is_empty(), "matches": found, "millis": started.elapsed().as_millis() as u64}))?);
             Ok(if found.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS })
         }
+        Cmd::Ocr { image, window, find, language, scale, languages } => {
+            if languages {
+                for l in autoflow_core::ocr::languages() {
+                    println!("{l}");
+                }
+                return Ok(ExitCode::SUCCESS);
+            }
+            let (img, ox, oy) = if let Some(p) = image {
+                (xcap::image::open(&p).with_context(|| format!("open {}", p.display()))?.to_rgba8(), 0, 0)
+            } else if let Some(t) = window {
+                let want = t.to_lowercase();
+                let w = xcap::Window::all()?
+                    .into_iter()
+                    .find(|w| w.title().map(|x| x.to_lowercase().contains(&want)).unwrap_or(false) && !w.is_minimized().unwrap_or(true))
+                    .ok_or_else(|| anyhow::anyhow!("no visible window titled \"{t}\""))?;
+                (w.capture_image()?, w.x()?, w.y()?)
+            } else {
+                let m = xcap::Monitor::all()?.into_iter().find(|m| m.is_primary().unwrap_or(false)).ok_or_else(|| anyhow::anyhow!("no monitor"))?;
+                (m.capture_image()?, m.x()?, m.y()?)
+            };
+            let started = std::time::Instant::now();
+            let out = autoflow_core::ocr::recognize(&img, &language, scale)?;
+            println!("{}", out.text);
+            eprintln!("({} lines in {} ms)", out.lines.len(), started.elapsed().as_millis());
+            if let Some(f) = find {
+                let hits: Vec<_> = autoflow_core::ocr::find(&out, &f, true)
+                    .iter()
+                    .map(|h| {
+                        let (cx, cy) = h.center();
+                        json!({"x": ox + cx.round() as i32, "y": oy + cy.round() as i32})
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&json!({"text": f, "found": !hits.is_empty(), "centres": hits}))?);
+                return Ok(if hits.is_empty() { ExitCode::from(1) } else { ExitCode::SUCCESS });
+            }
+            Ok(ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -472,7 +529,7 @@ impl RunLog {
 
     fn event(&mut self, e: &Event) {
         match e {
-            Event::StepStarted { .. } => {}
+            Event::StepStarted { .. } | Event::Paused { .. } => {}
             Event::StepFinished { id, action, ok: true, millis, .. } => self.line(&format!("ok    [{id}] {action} ({millis} ms)")),
             Event::StepFinished { id, action, error, .. } => {
                 self.line(&format!("FAIL  [{id}] {action}: {}", error.as_deref().unwrap_or("")))
@@ -600,7 +657,7 @@ fn print_event(e: &Event, json: bool) {
     match e {
         Event::StepStarted { id, action, depth } => println!("{}> [{id}] {action}", "  ".repeat(*depth)),
         Event::StepFinished { id, ok: false, error, .. } => println!("  x [{id}] {}", error.as_deref().unwrap_or("")),
-        Event::StepFinished { .. } => {}
+        Event::StepFinished { .. } | Event::Paused { .. } => {}
         Event::Log { level, message } => println!("  {:?}: {message}", level),
         Event::Finished { success, message } => println!("{} {message}", if *success { "SUCCESS" } else { "FAILED" }),
     }

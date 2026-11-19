@@ -14,6 +14,7 @@ pub fn action_icon(name: &str) -> &'static str {
         "break" => "⏹",
         "stop" => "🛑",
         "run_flow" => "▶",
+        "try" => "🛡",
         // File
         "file_copy" => "📑",
         "file_move" => "📦",
@@ -29,6 +30,23 @@ pub fn action_icon(name: &str) -> &'static str {
         "read_excel" => "📊",
         "read_csv" => "🧾",
         "read_pdf" => "📕",
+        "list_append" => "📥",
+        // Text, dates, maths
+        "text_transform" => "🔤",
+        "text_replace" => "🔁",
+        "text_extract" => "🔎",
+        "text_split" => "✂",
+        "text_join" => "🔗",
+        "date_calc" => "📅",
+        "calculate" => "🧮",
+        "write_csv" => "💾",
+        "write_excel" => "📗",
+        // Database
+        "db_query" => "🗄",
+        "db_execute" => "🛢",
+        // Internet / AI
+        "http_request" => "📡",
+        "ai_prompt" => "🤖",
         // Program
         "run_program" => "🚀",
         "kill_program" => "❌",
@@ -73,9 +91,15 @@ pub fn action_icon(name: &str) -> &'static str {
         "image_click" => "🎯",
         "image_wait" => "⏱",
         "image_wait_vanish" => "💨",
+        // OCR
+        "ocr_read" => "👓",
+        "ocr_find" => "🔦",
+        "ocr_click" => "🖲",
         // Email
         "send_email" => "✉",
         "outlook_send" => "📧",
+        "read_email" => "📨",
+        "outlook_read" => "📬",
         // Dialog
         "message_box" => "🗨",
         "input_box" => "🔡",
@@ -106,7 +130,13 @@ pub fn category_icon(cat: &str) -> &'static str {
         "Clipboard" => "📋",
         "Screen" => "🖥",
         "Image" => "🖼",
+        "OCR" => "👓",
         "Email" => "✉",
+        "Internet" => "📡",
+        "Database" => "🗄",
+        "AI" => "🤖",
+        "Text" => "🔤",
+        "Date & Math" => "🧮",
         "Dialog" => "🗨",
         "Web" => "🌐",
         _ => "•",

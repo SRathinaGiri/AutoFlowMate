@@ -366,6 +366,20 @@
           ]
         },
         {
+          "description": "Run steps; on failure run `catch` instead of stopping; always run `finally`.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "try"
+            }
+          },
+          "$ref": "#/$defs/Try",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Copy a file (to a file path or into a folder).",
           "type": "object",
           "properties": {
@@ -543,6 +557,202 @@
             }
           },
           "$ref": "#/$defs/ReadPdf",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Add a value or record to a list variable (collect results).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "list_append"
+            }
+          },
+          "$ref": "#/$defs/ListAppend",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Write a list of records to a CSV file (Excel-friendly).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "write_csv"
+            }
+          },
+          "$ref": "#/$defs/WriteCsv",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Write a list of records to a new Excel workbook.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "write_excel"
+            }
+          },
+          "$ref": "#/$defs/WriteExcel",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Trim, change case, count or URL-encode text.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "text_transform"
+            }
+          },
+          "$ref": "#/$defs/TextTransform",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Replace text (plain or regular expression).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "text_replace"
+            }
+          },
+          "$ref": "#/$defs/TextReplace",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Pick out text with a regular expression (first match or all).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "text_extract"
+            }
+          },
+          "$ref": "#/$defs/TextExtract",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Split text into a list (by comma, line, tab or pattern).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "text_split"
+            }
+          },
+          "$ref": "#/$defs/TextSplit",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Join a list into one text.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "text_join"
+            }
+          },
+          "$ref": "#/$defs/TextJoin",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Format, add to, subtract or compare dates.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "date_calc"
+            }
+          },
+          "$ref": "#/$defs/DateCalc",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Evaluate arithmetic such as ${amount} * 18 / 100.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "calculate"
+            }
+          },
+          "$ref": "#/$defs/Calculate",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Run a SELECT on SQLite or any ODBC database (SQL Server, MySQL, Access, Tally) into a list of records.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "db_query"
+            }
+          },
+          "$ref": "#/$defs/DbQuery",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Run INSERT / UPDATE / DELETE / CREATE on SQLite or an ODBC database.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "db_execute"
+            }
+          },
+          "$ref": "#/$defs/DbExecute",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Call a web API or download a file (GET/POST/...).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "http_request"
+            }
+          },
+          "$ref": "#/$defs/HttpRequest",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Ask a local (LM Studio, Ollama) or cloud (OpenAI, Gemini, Claude) AI model; optionally force one of given labels.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "ai_prompt"
+            }
+          },
+          "$ref": "#/$defs/AiPrompt",
           "required": [
             "action"
           ]
@@ -1052,6 +1262,48 @@
           ]
         },
         {
+          "description": "Read the text on screen, in a window or in a picture (Windows OCR, offline).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "ocr_read"
+            }
+          },
+          "$ref": "#/$defs/OcrRead",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Look for text on screen; store found/x/y (never fails).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "ocr_find"
+            }
+          },
+          "$ref": "#/$defs/OcrFind",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Wait for text on screen and click it (e.g. a button or menu without UI Automation).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "ocr_click"
+            }
+          },
+          "$ref": "#/$defs/OcrClick",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Start Edge/Chrome and open a page (URL or local .html file).",
           "type": "object",
           "properties": {
@@ -1215,6 +1467,34 @@
             }
           },
           "$ref": "#/$defs/OutlookSend",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Read messages from an IMAP mailbox (Gmail...) and save their attachments.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "read_email"
+            }
+          },
+          "$ref": "#/$defs/ReadEmail",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "Read messages from an Outlook desktop folder and save their attachments.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "outlook_read"
+            }
+          },
+          "$ref": "#/$defs/OutlookRead",
           "required": [
             "action"
           ]
@@ -1563,6 +1843,41 @@
         }
       }
     },
+    "Try": {
+      "description": "Run steps; if one fails, run `catch` instead of stopping the flow; always run `finally`.",
+      "type": "object",
+      "properties": {
+        "steps": {
+          "description": "Steps to try.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "default": []
+        },
+        "catch": {
+          "description": "Steps run when one of `steps` fails (the error text is in error_var).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "default": []
+        },
+        "finally": {
+          "description": "Steps run afterwards in every case (e.g. close the browser or the program).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "default": []
+        },
+        "error_var": {
+          "description": "Variable receiving the error message (it names the step that failed).",
+          "type": "string",
+          "default": "error"
+        }
+      }
+    },
     "CopyMove": {
       "type": "object",
       "properties": {
@@ -1820,6 +2135,582 @@
           "description": "Variable receiving the number of pages in the PDF (optional).",
           "type": "string",
           "default": ""
+        }
+      }
+    },
+    "ListAppend": {
+      "description": "Append a value (text, number or record) to a list variable, creating it if needed.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "List variable to add to (missing = a new empty list).",
+          "type": "string",
+          "default": ""
+        },
+        "value": {
+          "description": "Value to add. Strings are interpolated; an object such as\n{\"Comment\": \"${row.Comment}\", \"Label\": \"${label}\"} adds a record (a row for write_csv / write_excel).",
+          "default": null
+        }
+      }
+    },
+    "WriteCsv": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "CSV file to write (folders are created).",
+          "type": "string",
+          "default": ""
+        },
+        "data": {
+          "description": "The rows: usually \"${results}\" - a list of records, a list of lists or a list of values.",
+          "default": ""
+        },
+        "columns": {
+          "description": "Columns to write, in order (empty = every key of the records, in first-seen order).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "delimiter": {
+          "description": "Field separator: \",\" (default), \";\" or \"\\t\" for tab.",
+          "type": "string",
+          "default": ","
+        },
+        "header": {
+          "description": "Write a header row with the column names.",
+          "type": "boolean",
+          "default": true
+        },
+        "append": {
+          "description": "Add to the end of an existing file (the header is not repeated).",
+          "type": "boolean",
+          "default": false
+        },
+        "excel_bom": {
+          "description": "Start the file with a UTF-8 marker so Excel shows non-English text correctly.",
+          "type": "boolean",
+          "default": true
+        },
+        "count_var": {
+          "description": "Variable receiving the number of rows written (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "WriteExcel": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": ".xlsx workbook to create (an existing file is replaced; close it in Excel first).",
+          "type": "string",
+          "default": ""
+        },
+        "sheet": {
+          "description": "Sheet name.",
+          "type": "string",
+          "default": "Sheet1"
+        },
+        "data": {
+          "description": "The rows: usually \"${results}\" - a list of records, a list of lists or a list of values.\nNumbers stay numbers; text starting with = is written as a formula.",
+          "default": ""
+        },
+        "columns": {
+          "description": "Columns to write, in order (empty = every key of the records, in first-seen order).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "header": {
+          "description": "Write a bold, frozen header row with the column names.",
+          "type": "boolean",
+          "default": true
+        },
+        "autofit": {
+          "description": "Size the columns to fit their contents.",
+          "type": "boolean",
+          "default": true
+        },
+        "count_var": {
+          "description": "Variable receiving the number of rows written (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "TextOperation": {
+      "type": "string",
+      "enum": [
+        "trim",
+        "upper",
+        "lower",
+        "title",
+        "length",
+        "url_encode",
+        "remove_spaces"
+      ]
+    },
+    "TextTransform": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "The text (interpolated), e.g. \"${row.Name}\".",
+          "type": "string",
+          "default": ""
+        },
+        "operation": {
+          "description": "trim, upper, lower, title (Each Word Capitalised), length (number of characters),\nurl_encode (for a URL query value) or remove_spaces.",
+          "$ref": "#/$defs/TextOperation",
+          "default": "trim"
+        },
+        "output_var": {
+          "description": "Variable receiving the result.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "TextReplace": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "The text (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "find": {
+          "description": "Text to look for (a regular expression when `regex` is true).",
+          "type": "string",
+          "default": ""
+        },
+        "replace_with": {
+          "description": "Replacement. With regex, $1 / ${name} insert captured groups.",
+          "type": "string",
+          "default": ""
+        },
+        "regex": {
+          "description": "Treat `find` as a regular expression.",
+          "type": "boolean",
+          "default": false
+        },
+        "ignore_case": {
+          "description": "Match regardless of upper/lower case.",
+          "type": "boolean",
+          "default": false
+        },
+        "output_var": {
+          "description": "Variable receiving the result.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "TextExtract": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "The text to search (interpolated), e.g. \"${pdf_text}\".",
+          "type": "string",
+          "default": ""
+        },
+        "pattern": {
+          "description": "Regular expression, e.g. \"Invoice No[.:]\\\\s*(\\\\S+)\" or \"\\\\d{2}[A-Z]{5}\\\\d{4}[A-Z]\\\\d[Z][A-Z\\\\d]\" (GSTIN).",
+          "type": "string",
+          "default": ""
+        },
+        "group": {
+          "description": "Capture group to return: 0 = the whole match, 1 = the first ( ) group...",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "all": {
+          "description": "Return every match as a list instead of the first one.",
+          "type": "boolean",
+          "default": false
+        },
+        "ignore_case": {
+          "description": "Match regardless of upper/lower case.",
+          "type": "boolean",
+          "default": false
+        },
+        "output_var": {
+          "description": "Variable receiving the match (\"\" when nothing matches) or the list of matches.",
+          "type": "string",
+          "default": "match"
+        },
+        "found_var": {
+          "description": "Variable receiving \"true\"/\"false\": was anything found? (optional)",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "TextSplit": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "The text to split (interpolated).",
+          "type": "string",
+          "default": ""
+        },
+        "separator": {
+          "description": "Separator, e.g. \",\" or \"\\n\" for lines or \"\\t\" for tabs (a regular expression when `regex` is true).",
+          "type": "string",
+          "default": ","
+        },
+        "regex": {
+          "description": "Treat `separator` as a regular expression, e.g. \"[,;]\\\\s*\".",
+          "type": "boolean",
+          "default": false
+        },
+        "trim": {
+          "description": "Trim spaces around each part.",
+          "type": "boolean",
+          "default": true
+        },
+        "skip_empty": {
+          "description": "Leave out empty parts.",
+          "type": "boolean",
+          "default": true
+        },
+        "output_var": {
+          "description": "Variable receiving the list of parts.",
+          "type": "string",
+          "default": "parts"
+        }
+      }
+    },
+    "TextJoin": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "description": "The list to join, e.g. \"${names}\".",
+          "default": ""
+        },
+        "separator": {
+          "description": "Put between the items, e.g. \", \" or \"\\n\".",
+          "type": "string",
+          "default": ", "
+        },
+        "output_var": {
+          "description": "Variable receiving the text.",
+          "type": "string",
+          "default": "text"
+        }
+      }
+    },
+    "DateOperation": {
+      "oneOf": [
+        {
+          "description": "Re-write the date in `format`.",
+          "type": "string",
+          "const": "format"
+        },
+        {
+          "description": "Add `amount` `unit`s (negative to subtract), then format.",
+          "type": "string",
+          "const": "add"
+        },
+        {
+          "description": "Whole `unit`s from `date` to `other_date` (a number).",
+          "type": "string",
+          "const": "diff"
+        },
+        {
+          "description": "An object with year, month, day, hour, minute, second, weekday (1 = Monday), weekday_name, month_name, day_of_year.",
+          "type": "string",
+          "const": "parts"
+        }
+      ]
+    },
+    "DateCalc": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "description": "format, add, diff or parts.",
+          "$ref": "#/$defs/DateOperation",
+          "default": "format"
+        },
+        "date": {
+          "description": "The date (interpolated); empty = now, \"today\" = today 00:00. Excel date numbers work too.",
+          "type": "string",
+          "default": ""
+        },
+        "input_format": {
+          "description": "How `date` is written, e.g. dd/MM/yyyy (empty = recognise common formats, day first).",
+          "type": "string",
+          "default": ""
+        },
+        "amount": {
+          "description": "add: how many units (negative to go back).",
+          "$ref": "#/$defs/Int",
+          "default": 0
+        },
+        "unit": {
+          "description": "add / diff: seconds, minutes, hours, days, weeks, months or years.",
+          "type": "string",
+          "default": "days"
+        },
+        "other_date": {
+          "description": "diff: the later date (empty = now).",
+          "type": "string",
+          "default": ""
+        },
+        "format": {
+          "description": "Output format (tokens as in ${now:...}): yyyy MM dd HH hh mm ss tt MMM dddd.",
+          "type": "string",
+          "default": "dd-MM-yyyy"
+        },
+        "output_var": {
+          "description": "Variable receiving the result.",
+          "type": "string",
+          "default": "date"
+        }
+      }
+    },
+    "Calculate": {
+      "type": "object",
+      "properties": {
+        "expression": {
+          "description": "Expression (interpolated), e.g. \"${amount} * 18 / 100\". Supports + - * / % ^ ( ),\ncomparisons (result 1 or 0) and round(x), round(0.01, x), int, floor, ceil, abs, min, max, sqrt.",
+          "type": "string",
+          "default": ""
+        },
+        "decimals": {
+          "description": "Round the result to this many decimal places (empty = no rounding).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "default": null
+        },
+        "output_var": {
+          "description": "Variable receiving the number.",
+          "type": "string",
+          "default": "result"
+        }
+      }
+    },
+    "DbQuery": {
+      "description": "Where the data is. See the db_query description for connection examples.",
+      "type": "object",
+      "properties": {
+        "connection": {
+          "description": "A SQLite file (sqlite:data/app.db, or a path ending in .db) or an ODBC connection string, e.g.\nDSN=TallyODBC64_9000 or Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes.\nWrite {password} where the password goes; it is taken from password_secret.",
+          "type": "string",
+          "default": ""
+        },
+        "password_secret": {
+          "description": "Name of the database password stored with `autoflow secret set NAME` (replaces {password}).",
+          "type": "string",
+          "default": ""
+        },
+        "sql": {
+          "description": "SELECT statement. Use ? for values and list them in params, e.g. \"SELECT * FROM Ledger WHERE Parent = ?\".",
+          "type": "string",
+          "default": ""
+        },
+        "params": {
+          "description": "Values for the ? placeholders, in order (interpolated), e.g. [\"${group}\"].",
+          "type": "array",
+          "items": true,
+          "default": []
+        },
+        "max_rows": {
+          "description": "Return at most this many rows (0 = all).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "output_var": {
+          "description": "Variable receiving the rows as a list of records {column: value}.",
+          "type": "string",
+          "default": "rows"
+        },
+        "count_var": {
+          "description": "Variable receiving the number of rows (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "DbExecute": {
+      "description": "Where the data is. See the db_query description for connection examples.",
+      "type": "object",
+      "properties": {
+        "connection": {
+          "description": "A SQLite file (sqlite:data/app.db, or a path ending in .db) or an ODBC connection string, e.g.\nDSN=TallyODBC64_9000 or Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes.\nWrite {password} where the password goes; it is taken from password_secret.",
+          "type": "string",
+          "default": ""
+        },
+        "password_secret": {
+          "description": "Name of the database password stored with `autoflow secret set NAME` (replaces {password}).",
+          "type": "string",
+          "default": ""
+        },
+        "sql": {
+          "description": "INSERT / UPDATE / DELETE / CREATE statement with ? placeholders, e.g.\n\"INSERT INTO Labels (Comment, Label) VALUES (?, ?)\". Without params, SQLite runs a whole script.",
+          "type": "string",
+          "default": ""
+        },
+        "params": {
+          "description": "Values for the ? placeholders, in order (interpolated), e.g. [\"${row.Comment}\", \"${label}\"].",
+          "type": "array",
+          "items": true,
+          "default": []
+        },
+        "affected_var": {
+          "description": "Variable receiving the number of rows changed (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "HttpRequest": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "GET, POST, PUT, PATCH, DELETE or HEAD.",
+          "type": "string",
+          "default": "GET"
+        },
+        "url": {
+          "description": "Address (interpolated), e.g. https://api.example.com/items?q=${query}.",
+          "type": "string",
+          "default": ""
+        },
+        "headers": {
+          "description": "Extra request headers, e.g. {\"Accept\": \"application/json\"} (values are interpolated).",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "body": {
+          "description": "Request body. A string is sent as-is; an object or list is sent as JSON.",
+          "default": ""
+        },
+        "bearer_secret": {
+          "description": "Name of a token stored with `autoflow secret set NAME`, sent as \"Authorization: Bearer <token>\" (optional).",
+          "type": "string",
+          "default": ""
+        },
+        "save_to": {
+          "description": "Save the response body to this file (for downloads); output_var then receives the path.",
+          "type": "string",
+          "default": ""
+        },
+        "fail_on_error_status": {
+          "description": "Fail the step when the server answers with an error status (400 and above).",
+          "type": "boolean",
+          "default": true
+        },
+        "parse_json": {
+          "description": "Store a JSON response as an object/list (so ${response.field} works) instead of text.",
+          "type": "boolean",
+          "default": true
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the whole request, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 60000
+        },
+        "output_var": {
+          "description": "Variable receiving the response body.",
+          "type": "string",
+          "default": "response"
+        },
+        "status_var": {
+          "description": "Variable receiving the HTTP status code (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "AiPrompt": {
+      "description": "Send one prompt to a language model and store its reply.",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "description": "lmstudio (local, default), ollama (local), openai_compatible, openai, gemini or anthropic.",
+          "type": "string",
+          "default": "lmstudio"
+        },
+        "model": {
+          "description": "Model name. Empty = the model loaded in LM Studio/Ollama, or a default for cloud providers.",
+          "type": "string",
+          "default": ""
+        },
+        "base_url": {
+          "description": "Server address; empty = the provider's default (LM Studio: http://localhost:1234/v1).",
+          "type": "string",
+          "default": ""
+        },
+        "api_key_secret": {
+          "description": "Name of the API key stored with `autoflow secret set NAME` (not needed for local servers).",
+          "type": "string",
+          "default": ""
+        },
+        "system": {
+          "description": "Instructions for the model (interpolated), e.g. \"You classify customer comments.\"",
+          "type": "string",
+          "default": ""
+        },
+        "prompt": {
+          "description": "The prompt (interpolated), e.g. \"Classify this comment: ${row.Comment}\".",
+          "type": "string",
+          "default": ""
+        },
+        "labels": {
+          "description": "Allowed answers, e.g. [\"Fav\", \"UnFav\", \"Neutral\"]. The model is told to reply with one,\nand the stored value is always exactly one of them (the step fails otherwise).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "json": {
+          "description": "Ask for JSON and store the parsed object (so ${reply.field} works).",
+          "type": "boolean",
+          "default": false
+        },
+        "temperature": {
+          "description": "Randomness, 0 = most predictable (empty = provider default; ignored by Claude).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "max_tokens": {
+          "description": "Longest reply, in tokens (thinking models need room to think).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 4096
+        },
+        "timeout_ms": {
+          "description": "How long to wait for the reply, in ms.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 120000
+        },
+        "output_var": {
+          "description": "Variable receiving the reply (or the label / parsed JSON).",
+          "type": "string",
+          "default": "reply"
         }
       }
     },
@@ -2867,6 +3758,261 @@
         }
       }
     },
+    "OcrRead": {
+      "description": "Where OCR reads from: an image file, a window, a screen region or a monitor.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "description": "Read this picture file (PNG/JPG/BMP) instead of the screen.",
+          "type": "string",
+          "default": ""
+        },
+        "window": {
+          "description": "Read this window (part of its title), e.g. \"Tally\" or \"Notepad\".",
+          "type": "string",
+          "default": ""
+        },
+        "region": {
+          "description": "Read only this screen rectangle {x, y, width, height}; null = whole window / monitor.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "monitor": {
+          "description": "Monitor to read when no window or region is given (0 = primary).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "language": {
+          "description": "Language tag such as en-US or hi (empty = the Windows display languages).",
+          "type": "string",
+          "default": ""
+        },
+        "scale": {
+          "description": "Enlarge the picture before reading; 2 helps with small screen fonts.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0
+        },
+        "output_var": {
+          "description": "Variable receiving the recognised text (one line per text line).",
+          "type": "string",
+          "default": "ocr_text"
+        },
+        "lines_var": {
+          "description": "Variable receiving the list of lines (optional).",
+          "type": "string",
+          "default": ""
+        },
+        "words_var": {
+          "description": "Variable receiving every word with its screen position: {text, x, y, width, height, center_x, center_y} (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "OcrFind": {
+      "description": "Where OCR reads from: an image file, a window, a screen region or a monitor.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "description": "Read this picture file (PNG/JPG/BMP) instead of the screen.",
+          "type": "string",
+          "default": ""
+        },
+        "window": {
+          "description": "Read this window (part of its title), e.g. \"Tally\" or \"Notepad\".",
+          "type": "string",
+          "default": ""
+        },
+        "region": {
+          "description": "Read only this screen rectangle {x, y, width, height}; null = whole window / monitor.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "monitor": {
+          "description": "Monitor to read when no window or region is given (0 = primary).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "language": {
+          "description": "Language tag such as en-US or hi (empty = the Windows display languages).",
+          "type": "string",
+          "default": ""
+        },
+        "scale": {
+          "description": "Enlarge the picture before reading; 2 helps with small screen fonts.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0
+        },
+        "text": {
+          "description": "Text to look for (interpolated); may be several words, e.g. \"Save As\".",
+          "type": "string",
+          "default": ""
+        },
+        "ignore_case": {
+          "description": "Match regardless of upper/lower case.",
+          "type": "boolean",
+          "default": true
+        },
+        "occurrence": {
+          "description": "Which match to use when the text appears more than once (1 = first, top to bottom).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        },
+        "timeout_ms": {
+          "description": "Keep looking for up to this many ms (the screen may still be changing).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5000
+        },
+        "found_var": {
+          "description": "Variable receiving \"true\"/\"false\" (ocr_find never fails when the text is missing).",
+          "type": "string",
+          "default": "found"
+        },
+        "x_var": {
+          "description": "Variable receiving the centre X of the text on screen.",
+          "type": "string",
+          "default": ""
+        },
+        "y_var": {
+          "description": "Variable receiving the centre Y of the text on screen.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "OcrClick": {
+      "description": "Where OCR reads from: an image file, a window, a screen region or a monitor.",
+      "type": "object",
+      "properties": {
+        "image": {
+          "description": "Read this picture file (PNG/JPG/BMP) instead of the screen.",
+          "type": "string",
+          "default": ""
+        },
+        "window": {
+          "description": "Read this window (part of its title), e.g. \"Tally\" or \"Notepad\".",
+          "type": "string",
+          "default": ""
+        },
+        "region": {
+          "description": "Read only this screen rectangle {x, y, width, height}; null = whole window / monitor.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Region"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "monitor": {
+          "description": "Monitor to read when no window or region is given (0 = primary).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "language": {
+          "description": "Language tag such as en-US or hi (empty = the Windows display languages).",
+          "type": "string",
+          "default": ""
+        },
+        "scale": {
+          "description": "Enlarge the picture before reading; 2 helps with small screen fonts.",
+          "type": "number",
+          "format": "float",
+          "default": 2.0
+        },
+        "text": {
+          "description": "Text to look for (interpolated); may be several words, e.g. \"Save As\".",
+          "type": "string",
+          "default": ""
+        },
+        "ignore_case": {
+          "description": "Match regardless of upper/lower case.",
+          "type": "boolean",
+          "default": true
+        },
+        "occurrence": {
+          "description": "Which match to use when the text appears more than once (1 = first, top to bottom).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        },
+        "timeout_ms": {
+          "description": "Keep looking for up to this many ms (the screen may still be changing).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0,
+          "default": 5000
+        },
+        "found_var": {
+          "description": "Variable receiving \"true\"/\"false\" (ocr_find never fails when the text is missing).",
+          "type": "string",
+          "default": "found"
+        },
+        "x_var": {
+          "description": "Variable receiving the centre X of the text on screen.",
+          "type": "string",
+          "default": ""
+        },
+        "y_var": {
+          "description": "Variable receiving the centre Y of the text on screen.",
+          "type": "string",
+          "default": ""
+        },
+        "offset_x": {
+          "description": "Click this many pixels right of the text centre (negative = left), e.g. into the box next to a label.",
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "offset_y": {
+          "description": "Click this many pixels below the text centre (negative = above).",
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "button": {
+          "description": "left, right or middle.",
+          "$ref": "#/$defs/MouseButton",
+          "default": "left"
+        },
+        "clicks": {
+          "description": "1 = single, 2 = double click.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 1
+        }
+      }
+    },
     "BrowserOpen": {
       "type": "object",
       "properties": {
@@ -3247,6 +4393,185 @@
         },
         "account": {
           "description": "Send from this Outlook account (its e-mail address); empty = the default account.",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "ReadEmail": {
+      "description": "Read e-mail from an IMAP mailbox (Gmail, Zoho, Yahoo, any IMAP server).",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "description": "gmail, outlook365, yahoo, zoho, zoho.in, or custom (then set imap_host).",
+          "type": "string",
+          "default": "gmail"
+        },
+        "imap_host": {
+          "description": "IMAP server; empty = the provider's.",
+          "type": "string",
+          "default": ""
+        },
+        "imap_port": {
+          "description": "IMAP port (0 = 993, TLS).",
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0,
+          "maximum": 65535,
+          "default": 0
+        },
+        "username": {
+          "description": "Mailbox login, usually the e-mail address.",
+          "type": "string",
+          "default": ""
+        },
+        "password_secret": {
+          "description": "Name of the password stored with `autoflow secret set NAME` (Gmail: an App Password).",
+          "type": "string",
+          "default": ""
+        },
+        "folder": {
+          "description": "Folder to read, e.g. INBOX (IMAP) or Inbox/Invoices (Outlook).",
+          "type": "string",
+          "default": ""
+        },
+        "unread_only": {
+          "description": "Only messages not read yet.",
+          "type": "boolean",
+          "default": true
+        },
+        "from": {
+          "description": "Only messages from this sender (address or part of it).",
+          "type": "string",
+          "default": ""
+        },
+        "subject_contains": {
+          "description": "Only messages whose subject contains this text.",
+          "type": "string",
+          "default": ""
+        },
+        "since": {
+          "description": "Only messages received on or after this date (e.g. 01-11-2026, \"today\"; empty = any date).",
+          "type": "string",
+          "default": ""
+        },
+        "max": {
+          "description": "Read at most this many messages.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 20
+        },
+        "newest_first": {
+          "description": "Newest messages first.",
+          "type": "boolean",
+          "default": true
+        },
+        "mark_read": {
+          "description": "Mark the messages read afterwards.",
+          "type": "boolean",
+          "default": false
+        },
+        "move_to": {
+          "description": "Move the messages to this folder afterwards (e.g. Processed); empty = leave them.",
+          "type": "string",
+          "default": ""
+        },
+        "save_attachments_to": {
+          "description": "Save attachments into this folder (empty = only list their names).",
+          "type": "string",
+          "default": ""
+        },
+        "attachment_filter": {
+          "description": "Only attachments matching this pattern, e.g. *.pdf or *.xlsx.",
+          "type": "string",
+          "default": ""
+        },
+        "output_var": {
+          "description": "Variable receiving the list of messages:\n{from, from_name, to, subject, date, body, attachments (saved paths), attachment_names}.",
+          "type": "string",
+          "default": "emails"
+        },
+        "count_var": {
+          "description": "Variable receiving how many messages were read (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "OutlookRead": {
+      "description": "Read e-mail from a folder of the Outlook desktop app (classic Outlook).",
+      "type": "object",
+      "properties": {
+        "account": {
+          "description": "Outlook account / mailbox name to read (empty = the default one).",
+          "type": "string",
+          "default": ""
+        },
+        "folder": {
+          "description": "Folder to read, e.g. INBOX (IMAP) or Inbox/Invoices (Outlook).",
+          "type": "string",
+          "default": ""
+        },
+        "unread_only": {
+          "description": "Only messages not read yet.",
+          "type": "boolean",
+          "default": true
+        },
+        "from": {
+          "description": "Only messages from this sender (address or part of it).",
+          "type": "string",
+          "default": ""
+        },
+        "subject_contains": {
+          "description": "Only messages whose subject contains this text.",
+          "type": "string",
+          "default": ""
+        },
+        "since": {
+          "description": "Only messages received on or after this date (e.g. 01-11-2026, \"today\"; empty = any date).",
+          "type": "string",
+          "default": ""
+        },
+        "max": {
+          "description": "Read at most this many messages.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 20
+        },
+        "newest_first": {
+          "description": "Newest messages first.",
+          "type": "boolean",
+          "default": true
+        },
+        "mark_read": {
+          "description": "Mark the messages read afterwards.",
+          "type": "boolean",
+          "default": false
+        },
+        "move_to": {
+          "description": "Move the messages to this folder afterwards (e.g. Processed); empty = leave them.",
+          "type": "string",
+          "default": ""
+        },
+        "save_attachments_to": {
+          "description": "Save attachments into this folder (empty = only list their names).",
+          "type": "string",
+          "default": ""
+        },
+        "attachment_filter": {
+          "description": "Only attachments matching this pattern, e.g. *.pdf or *.xlsx.",
+          "type": "string",
+          "default": ""
+        },
+        "output_var": {
+          "description": "Variable receiving the list of messages:\n{from, from_name, to, subject, date, body, attachments (saved paths), attachment_names}.",
+          "type": "string",
+          "default": "emails"
+        },
+        "count_var": {
+          "description": "Variable receiving how many messages were read (optional).",
           "type": "string",
           "default": ""
         }

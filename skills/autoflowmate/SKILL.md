@@ -1,6 +1,6 @@
 ---
 name: autoflowmate
-description: Automate Windows desktop and web tasks (files, programs, windows, mouse, keyboard, UI elements, web pages by element id, image recognition, dialogs, clipboard, screenshots) by writing AutoFlowMate flow JSON and running it with the `autoflow` CLI — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image on screen, organise files, or edit/debug an existing AutoFlowMate `.json` flow.
+description: Automate Windows desktop and web tasks (files, programs, windows, mouse, keyboard, UI elements, web pages by element id, image recognition, on-screen text via OCR, dialogs, clipboard, screenshots), data work (Excel/CSV/PDF in, CSV/Excel out, SQLite and ODBC databases, text/date/maths helpers), e-mail (send, read and save attachments), web APIs and AI models (LM Studio, Ollama, OpenAI, Gemini, Claude — e.g. classify comments) by writing AutoFlowMate flow JSON and running it with the `autoflow` CLI — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image or text on screen, process files, mail or database rows in bulk, or edit/debug an existing AutoFlowMate `.json` flow.
 ---
 
 # AutoFlowMate (Windows RPA)
@@ -22,7 +22,8 @@ AutoFlowMate runs **flows**: JSON files listing steps such as `file_copy`, `wind
 | `autoflow mouse [--once]` | Live mouse X/Y and pixel colour (PyAutoGUI displayMousePosition) |
 | `autoflow locate image.png [--confidence 0.9] [--all]` | Test whether an image is found on screen right now |
 | `autoflow web-pick <url>` | Open a page, Ctrl+click an element, get its `element_id` / `selector` |
-| `autoflow secret set NAME` / `check NAME` / `delete NAME` | Store a password (hidden prompt) in Windows Credential Manager for `send_email` |
+| `autoflow ocr [--window T] [--image P] [--find TEXT]` | What Windows OCR reads on screen / in a window / in a picture (to test `ocr_*`); `--languages` lists OCR languages |
+| `autoflow secret set NAME` / `check NAME` / `delete NAME` | Store a password or API key (hidden prompt) in Windows Credential Manager (`password_secret`, `api_key_secret`, `bearer_secret`) |
 | `autoflow schedule add flow.json --when "daily 09:00"` | Run a flow automatically (Windows Task Scheduler) |
 | `autoflow schedule list` / `run NAME` / `remove NAME` | See next/last run and result, start now, delete |
 | `autoflow run flow.json --log run.log` | Also append a timestamped log of the run |
@@ -49,7 +50,9 @@ action for the first time. Never invent fields: unknown fields are ignored (vali
    fails in a dry run — that is expected, not a bug to fix.
 6. `autoflow run flow.json --json` → read the `step_finished` events (`ok`, `error`, `millis`)
    and the final `result` event (`success`, `message`, `variables`). Fix and repeat.
-7. Hand the user the file; they can open it in AutoFlowMate Studio to view/edit/run.
+7. Hand the user the file; they can open it in AutoFlowMate Studio to view/edit/run. Studio has
+   undo/redo, breakpoints (F9 on a step) and step-by-step running (F10) that shows every
+   variable's value before each step — suggest it when the user wants to see what a flow does.
 
 ## Flow format
 
@@ -128,11 +131,14 @@ trigger slow screens.
 - `repeat` (`times`, `index_var`), `while` (`condition`, `max_iterations`), `for_each`
   (`items`, `item_var`, `index_var`) with a `steps` list. `break` leaves the innermost loop.
 - `stop` ends the flow (`success` true/false). `run_flow` runs another flow file.
+- `try` runs `steps`; on failure it runs `catch` (message in `${error}`) and carries on;
+  `finally` always runs. See *Error handling* below.
 - Conditions: `{ "left": "${x}", "op": "...", "right": "..." , "ignore_case": false }`.
   Ops: equals, not_equals, contains, not_contains, starts_with, ends_with, greater_than,
   less_than, greater_or_equal, less_or_equal (numeric when both sides are numbers),
   is_empty, not_empty, is_true, is_false, path_exists, matches (wildcards `*` `?`).
-- Arithmetic: only `increment` (`name`, `by`). Use counters for loops.
+- Arithmetic: `calculate` (`expression`, `decimals`); `increment` for counters. Dates:
+  `date_calc`. Text: `text_*`. See *Text, dates and maths* below.
 
 ## Recipe: a numbered list of keystrokes → a flow
 
@@ -314,7 +320,10 @@ Prefer, in this order (most robust first):
    canvases). `image` is a PNG of the target (the user snips it with Win+Shift+S or Studio's
    "📷 Snip image"); `confidence` 0.9 is a good start; give a `region` to speed it up. Verify with
    `autoflow locate img.png`. `pixel_get` / `pixel_matches` check a single colour.
-5. **Mouse coordinates** (`mouse_click` x/y, `mouse_move` with `duration_ms`/`tween`,
+5. **On-screen text (OCR)** (`ocr_click`, `ocr_find`, `ocr_read`) when there are no controls
+   but the target has a visible label: survives theme/zoom changes better than images. See
+   *Reading text on screen* below.
+6. **Mouse coordinates** (`mouse_click` x/y, `mouse_move` with `duration_ms`/`tween`,
    `mouse_drag`, `mouse_down`/`mouse_up`) — last resort; breaks when windows move or DPI changes.
    Use `window_set_state` maximized first to stabilise layouts. `screen_size` gives the resolution.
 
@@ -342,6 +351,134 @@ data** shows the result.
   "column": "GSTIN", "output_var": "gstins", "count_var": "n" },
 { "id": "each", "action": "for_each", "items": "${gstins}", "item_var": "gstin", "steps": [ … ] }
 ```
+
+### Writing CSV and Excel files
+
+Collect results in a list with **`list_append`** (`name` = list variable, `value` = a record such
+as `{"Comment": "${row.Comment}", "Label": "${label}"}`; the list is created on first use), then
+write it out:
+
+- **`write_csv`** (`path`, `data: "${results}"`, optional `columns` order, `delimiter` `,` `;`
+  `\t`, `append`, `excel_bom` true so Excel shows non-English text). Quoting is handled.
+- **`write_excel`** (`path` .xlsx, `sheet`, `data`, `columns`): creates/replaces the workbook
+  with a bold, frozen header row and fitted columns. Numbers stay numbers; text starting with
+  `=` becomes a formula. It cannot add to an existing workbook: write a new file each run
+  (e.g. with `${now:yyyyMMdd}` in the name) or use `write_csv` with `append: true`.
+
+`data` can be a list of records (one column per key), a list of lists, or a list of values.
+
+### Text, dates and maths
+
+| Action | Use |
+|---|---|
+| `text_transform` | `operation` trim / upper / lower / title / length / url_encode / remove_spaces |
+| `text_replace` | `find` → `replace_with`; `regex: true` for patterns (`$1` inserts a group), `ignore_case` |
+| `text_extract` | regular expression `pattern`; `group` 1 = first `( )`; `all: true` → list; `found_var` |
+| `text_split` / `text_join` | text ↔ list (`separator` `,`, `\n` lines, `\t`; `regex` splits on a pattern) |
+| `date_calc` | `operation` format / add / diff / parts. `date` empty = now, `today`, Excel serials; `input_format` like `dd/MM/yyyy` (empty = common formats, **day first**); `unit` days, months, years…; `format` output pattern |
+| `calculate` | `expression` such as `"${amount} * 18 / 100"`, `decimals` rounding. `+ - * / % ^ ( )`, comparisons give 1/0, functions `round`, `int`, `floor`, `ceil`, `abs`, `min`, `max`, `sqrt`. Division is decimal (7/2 = 3.5) |
+
+Remove thousands separators before calculating (`text_replace` `,` → ``). Regex patterns in JSON
+need doubled backslashes: `"\\d+"`. Example: pull an invoice number from PDF text with
+`"pattern": "Invoice\\s*No[.:]?\\s*(\\S+)", "group": 1`.
+
+### Error handling: try / catch / finally
+
+```json
+{ "id": "safe", "action": "try",
+  "steps":   [ { "id": "pdf", "action": "read_pdf", "path": "${file}", "output_var": "text" } ],
+  "catch":   [ { "id": "warn", "action": "log", "level": "warn", "message": "skipped ${file}: ${error}" } ],
+  "finally": [ { "id": "tidy", "action": "browser_close" } ] }
+```
+
+When a step inside `steps` fails, the rest of `steps` is skipped, the message goes to
+`error_var` (default `error`) and `catch` runs; the flow then continues after the `try`. `finally`
+always runs (success, failure, `break` or `stop`). Use it inside `for_each` so one bad item does not
+stop the batch; use `on_error: continue` for a single optional step. Stopping the run (fail-safe,
+Stop button) is never caught.
+
+### AI models (ai_prompt)
+
+`ai_prompt` sends one prompt and stores the reply. Providers:
+
+| `provider` | Needs | Notes |
+|---|---|---|
+| `lmstudio` (default) | LM Studio's local server running with a model loaded (Developer tab → Start Server, port 1234) | Data stays on the PC; `model` empty = the loaded model |
+| `ollama` | Ollama running (port 11434) and `model` | local |
+| `openai_compatible` | `base_url` (e.g. `http://localhost:8000/v1`) | vLLM, LocalAI, Groq, OpenRouter… |
+| `openai` | `api_key_secret` | default model `gpt-4.1-mini` |
+| `gemini` | `api_key_secret` | default model `gemini-2.5-flash` |
+| `anthropic` | `api_key_secret` | Claude; default model `claude-opus-5-5` |
+
+- `system` = instructions, `prompt` = the text with `${variables}`.
+- **`labels`** (e.g. `["Fav", "UnFav", "Neutral"]`) tells the model to answer with one label and
+  guarantees the stored value is exactly one of them; an answer matching none fails the step
+  (add `retries`, and `on_error: continue` for batches).
+- `json: true` asks for JSON and stores the parsed object (`${reply.sentiment}`).
+- `temperature` (0 = predictable; not sent to Claude), `max_tokens` (default 4096; thinking models
+  need room), `timeout_ms`.
+- API keys: the user runs `autoflow secret set openai` once (or 🔑 Set key… in Studio) and the flow
+  says `"api_key_secret": "openai"`. Never put a key in the flow.
+- **Privacy:** cloud providers receive the text. Before sending customer or financial data to
+  OpenAI/Gemini/Claude, confirm with the user; suggest `lmstudio` to keep data on the PC.
+- For a batch, check once that a local server is up (see `classify_comments.json`: an
+  `http_request` to `http://localhost:1234/v1/models` with `status_var`, then `stop` with a clear
+  message) instead of failing every row.
+
+### Web APIs (http_request)
+
+`http_request`: `method`, `url`, `headers` (object), `body` (a string is sent as-is; an object is
+sent as JSON), `bearer_secret` (token from Credential Manager → `Authorization: Bearer …`),
+`save_to` (download a file), `output_var` (JSON responses become objects: `${response.items.0.name}`),
+`status_var`, `fail_on_error_status` (default true), `timeout_ms`. In a dry run only GET/HEAD
+requests that don't save a file are made.
+
+### Reading e-mail
+
+- **`read_email`** (IMAP): `provider` gmail / outlook365 / yahoo / zoho / zoho.in, or `imap_host`
+  + `imap_port`; `username`; `password_secret` (Gmail: enable IMAP and use an App Password).
+  Microsoft 365 mailboxes usually block password logins: use `outlook_read` for them.
+- **`outlook_read`**: the classic Outlook desktop app, no password; `account` picks a mailbox;
+  `folder` like `Inbox` or `Inbox/Invoices`.
+
+Both filter with `unread_only` (default true), `from`, `subject_contains`, `since` (a date),
+`max`, `newest_first`; afterwards `mark_read` and/or `move_to` a folder. `save_attachments_to` a
+folder (existing files are not overwritten: `name (2).pdf`) with `attachment_filter` like `*.pdf`.
+`output_var` gets a list of records `{from, from_name, to, subject, date, body, attachments
+(saved paths), attachment_names}`; loop over them, then over `${mail.attachments}`. Reading
+doesn't mark mail as read unless `mark_read` is set.
+
+### Databases (db_query, db_execute)
+
+`connection` is a SQLite file (`sqlite:output/app.db` or a path ending in `.db`; created when
+missing) or an ODBC connection string: `DSN=MyDsn`,
+`Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes`,
+`Driver={Microsoft Excel Driver (*.xls, *.xlsx, *.xlsm, *.xlsb)};DBQ=C:\\data\\book.xlsx;ReadOnly=1`
+(sheets are tables: ``[Sheet1$]``), MS Access, MySQL, PostgreSQL, or **TallyPrime's ODBC server**
+(enable ODBC in Tally, then `DSN=TallyODBC64_9000`). The user lists drivers with
+`Get-OdbcDriver` in PowerShell. A password goes in as `PWD={password}` with `password_secret`.
+
+- **Always pass values with `?` and `params`** (`"sql": "INSERT INTO t VALUES (?, ?)"`,
+  `"params": ["${row.Name}", "${amount}"]`), never `${…}` inside the SQL — validate warns, and
+  checks that the number of `?` matches `params`.
+- `db_query` → `output_var` list of records (numbers typed), `count_var`, `max_rows`.
+- `db_execute` → `affected_var`. Without params, SQLite runs a whole script (`CREATE …; INSERT …;`).
+- The connection is opened once and reused by later steps with the same `connection`.
+
+### Reading text on screen (OCR)
+
+`ocr_read`, `ocr_find`, `ocr_click` use the OCR engine built into Windows (offline, no install).
+Source: `window` (title part), `region` {x, y, width, height}, `monitor`, or `image` (a picture file;
+not for `ocr_click`). `scale` 2 (default) helps with small fonts; `language` like `en-US` (the PC's
+Windows languages; `autoflow ocr --languages` lists them).
+
+- `ocr_read` → `output_var` text (lines), `lines_var`, `words_var` (each word with screen x/y).
+- `ocr_find` → `found_var` / `x_var` / `y_var` for some `text` (may be several words); waits up to
+  `timeout_ms`; never fails.
+- `ocr_click` clicks the text (`offset_x`/`offset_y` to click the box beside a label), e.g. menu
+  items in Tally or a remote desktop where UI Automation sees nothing.
+- Test first: `autoflow ocr --window "Tally" --find "Balance Sheet"`. OCR confuses look-alikes
+  (`1`/`I`, `0`/`O`): match on words, and don't use OCR output as exact codes without checking.
 
 ### Sending e-mail
 
@@ -474,8 +611,12 @@ autoflow schedule add C:\flows\tally_export.json --when "weekdays 18:30" --name 
   disable these unless the user asks; never move the mouse into a corner on purpose.
 - Use `--dry-run` before running anything that deletes, moves, kills programs or types.
 - `file_delete` accepts wildcards: double-check the path; prefer `missing_ok` over broad patterns.
-- Never put passwords or secrets in flow files; ask the user to type them or pass them at run
-  time with `--var` from their own secure source.
+- Never put passwords, API keys or tokens in flow files. Store them with `autoflow secret set NAME`
+  and refer to the name (`password_secret`, `api_key_secret`, `bearer_secret`, `PWD={password}`).
+- Sending data to a cloud AI provider or web API shares it with that company: confirm with the
+  user first when it is customer, personal or financial data.
+- `db_execute` changes databases: test against a copy or with `--dry-run`, and use `WHERE`
+  carefully. `read_email` with `move_to` / `mark_read` changes the mailbox.
 - Keyboard/mouse steps act on whatever has focus; tell the user not to use the PC while a
   desktop flow runs.
 
@@ -491,6 +632,12 @@ autoflow schedule add C:\flows\tally_export.json --when "weekdays 18:30" --name 
 | Run aborted with "fail-safe triggered" | The mouse touched a corner; keep coordinates away from corners |
 | Shortcut did nothing | Add `wait` 300–500 ms before it; the app may still be loading |
 | `variable ... is never set` warning | Define it in `variables` or pass `--var` |
+| `unknown variable` while running | A `${x}` was used before any step set it (e.g. inside `if` after a failed step): declare it in `variables` with a default |
+| `cannot reach the local AI server` | Start LM Studio's server (Developer tab) and load a model, or set `provider` |
+| `the model replied ..., which is none of the labels` | Make the `system` text clearer, add `retries`, or add a label such as `Unknown` |
+| IMAP `login failed` | Gmail: enable IMAP, use an App Password stored with `autoflow secret set`; Microsoft 365: use `outlook_read` |
+| `SQL error` / placeholder count error | One `?` per value in `params`; quote table names with spaces like `[Sheet1$]` |
+| OCR text `not found` | `autoflow ocr --window ...` to see what it reads; maximise the window; raise `scale` to 3; match fewer words |
 
 ## Examples
 
@@ -520,6 +667,18 @@ verify it, screenshot the page and one element.
 
 `data_import_demo.json`: one Excel column as a list, a CSV as records in a loop, a second sheet
 by name, and PDF text checked with `contains` (files in `examples/data/`).
+
+`classify_comments.json`: read customer comments from `data/customer_comments.xlsx`, label each
+Fav/UnFav/Neutral with `ai_prompt` (LM Studio by default, `labels`), collect with `list_append`
+and save as CSV and Excel; checks first that the local AI server is running.
+
+`gst_invoice_register.json` (runs offline): GSTINs from a PDF via `text_extract`, GST maths with
+`calculate` (CGST+SGST or IGST by state code), due dates with `date_calc`, SQLite with
+`db_execute`/`db_query`, an Excel register, all inside `try`/`finally`.
+
+`invoice_inbox.json`: unread "Invoice" mails from Gmail (`read_email`) or Outlook
+(`outlook_read`), PDF attachments saved, invoice number and amount extracted from each PDF,
+stored in SQLite and an Excel sheet; each PDF in its own `try`.
 
 `gst_search.json`: read the GSTINs from `data/gstins.xlsx`, then for each GSTIN open the GST "Search Taxpayer" page, type the
 GSTIN, show the CAPTCHA picture to the user in an `input_box` (up to 3 attempts), search, wait

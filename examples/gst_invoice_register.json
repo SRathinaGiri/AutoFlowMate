@@ -1,0 +1,77 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "GST invoice register (text, dates, maths, SQLite)",
+  "description": "Runs offline. Reads the GSTINs from data/gstins.pdf with a regular expression, makes a sample invoice for each (taxable value, 18% GST split into CGST/SGST or IGST by state code, due date 30 days on), stores them in a SQLite database and writes an Excel register. A try block reports any failure and always logs a summary.",
+  "version": 1,
+  "variables": {
+    "our_state": "33",
+    "taxable": 25000,
+    "database": "sqlite:output/invoices.db",
+    "register": "output/gst_invoice_register.xlsx",
+    "error": "",
+    "saved": 0
+  },
+  "variable_types": {
+    "our_state": "text",
+    "taxable": "number",
+    "database": "text",
+    "register": "file"
+  },
+  "steps": [
+    {
+      "id": "work", "action": "try",
+      "steps": [
+        { "id": "pdf", "action": "read_pdf", "path": "data/gstins.pdf", "output_var": "pdf_text" },
+        { "id": "find", "action": "text_extract", "input": "${pdf_text}",
+          "pattern": "\\b\\d{2}[A-Z]{5}\\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\\b", "all": true, "output_var": "gstins", "found_var": "any",
+          "comment": "GSTIN: 2-digit state code, PAN, entity number, Z, check character" },
+        { "id": "none", "action": "if", "condition": { "left": "${any}", "op": "is_false" },
+          "then": [ { "id": "stop_none", "action": "stop", "success": false, "message": "no GSTIN found in data/gstins.pdf" } ] },
+        { "id": "table", "action": "db_execute", "connection": "${database}",
+          "sql": "CREATE TABLE IF NOT EXISTS invoices (invoice_no TEXT PRIMARY KEY, gstin TEXT, state TEXT, invoice_date TEXT, due_date TEXT, taxable REAL, cgst REAL, sgst REAL, igst REAL, total REAL); DELETE FROM invoices;" },
+        { "id": "today", "action": "date_calc", "operation": "format", "date": "today", "format": "dd-MM-yyyy", "output_var": "inv_date" },
+        { "id": "due", "action": "date_calc", "operation": "add", "date": "today", "amount": 30, "unit": "days", "format": "dd-MM-yyyy", "output_var": "due_date" },
+        {
+          "id": "each", "action": "for_each", "items": "${gstins}", "item_var": "gstin", "index_var": "i",
+          "steps": [
+            { "id": "state", "action": "text_extract", "input": "${gstin}", "pattern": "^(\\d{2})", "group": 1, "output_var": "state" },
+            { "id": "no", "action": "calculate", "expression": "${i} + 1", "output_var": "n" },
+            { "id": "inv", "action": "set_variable", "name": "invoice_no", "value": "INV-${now:yyyy}-${n}" },
+            { "id": "tax", "action": "calculate", "expression": "${taxable} * 18 / 100", "decimals": 2, "output_var": "gst" },
+            {
+              "id": "split", "action": "if", "condition": { "left": "${state}", "op": "equals", "right": "${our_state}" },
+              "comment": "Same state: CGST + SGST; other state: IGST",
+              "then": [
+                { "id": "half", "action": "calculate", "expression": "${gst} / 2", "decimals": 2, "output_var": "cgst" },
+                { "id": "sg", "action": "set_variable", "name": "sgst", "value": "${cgst}" },
+                { "id": "ig0", "action": "set_variable", "name": "igst", "value": 0 }
+              ],
+              "else": [
+                { "id": "cg0", "action": "set_variable", "name": "cgst", "value": 0 },
+                { "id": "sg0", "action": "set_variable", "name": "sgst", "value": 0 },
+                { "id": "ig", "action": "set_variable", "name": "igst", "value": "${gst}" }
+              ]
+            },
+            { "id": "total", "action": "calculate", "expression": "${taxable} + ${gst}", "decimals": 2, "output_var": "total" },
+            { "id": "save", "action": "db_execute", "connection": "${database}",
+              "sql": "INSERT INTO invoices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+              "params": ["${invoice_no}", "${gstin}", "${state}", "${inv_date}", "${due_date}", "${taxable}", "${cgst}", "${sgst}", "${igst}", "${total}"] },
+            { "id": "count", "action": "increment", "name": "saved" }
+          ]
+        },
+        { "id": "read", "action": "db_query", "connection": "${database}",
+          "sql": "SELECT invoice_no AS \"Invoice\", gstin AS \"GSTIN\", invoice_date AS \"Date\", due_date AS \"Due\", taxable AS \"Taxable\", cgst AS \"CGST\", sgst AS \"SGST\", igst AS \"IGST\", total AS \"Total\" FROM invoices ORDER BY invoice_no",
+          "output_var": "rows" },
+        { "id": "sum", "action": "db_query", "connection": "${database}", "sql": "SELECT SUM(total) AS grand FROM invoices", "output_var": "sum" },
+        { "id": "xlsx", "action": "write_excel", "path": "${register}", "sheet": "Register", "data": "${rows}" }
+      ],
+      "catch": [
+        { "id": "report", "action": "log", "level": "error", "message": "Register not finished: ${error}" }
+      ],
+      "finally": [
+        { "id": "summary", "action": "log", "message": "${saved} invoice(s) saved in ${database}" }
+      ]
+    },
+    { "id": "done", "action": "log", "message": "Grand total ${sum.0.grand}; register: ${register}" }
+  ]
+}
