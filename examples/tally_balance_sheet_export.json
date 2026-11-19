@@ -1,0 +1,44 @@
+{
+  "$schema": "../schema/flow.schema.json",
+  "name": "Tally: export Balance Sheet",
+  "description": "Opens Tally, navigates to the Balance Sheet, exports it as XML named with a timestamp, then quits Tally.",
+  "version": 1,
+  "settings": {
+    "key_delay_ms": 150,
+    "input_pause_ms": 100,
+    "step_delay_ms": 1000,
+    "mouse_move_ms": 0,
+    "failsafe": true,
+    "abort_hotkey": "ctrl+alt+q"
+  },
+  "variables": {
+    "tally_exe": "D:\\TallyPrime\\tally.exe",
+    "export_file": "BalanceSheet_${timestamp}.xml"
+  },
+  "steps": [
+    { "id": "s01_open", "action": "run_program", "program": "${tally_exe}", "working_dir": "D:\\TallyPrime" },
+    { "id": "s02_wait_start", "action": "wait", "ms": 20000 },
+    { "id": "s02b_focus", "action": "window_activate", "title": "Tally", "timeout_ms": 30000, "comment": "Safety: make sure keys go to Tally, not another window" },
+    { "id": "s03_t", "action": "key_press", "keys": "t" },
+    { "id": "s04_wait", "action": "wait", "ms": 2000 },
+    { "id": "s05_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s06_wait", "action": "wait", "ms": 3000 },
+    { "id": "s07_down6", "action": "key_press", "keys": "down", "times": 6 },
+    { "id": "s08_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s09_wait", "action": "wait", "ms": 3000 },
+    { "id": "s10_export", "action": "key_press", "keys": "ctrl+e" },
+    { "id": "s11_c", "action": "key_press", "keys": "c" },
+    { "id": "s12_down16", "action": "key_press", "keys": "down", "times": 16 },
+    { "id": "s13_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s14_filename", "action": "type_text", "text": "${export_file}" },
+    { "id": "s15_enter", "action": "key_press", "keys": "enter" },
+    { "id": "s16_ctrl_a", "action": "key_press", "keys": "ctrl+a" },
+    { "id": "s17_e", "action": "key_press", "keys": "e" },
+    { "id": "s18_wait_export", "action": "wait", "ms": 10000 },
+    { "id": "s18b_log", "action": "log", "message": "Exported ${export_file}" },
+    { "id": "s19_close", "action": "key_press", "keys": "alt+f4" },
+    { "id": "s20_esc", "action": "key_press", "keys": "esc" },
+    { "id": "s21_esc", "action": "key_press", "keys": "esc" },
+    { "id": "s22_yes", "action": "key_press", "keys": "y" }
+  ]
+}
