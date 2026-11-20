@@ -41,7 +41,7 @@ odbc-api = { version = "30", default-features = false, features = ["odbc_version
 rusqlite = { version = "0.43", features = ["bundled"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 quick-xml = "0.42"
-lopdf = "0.42"
+lopdf = "0.47"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
 hmac = "0.12"
 sha2 = "0.10"
