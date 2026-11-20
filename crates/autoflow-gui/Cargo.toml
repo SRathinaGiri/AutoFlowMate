@@ -12,6 +12,7 @@ name = "autoflow-studio"
 path = "src/main.rs"
 
 [dependencies]
+regex.workspace = true
 autoflow-core.workspace = true
 anyhow.workspace = true
 serde.workspace = true

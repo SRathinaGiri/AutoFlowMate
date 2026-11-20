@@ -36,7 +36,10 @@ If `autoflow` is not on PATH, use `target\release\autoflow.exe` (or `target\debu
 AutoFlowMate repo; build with `cargo build --release`.
 
 Full action/field reference: [references/actions.md](references/actions.md). Read it before using an
-action for the first time. Never invent fields: unknown fields are ignored (validate warns).
+action for the first time. The authoritative list is `autoflow actions --json` and
+`autoflow template <action>`; trust them over memory. Never invent fields: an unknown field is
+ignored at run time, so treat an "unknown field" warning as an error and fix it (a misspelt
+`send_now`, `overwrite` or privacy option silently changes behaviour).
 
 ## Workflow
 
@@ -59,7 +62,14 @@ action for the first time. Never invent fields: unknown fields are ignored (vali
    - submits forms or posts data to websites and APIs (`browser_click` on a submit, `http_request`
      other than GET);
    - sends the user's data to a cloud AI provider (`ai_prompt` with openai / gemini / anthropic);
-   - kills programs (`kill_program`).
+   - kills programs (`kill_program`);
+   - redacts or pseudonymises data (`redact_files`, `pseudonymize`, `depseudonymize`): say what
+     goes where and that results need a human spot-check; never set `continue_on_problems`
+     without the user's explicit agreement;
+   - runs a program, script or shell command (`run_program`, PowerShell, `cmd /c`, `.bat`):
+     judge it by its **effect** and apply the same rules as above (a `Remove-Item` is a delete,
+     an `Invoke-WebRequest -Method Post` is a post). Prefer the native action, which the
+     validator and dry run understand.
 
    A dry run never needs this; "run it" from the user for a flow you just described counts as the yes.
 7. `autoflow run flow.json --json` → read the `step_finished` events (`ok`, `error`, `millis`)
@@ -182,6 +192,7 @@ The details for each area are in `references/`. Read the matching file before wr
 | Sending or reading e-mail, attachments | [references/email.md](references/email.md) |
 | SQLite / ODBC (SQL Server, Access, Excel, Tally) | [references/databases.md](references/databases.md) |
 | Tables in PDFs, Word read / templates / reports, zip | [references/documents.md](references/documents.md) |
+| Redacting personal data (PAN, Aadhaar, names...) in documents or text; pseudonymising IDs with a reversible vault | [references/privacy.md](references/privacy.md) |
 | `ocr_*`: text on screen | [references/ocr.md](references/ocr.md) |
 | Web pages: `browser_*`, element ids, CAPTCHAs | [references/web.md](references/web.md) |
 | Running a flow on a schedule, or when a file / e-mail arrives (`triggers`, `autoflow watch`) | [references/scheduling.md](references/scheduling.md) |

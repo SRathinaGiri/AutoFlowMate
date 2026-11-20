@@ -15,6 +15,11 @@ pub fn action_icon(name: &str) -> &'static str {
         "stop" => "🛑",
         "run_flow" => "▶",
         "try" => "🛡",
+        // Privacy
+        "redact_files" => "🕶",
+        "redact_text" => "✂",
+        "pseudonymize" => "🎭",
+        "depseudonymize" => "🔓",
         // File
         "file_copy" => "📑",
         "file_move" => "📦",
@@ -142,6 +147,7 @@ pub fn category_icon(cat: &str) -> &'static str {
         "Internet" => "📡",
         "Database" => "🗄",
         "Documents" => "📘",
+        "Privacy" => "🔒",
         "AI" => "🤖",
         "Text" => "🔤",
         "Date & Math" => "🧮",

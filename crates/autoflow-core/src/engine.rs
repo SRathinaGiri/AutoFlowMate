@@ -223,6 +223,49 @@ pub fn run_flow(flow: &Flow, overrides: Map<String, Value>, opts: &RunOptions, s
 /// Text shown instead of a typed password.
 pub const MASK: &str = "••••••";
 
+/// A `data` field that was filled in (not null or an empty text).
+fn is_given(v: &Value) -> bool {
+    match v {
+        Value::Null => false,
+        Value::String(s) => !s.trim().is_empty(),
+        _ => true,
+    }
+}
+
+/// Apply `f` to the given columns of a list of records (or to every item of a plain list).
+/// `f` returns the new value, or None to leave the cell as it is.
+fn map_table(data: Value, columns: &[String], f: &mut dyn FnMut(&str) -> Result<Option<String>>) -> Result<Value> {
+    let Value::Array(rows) = data else { bail!("data must be a list, e.g. \"${{rows}}\" from read_excel or read_csv") };
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        match row {
+            Value::Object(mut obj) => {
+                if columns.is_empty() {
+                    bail!("choose the columns to change, e.g. [\"AccountNo\"]");
+                }
+                for c in columns {
+                    let key = obj.keys().find(|k| *k == c).or_else(|| obj.keys().find(|k| k.trim().eq_ignore_ascii_case(c.trim()))).cloned();
+                    let Some(key) = key else { bail!("column `{c}` not found; the columns are: {}", obj.keys().cloned().collect::<Vec<_>>().join(", ")) };
+                    let cur = crate::vars::to_text(&obj[&key]);
+                    if let Some(new) = f(&cur)? {
+                        obj.insert(key, Value::String(new));
+                    }
+                }
+                out.push(Value::Object(obj));
+            }
+            Value::Null => out.push(Value::Null),
+            other => {
+                let cur = crate::vars::to_text(&other);
+                out.push(match f(&cur)? {
+                    Some(new) => Value::String(new),
+                    None => other,
+                });
+            }
+        }
+    }
+    Ok(Value::Array(out))
+}
+
 fn secret_values(vars: &Map<String, Value>, names: &std::collections::HashSet<String>) -> Vec<String> {
     let mut v: Vec<String> = names.iter().filter_map(|n| vars.get(n)).filter_map(|v| v.as_str()).filter(|s| !s.is_empty()).map(str::to_string).collect();
     // Longest first, so a password containing another one is masked whole.
@@ -495,6 +538,63 @@ impl<'a> Context<'a> {
         }
         let p = PathBuf::from(t.trim());
         Ok(if p.is_absolute() { p } else { self.opts.flow_dir.join(p) })
+    }
+
+    /// A redactor from a step's rules, patterns and word lists.
+    #[allow(clippy::too_many_arguments)]
+    fn redactor(
+        &self,
+        rules: &[String],
+        patterns: &Map<String, Value>,
+        words: &[String],
+        words_file: &str,
+        style: MaskStyle,
+        replace_with: &str,
+        strict: bool,
+    ) -> Result<crate::redact::Redactor> {
+        let mut r = vec![];
+        for s in rules {
+            r.extend(self.text(s)?.split([',', ';']).map(|x| x.trim().to_string()).filter(|x| !x.is_empty()));
+        }
+        let mut custom = vec![];
+        for (k, v) in patterns {
+            custom.push((k.clone(), crate::vars::to_text(v)));
+        }
+        let mut w: Vec<String> = words.iter().map(|s| self.text(s)).collect::<Result<_>>()?;
+        let wf = self.text(words_file)?;
+        if !wf.trim().is_empty() {
+            let p = self.path(&wf)?;
+            let text = std::fs::read_to_string(&p).with_context(|| format!("cannot read word list {}", p.display()))?;
+            for line in text.lines() {
+                let first = line.split([',', '\t']).next().unwrap_or("").trim().trim_matches('"').trim();
+                if !first.is_empty() && !first.starts_with('#') {
+                    w.push(first.to_string());
+                }
+            }
+        }
+        crate::redact::Redactor::new(&crate::redact::Options { rules: r, custom, words: w, style, replace_with: self.text(replace_with)?, strict })
+    }
+
+    /// The pseudonymisation key from Credential Manager; made (and announced) on first use.
+    fn pseudo_key(&mut self, secret: &str, create: bool) -> Result<[u8; 32]> {
+        let name = self.text(secret)?;
+        let name = if name.trim().is_empty() { "pseudonym_key".to_string() } else { name.trim().to_string() };
+        use crate::mail::secrets;
+        if !secrets::exists(&name) {
+            if !create {
+                bail!("no key `{name}` in Windows Credential Manager: restore it with `autoflow secret set {name}` (the same key that made the tokens)");
+            }
+            if self.opts.dry_run {
+                self.log(LogLevel::Info, format!("[dry-run] would create the key `{name}`"));
+                return Ok(crate::pseudo::key_from_secret("dry-run"));
+            }
+            secrets::set(&name, &crate::pseudo::new_key_text())?;
+            self.log(
+                LogLevel::Warn,
+                format!("created a new key `{name}` in Windows Credential Manager. Back it up now with `autoflow secret show {name}` and keep it safe: without it the tokens can't be turned back."),
+            );
+        }
+        Ok(crate::pseudo::key_from_secret(&secrets::get(&name)?))
     }
 
     fn set_var(&mut self, name: &str, v: Value) -> Result<()> {
@@ -878,6 +978,184 @@ impl<'a> Context<'a> {
                     }
                     self.log(LogLevel::Info, format!("wrote {}", out.display()));
                 }
+            }
+            // ---------------- privacy
+            Action::RedactText(a) => {
+                let red = self.redactor(&a.rules, &a.patterns, &a.words, &a.words_file, a.mask_style, &a.replace_with, a.strict)?;
+                let s = self.text(&a.input)?;
+                let (out, counts) = red.redact(&s);
+                let total: usize = counts.values().sum();
+                self.log(
+                    LogLevel::Info,
+                    if total == 0 { "nothing to redact".to_string() } else { format!("redacted {total}: {}", crate::redact::counts_text(&counts)) },
+                );
+                self.set_var(&a.report_var, json!(counts))?;
+                self.set_var(&a.output_var, json!(out))?;
+            }
+            Action::RedactFiles(a) => {
+                let red = self.redactor(&a.rules, &a.patterns, &a.words, &a.words_file, a.mask_style, &a.replace_with, a.strict)?;
+                let (input, output) = (self.path(&a.input)?, self.path(&a.output)?);
+                let abs = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| std::path::absolute(p).unwrap_or(p.to_path_buf()));
+                if abs(&input) == abs(&output) {
+                    bail!("output must be a different folder than input, so the originals stay as they are");
+                }
+                let files = crate::redact::list_inputs(&input, &self.text(&a.include)?, a.recursive, Some(&output))?;
+                let fo = crate::redact::FileOptions {
+                    clear_metadata: a.clear_metadata,
+                    ocr: a.ocr,
+                    ocr_language: self.text(&a.ocr_language)?,
+                    dpi: if a.pdf_dpi == 0 { 150 } else { a.pdf_dpi },
+                    dry_run: self.opts.dry_run,
+                    stop: self.opts.stop.clone(),
+                    ocr_rotated: a.ocr_rotated,
+                };
+                let dry = self.opts.dry_run;
+                self.log(
+                    LogLevel::Info,
+                    format!(
+                        "{} {} file(s) from {} into {}",
+                        if dry { "[dry-run] checking" } else { "redacting" },
+                        files.len(),
+                        input.display(),
+                        output.display()
+                    ),
+                );
+                let stop = self.opts.stop.clone();
+                let stopf = move || stop.load(Ordering::Relaxed);
+                let started = Instant::now();
+                let results = crate::redact::redact_many(&input, &files, &output, &red, &fo, a.overwrite, a.threads as usize, &stopf, &mut |r| {
+                    let total: usize = r.counts.values().sum();
+                    let note = if r.note.is_empty() { String::new() } else { format!(" ({})", r.note) };
+                    let (level, msg) = match r.status {
+                        "redacted" => (LogLevel::Info, format!("✔ {}: {total} found - {}{note}", r.file, crate::redact::counts_text(&r.counts))),
+                        "clean" => (LogLevel::Info, format!("✔ {}: nothing found{note}", r.file)),
+                        "skipped" => (LogLevel::Warn, format!("- {}: skipped{note}", r.file)),
+                        "unverified" => (LogLevel::Warn, format!("? {}: NOT written, could not be checked completely{note}", r.file)),
+                        _ => (LogLevel::Warn, format!("✖ {}: failed, NOT written{note}", r.file)),
+                    };
+                    self.log(level, msg);
+                });
+                let mut found = crate::redact::Counts::new();
+                let mut by_status: std::collections::BTreeMap<&str, usize> = Default::default();
+                for r in &results {
+                    crate::redact::add_counts(&mut found, &r.counts);
+                    *by_status.entry(r.status).or_default() += 1;
+                }
+                let n = |s: &str| by_status.get(s).copied().unwrap_or(0);
+                let report = self.text(&a.report)?;
+                if !report.trim().is_empty() && !dry {
+                    let rp = self.path(&report)?;
+                    crate::redact::write_report(&rp, &results)?;
+                    self.log(LogLevel::Info, format!("report: {}", rp.display()));
+                }
+                let problems = n("failed") + n("unverified");
+                self.log(
+                    if problems > 0 { LogLevel::Warn } else { LogLevel::Info },
+                    format!(
+                        "{} file(s) in {:.1}s: {} redacted, {} clean, {} unverified, {} skipped, {} failed; found {}",
+                        results.len(),
+                        started.elapsed().as_secs_f64(),
+                        n("redacted"),
+                        n("clean"),
+                        n("unverified"),
+                        n("skipped"),
+                        n("failed"),
+                        if found.is_empty() { "nothing".to_string() } else { crate::redact::counts_text(&found) }
+                    ),
+                );
+                self.set_var(
+                    &a.summary_var,
+                    json!({"files": results.len(), "redacted": n("redacted"), "clean": n("clean"), "unverified": n("unverified"), "skipped": n("skipped"), "failed": n("failed"), "found": found}),
+                )?;
+                self.check_cancel()?;
+                // Fail closed: later steps (zip, e-mail, upload) must not run on a folder that is
+                // not completely redacted, unless the flow says so explicitly.
+                if problems > 0 && !a.continue_on_problems {
+                    bail!(
+                        "{problems} file(s) could not be redacted completely and were not written ({} failed, {} unverified){}. Check them by hand, or set continue_on_problems",
+                        n("failed"),
+                        n("unverified"),
+                        if report.trim().is_empty() { String::new() } else { format!("; see the report {report}") }
+                    );
+                }
+            }
+            Action::Pseudonymize(a) => {
+                let key = self.pseudo_key(&a.key_secret, true)?;
+                let vp = self.path(&a.vault)?;
+                let mut vault = crate::pseudo::Vault::open(&vp, &key, true, self.opts.dry_run)?;
+                let (prefix, domain) = (self.text(&a.prefix)?, self.text(&a.domain)?);
+                let normalize = a.normalize;
+                let mut count = 0usize;
+                let mut f = |v: &str| -> Result<Option<String>> {
+                    let s = if normalize { crate::pseudo::normalize(v) } else { v.trim().to_string() };
+                    if s.is_empty() {
+                        return Ok(None);
+                    }
+                    count += 1;
+                    Ok(Some(vault.token(&domain, &prefix, &s)?))
+                };
+                let out = if is_given(&a.data) {
+                    let data = self.vars.resolve_value(&a.data)?;
+                    let cols: Vec<String> = a.columns.iter().map(|c| self.text(c)).collect::<Result<_>>()?;
+                    map_table(data, &cols, &mut f)?
+                } else {
+                    let s = self.text(&a.input)?;
+                    json!(f(&s)?.unwrap_or_default())
+                };
+                vault.commit()?;
+                let total = vault.len()?;
+                drop(vault);
+                self.log(
+                    LogLevel::Info,
+                    format!(
+                        "replaced {count} value(s) with tokens; the vault holds {total} value(s){}",
+                        if self.opts.dry_run { " [dry-run: vault not changed]" } else { "" }
+                    ),
+                );
+                self.set_var(&a.count_var, json!(count))?;
+                self.set_var(&a.output_var, out)?;
+            }
+            Action::Depseudonymize(a) => {
+                let key = self.pseudo_key(&a.key_secret, false)?;
+                let vp = self.path(&a.vault)?;
+                let mut vault = crate::pseudo::Vault::open(&vp, &key, false, true)?;
+                let (mut restored, mut unknown) = (0usize, 0usize);
+                let mode = a.unknown;
+                let mut f = |v: &str| -> Result<Option<String>> {
+                    let t = v.trim();
+                    if t.is_empty() {
+                        return Ok(None);
+                    }
+                    match vault.reveal(t)? {
+                        Some(orig) => {
+                            restored += 1;
+                            Ok(Some(orig))
+                        }
+                        None => {
+                            unknown += 1;
+                            match mode {
+                                UnknownToken::Keep => Ok(None),
+                                UnknownToken::Empty => Ok(Some(String::new())),
+                                UnknownToken::Fail => bail!("the vault has no value for `{t}`"),
+                            }
+                        }
+                    }
+                };
+                let out = if is_given(&a.data) {
+                    let data = self.vars.resolve_value(&a.data)?;
+                    let cols: Vec<String> = a.columns.iter().map(|c| self.text(c)).collect::<Result<_>>()?;
+                    map_table(data, &cols, &mut f)?
+                } else {
+                    let s = self.text(&a.input)?;
+                    json!(f(&s)?.unwrap_or(s))
+                };
+                drop(vault);
+                self.log(
+                    if unknown > 0 { LogLevel::Warn } else { LogLevel::Info },
+                    format!("restored {restored} value(s){}", if unknown > 0 { format!("; {unknown} not in the vault") } else { String::new() }),
+                );
+                self.set_var(&a.count_var, json!(restored))?;
+                self.set_var(&a.output_var, out)?;
             }
             Action::WordWrite(a) => {
                 let p = self.path(&a.path)?;

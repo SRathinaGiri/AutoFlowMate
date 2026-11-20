@@ -1,0 +1,24 @@
+{
+  "name": "Restore pseudonymised columns",
+  "description": "Turns the tokens in a table made by 'Pseudonymise ID columns of a table' back into the original values, using the same vault and the key in Windows Credential Manager. Stops if a token is not in the vault, so nothing is silently left out.",
+  "variables": {
+    "input_file": "customers_shareable.csv",
+    "output_file": "customers_restored.csv",
+    "vault": "pseudonyms.db"
+  },
+  "steps": [
+    { "id": "read", "action": "read_csv", "path": "${input_file}", "output_var": "rows" },
+    {
+      "id": "restore",
+      "action": "depseudonymize",
+      "data": "${rows}",
+      "columns": ["AccountNo"],
+      "vault": "${vault}",
+      "unknown": "fail",
+      "output_var": "rows",
+      "count_var": "restored"
+    },
+    { "id": "write", "action": "write_csv", "path": "${output_file}", "data": "${rows}" },
+    { "id": "done", "action": "log", "message": "restored ${restored} values: ${output_file}" }
+  ]
+}

@@ -186,6 +186,10 @@ fn path_kind(action: &str, key: &str) -> Option<PathKind> {
         ("write_excel", "path") => PathKind::Save("Excel workbook", &["xlsx"]),
         ("http_request", "save_to") => PathKind::Save("Files", ANY),
         ("input_box", "image") => PathKind::Open("Images", &["png", "jpg", "jpeg", "bmp"]),
+        ("redact_files", "input" | "output") => PathKind::FileOrFolder,
+        ("redact_files", "report") => PathKind::Save("CSV", &["csv"]),
+        ("redact_text" | "redact_files", "words_file") => PathKind::Open("Word lists", &["txt", "csv"]),
+        ("pseudonymize" | "depseudonymize", "vault") => PathKind::Save("Vault (SQLite)", &["db", "sqlite"]),
         _ => return None,
     })
 }
@@ -208,6 +212,11 @@ pub(crate) fn pretty_english(key: &str) -> String {
         "width_var" => Some("Width → variable"),
         "height_var" => Some("Height → variable"),
         "count_var" => Some("Count → variable"),
+        "report_var" => Some("Report → variable"),
+        "summary_var" => Some("Summary → variable"),
+        "key_secret" => Some("Key (secret name)"),
+        "pdf_dpi" => Some("PDF resolution (dpi)"),
+        "ocr" => Some("OCR"),
         "status_var" => Some("Status → variable"),
         "api_key_secret" => Some("API key (secret name)"),
         "bearer_secret" => Some("Bearer token (secret name)"),
@@ -331,9 +340,17 @@ impl Form<'_> {
                     label.response.on_hover_text(&tip);
                 }
                 let v = obj.get_mut(&key).unwrap();
-                let row = ui.horizontal(|ui| {
-                    changed |= self.field(ui, &path, &key, v);
-                });
+                // Tall editors go in a top-aligned column; a centred row would shift them over the next rows.
+                let tall = self.action.starts_with("redact_") && matches!(key.as_str(), "rules" | "patterns" | "words");
+                let row = if tall {
+                    ui.vertical(|ui| {
+                        changed |= self.field(ui, &path, &key, v);
+                    })
+                } else {
+                    ui.horizontal(|ui| {
+                        changed |= self.field(ui, &path, &key, v);
+                    })
+                };
                 if !tip.is_empty() {
                     row.response.on_hover_text(&tip);
                 }
@@ -410,6 +427,106 @@ impl Form<'_> {
             Value::Object(o) if key == "condition" => {
                 let mut changed = false;
                 ui.vertical(|ui| changed = self.object(ui, path, o));
+                changed
+            }
+            Value::Array(a) if key == "rules" && self.action.starts_with("redact_") => {
+                // Tick the built-in rules; none ticked = all of them.
+                let mut on: Vec<String> = a.iter().filter_map(Value::as_str).map(|s| s.trim().to_ascii_lowercase()).collect();
+                let mut changed = false;
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        if ui.small_button(tr("All")).on_hover_text(tr("Use every built-in rule (the same as none ticked)")).clicked() {
+                            on.clear();
+                            changed = true;
+                        }
+                        if ui.small_button(tr("None")).on_hover_text(tr("Only your own patterns and words")).clicked() {
+                            on = vec!["none".into()];
+                            changed = true;
+                        }
+                        let what = if on.is_empty() {
+                            tr("all rules")
+                        } else if on.iter().any(|r| r == "none") {
+                            tr("only your patterns and words")
+                        } else {
+                            format!("{} {}", on.len(), tr("rule(s)"))
+                        };
+                        ui.weak(what);
+                    });
+                    // Fixed rows of three equal cells: a definite size, so the form's grid row fits it
+                    // (a nested grid or a wrapping row never settles inside a grid cell).
+                    for chunk in autoflow_core::redact::RULES.chunks(3) {
+                        ui.horizontal(|ui| {
+                            for (name, label, desc) in chunk {
+                                ui.allocate_ui_with_layout(egui::vec2(170.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                    ui.set_min_width(170.0);
+                                    let mut ticked = on.is_empty() || on.iter().any(|r| r == name);
+                                    if ui.checkbox(&mut ticked, *label).on_hover_text(tr(desc)).changed() {
+                                        if on.is_empty() {
+                                            on = autoflow_core::redact::RULES.iter().map(|r| r.0.to_string()).collect();
+                                        }
+                                        on.retain(|r| r != name && r != "none");
+                                        if ticked {
+                                            on.push(name.to_string());
+                                        }
+                                        if on.len() == autoflow_core::redact::RULES.len() {
+                                            on.clear();
+                                        }
+                                        changed = true;
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+                if changed {
+                    *a = on.into_iter().map(Value::String).collect();
+                }
+                changed
+            }
+            Value::Object(o) if key == "patterns" && self.action.starts_with("redact_") => {
+                // One pattern per line: LABEL = regular expression (no JSON escaping needed).
+                let mut changed = false;
+                ui.vertical(|ui| {
+                    let buf = self
+                        .json_buffers
+                        .entry(path.to_string())
+                        .or_insert_with(|| o.iter().map(|(k, v)| format!("{k} = {}", v.as_str().unwrap_or_default())).collect::<Vec<_>>().join("\n"));
+                    let resp = ui.add(
+                        egui::TextEdit::multiline(buf)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(2)
+                            .desired_width(320.0)
+                            .hint_text("EMPLOYEE_ID = EMP-\\d{5}\nPOLICY = Policy No:\\s*(?P<value>\\S+)"),
+                    );
+                    let mut bad = vec![];
+                    let mut m = Map::new();
+                    for line in buf.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
+                        let (label, pat) = match line.split_once('=') {
+                            Some((l, p)) if !l.trim().is_empty() && !l.contains('(') => (l.trim().to_string(), p.trim().to_string()),
+                            _ => (format!("PATTERN_{}", m.len() + 1), line.to_string()),
+                        };
+                        if let Err(e) = regex::Regex::new(&pat) {
+                            bad.push(format!("{label}: {}", e.to_string().lines().last().unwrap_or("bad pattern")));
+                        }
+                        m.insert(label, Value::String(pat));
+                    }
+                    for b in &bad {
+                        ui.colored_label(crate::look::err(), b);
+                    }
+                    if resp.changed() {
+                        *o = m;
+                        changed = true;
+                    }
+                });
+                changed
+            }
+            Value::Array(a) if a.iter().all(Value::is_string) && key == "words" => {
+                let mut changed = false;
+                let buf = self.json_buffers.entry(path.to_string()).or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
+                if ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(260.0).hint_text(tr("one name or word per line"))).changed() {
+                    *a = buf.lines().map(str::trim).filter(|l| !l.is_empty()).map(|l| Value::String(l.to_string())).collect();
+                    changed = true;
+                }
                 changed
             }
             Value::Array(a) if a.iter().all(Value::is_string) && key == "attachments" => {
@@ -582,6 +699,7 @@ impl Form<'_> {
                 }
             }
             "http_request" => matches!(get("method").as_str(), "" | "get" | "head") && key == "body",
+            "redact_text" | "redact_files" => (key == "replace_with" && get("mask_style") != "text") || (key == "ocr_language" && get("ocr") == "never"),
             _ => false,
         }
     }
@@ -800,7 +918,7 @@ impl Form<'_> {
                     }
                 }
             });
-        } else if MULTILINE.contains(&key) {
+        } else if MULTILINE.contains(&key) && path_kind(&self.action, key).is_none() {
             ui.vertical(|ui| {
                 let hint = self.hint(key);
                 changed |= ui

@@ -23,13 +23,14 @@ an **AI agent** generate them.
 - **AI skill** ([skills/autoflowmate/SKILL.md](../skills/autoflowmate/SKILL.md)): teaches agents such
   as Claude Code to author, validate and run flows.
 
-## What it can automate (100 actions)
+## What it can automate (104 actions)
 
 | Category | Actions |
 |---|---|
 | Flow | set_variable, increment, log, wait, if, repeat, while, for_each, break, stop, run_flow, **try** (catch / finally) |
 | File | file_copy, file_move, file_delete, file_write, file_read, file_exists, file_info, dir_create, dir_delete, dir_list |
 | Data | read_excel (sheet or one column), read_csv, read_pdf, list_append, write_csv, write_excel |
+| Privacy | redact_files (folders of PDF, scans, Word, Excel, pictures, text), redact_text, pseudonymize, depseudonymize (reversible tokens, encrypted vault) |
 | Documents | read_pdf_table (invoice lines, statements), word_read, word_fill (templates with {{placeholders}}), word_write, zip_create, zip_extract |
 | Text | text_transform, text_replace, text_extract (regular expressions), text_split, text_join |
 | Date & Math | date_calc (format, add, difference, parts), calculate (expressions with rounding) |
@@ -317,6 +318,111 @@ into a finished letter: you design the letter in Word, and the flow fills it for
 Excel sheet. `word_read` gets the text and tables out of a .docx; `word_write` makes a simple
 report with a table. `zip_create` / `zip_extract` pack and unpack archives. See
 `examples/documents_demo.json`, which runs offline.
+
+## Privacy: redaction and pseudonymisation (DPDP)
+
+Everything here runs on your PC, offline, without AI.
+
+**`redact_files`** (beta) makes redacted copies of one file or a whole folder (sub-folders kept);
+the originals are never changed. For one file, `output` can be a file name of the same type
+(`letter_REDACTED.docx`) or a folder. In a folder of mixed files each file is handled by its own
+type; `include` picks files by wildcards (`*.pdf;*.docx`), empty = every supported type. It handles PDFs (text and scanned), Word `.docx`,
+Excel `.xlsx`, pictures (PNG, JPG, BMP, TIFF) and text files (TXT, CSV, JSON, XML, HTML, Markdown,
+logs). Other files are skipped and not copied, so nothing unredacted ends up in the output.
+
+- **Word and Excel** keep their formatting. Text that Word split over formatting runs is still
+  found, numbers typed as numbers in Excel are checked, pictures inside are read with OCR and
+  blacked out, and `clear_metadata` empties the author fields (also comment and tracked-change
+  authors) and redacts the document properties. Old `.doc`/`.xls`, PowerPoint, `.msg` and
+  archives are not supported: convert them first.
+- **PDFs and pictures** become pictures with solid black boxes; no text layer or metadata is
+  left, so nothing can be copied out from under a box. Text PDFs use their own character
+  positions; scanned pages, pages with pictures, and picture files are read with Windows OCR.
+  `pdf_dpi` (default 150) sets the sharpness; use 200-300 for small print.
+- **Fails closed.** Each file ends as `redacted`, `clean` (read completely, nothing found),
+  `unverified` (a page or picture could not be read although it isn't blank, a picture format
+  OCR can't open, or OCR switched off), `skipped` (type not supported) or `failed`. Unverified
+  and failed files are **not written**, and the step fails after writing the report, so later
+  steps (zip, e-mail, upload) never pass on an incomplete folder. Set `continue_on_problems` only
+  when you will check those files by hand.
+- **Thousands of files:** several files are worked on at once. `overwrite: false` (the default)
+  skips files already in the output folder, so an interrupted run continues where it stopped.
+- **Report:** `report` writes a CSV with one line per file: status (redacted, clean, skipped,
+  failed, unverified) and counts per kind. It never contains the values. `summary_var` gives the
+  totals to the flow.
+
+**What it finds** (`rules`; empty = all, `none` = only your own patterns and words):
+
+| Rule | Finds |
+|---|---|
+| pan | PAN numbers (`ABCPE1234F`) |
+| aadhaar | Aadhaar numbers, with or without spaces, checked with the Aadhaar (Verhoeff) checksum |
+| mobile | `98765 43210`, `+91 98765 43210`, `09876543210` |
+| email, upi | e-mail addresses, UPI IDs (`name@okaxis`) |
+| bank_account | numbers after `A/c`, `A/c No`, `Account No`, `Acct` |
+| ifsc | IFSC codes |
+| card | debit/credit card numbers, checked with the Luhn checksum |
+| passport, voter_id, driving_licence | Indian passport, EPIC and driving licence numbers |
+| dob, age, gender | after `DOB` / `Date of Birth`, `Age:`, `Sex:` / `Gender:` |
+| name | after `Name:`, `Patient Name:`, `Father's Name:`, `S/o`, `D/o`, `W/o`, or a title (`Mr`, `Mrs`, `Dr`, `Shri`, `Smt`) |
+| patient_id | after `UHID`, `MRN`, `MR No`, `IP No`, `OP No`, `Patient ID`, `Reg No` |
+| health | after `Diagnosis:`, `Complaints:`, `Condition:` (to the end of the line) |
+| address, pincode | after `Address:`, `R/o`; after `PIN:` |
+
+For labelled details only the value is replaced: `Name: [NAME]`. Names without a label can't be
+recognised by patterns: list them in **words**, or in a **words_file** (one per line, or the first
+column of a CSV). `strict` (on by default) checks the Aadhaar and card checksums, so order and
+invoice numbers that merely look similar are left alone.
+
+**Your own patterns** go in **patterns**, one per line in Studio: `EMPLOYEE_ID = EMP-\d{5}`. To
+replace only part of a match, name that part `value`:
+`POLICY = Policy No:\s*(?P<value>\S+)`. Start a pattern with `(?i)` to ignore upper and lower
+case. Studio checks each pattern as you type.
+
+**How it is replaced** (`mask_style`): `label` gives `[PAN]`, `mask` gives `XXXXXXXXXX`, `partial`
+keeps the last four (`XXXXXX234F`), `text` uses `replace_with`. **`redact_text`** does the same
+for a single text, and **▶ Try it** shows the result in Studio.
+
+**Pseudonymisation** replaces IDs with tokens you can turn back later:
+
+- **`pseudonymize`** takes one value (`input`) or a table (`data` from `read_csv`/`read_excel` plus
+  `columns`) and gives tokens such as `ACC-YQ9DMBP200WAXDWZ`. The same value always gets the same
+  token (per `domain`), so counts, totals and joins still work.
+- A token is a keyed hash (HMAC-SHA-256). Without the key nobody can work out the value, not even
+  by trying all ten billion mobile numbers, which would break a plain hash in minutes.
+- The originals are stored in the **vault** (a SQLite file), each encrypted with AES-256-GCM.
+- **`depseudonymize`** turns tokens back into the originals; it needs the vault **and** the key.
+  `unknown: fail` stops if a token is not in the vault.
+- The key is kept in Windows Credential Manager under `key_secret` (default `pseudonym_key`) and is
+  created on first use. **Back it up** (`autoflow secret show pseudonym_key`): without it the vault
+  can't be read. To use the vault on another PC, store the same key there with
+  `autoflow secret set pseudonym_key`. `autoflow secret new-key NAME` makes a key in advance.
+
+**Limits.** Patterns and OCR can miss things: unlabelled names, free-text addresses,
+handwriting, rotated or very poor scans, scripts whose OCR language isn't installed. These steps
+support DPDP-style privacy work; they don't make a process compliant by themselves, and the
+results should be spot-checked before they leave the organisation. Pseudonymised data is not
+anonymous: tokens are the same for equal values (so frequencies and links stay visible) and the
+other columns stay as they are. Use a separate `domain` for each purpose (`vendor_share_2026:account`)
+so different shares can't be joined, keep the vault in a protected folder, back up the key
+separately, and decide who may restore values.
+
+See `examples\redact_documents.json` and `examples\pseudonymize_accounts.json`.
+
+## Templates
+
+**File > New from template** lists ready-made flows to start from; the template is copied and
+the copy is yours to change and save. **File > Save as template** keeps your own flow as a
+template, in `%APPDATA%\AutoFlowMate\templates`. Built-in templates are in the `templates` folder
+next to the programs.
+
+```powershell
+autoflow templates
+```
+
+```powershell
+autoflow new my_redaction.json --template redact_folder
+```
 
 ## Triggers: run when a file or e-mail arrives
 

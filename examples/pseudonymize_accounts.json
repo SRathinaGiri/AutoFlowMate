@@ -1,0 +1,109 @@
+{
+  "name": "Pseudonymise bank accounts, PAN and mobile numbers, then restore them",
+  "description": "Runs offline. Reads data/customers_bank.csv and replaces AccountNo, PAN and Mobile with tokens (ACC-..., PAN-..., MOB-...) in output/customers_shareable.csv, for analysts or vendors who don't need the real numbers: the same account always gets the same token, so totals and joins still work, but nobody can work out the number from the token. It is pseudonymised, not anonymous: names and amounts stay, and equal values stay recognisable as equal. The originals are kept encrypted in vault/customer_vault.db. The second half reads the shareable file back and restores the original values into output/customers_restored.csv - only possible with the vault and the key. The key is created in Windows Credential Manager on first run under key_secret; back it up with `autoflow secret show <key_secret>`.",
+  "variables": {
+    "input_file": "data/customers_bank.csv",
+    "shareable_file": "output/customers_shareable.csv",
+    "restored_file": "output/customers_restored.csv",
+    "vault": "vault/customer_vault.db",
+    "key_secret": "example_pseudonym_key"
+  },
+  "steps": [
+    {
+      "id": "read",
+      "action": "read_csv",
+      "path": "${input_file}",
+      "output_var": "rows",
+      "count_var": "row_count"
+    },
+    {
+      "id": "accounts",
+      "action": "pseudonymize",
+      "data": "${rows}",
+      "columns": [
+        "AccountNo"
+      ],
+      "prefix": "ACC-",
+      "domain": "account:v1",
+      "vault": "${vault}",
+      "key_secret": "${key_secret}",
+      "output_var": "rows"
+    },
+    {
+      "id": "pan",
+      "action": "pseudonymize",
+      "data": "${rows}",
+      "columns": [
+        "PAN"
+      ],
+      "prefix": "PAN-",
+      "domain": "pan:v1",
+      "normalize": true,
+      "vault": "${vault}",
+      "key_secret": "${key_secret}",
+      "output_var": "rows"
+    },
+    {
+      "id": "mobile",
+      "action": "pseudonymize",
+      "data": "${rows}",
+      "columns": [
+        "Mobile"
+      ],
+      "prefix": "MOB-",
+      "domain": "mobile:v1",
+      "normalize": true,
+      "vault": "${vault}",
+      "key_secret": "${key_secret}",
+      "output_var": "rows"
+    },
+    {
+      "id": "share",
+      "action": "write_csv",
+      "path": "${shareable_file}",
+      "data": "${rows}"
+    },
+    {
+      "id": "shared_note",
+      "action": "log",
+      "message": "${row_count} rows written to ${shareable_file} with tokens instead of account, PAN and mobile numbers"
+    },
+    {
+      "id": "later",
+      "action": "log",
+      "message": "Later, someone with the vault and the key restores the original values:"
+    },
+    {
+      "id": "read_shared",
+      "action": "read_csv",
+      "path": "${shareable_file}",
+      "output_var": "shared"
+    },
+    {
+      "id": "restore",
+      "action": "depseudonymize",
+      "data": "${shared}",
+      "columns": [
+        "AccountNo",
+        "PAN",
+        "Mobile"
+      ],
+      "vault": "${vault}",
+      "key_secret": "${key_secret}",
+      "unknown": "fail",
+      "output_var": "restored",
+      "count_var": "restored_count"
+    },
+    {
+      "id": "write_restored",
+      "action": "write_csv",
+      "path": "${restored_file}",
+      "data": "${restored}"
+    },
+    {
+      "id": "done",
+      "action": "log",
+      "message": "restored ${restored_count} values into ${restored_file}"
+    }
+  ]
+}

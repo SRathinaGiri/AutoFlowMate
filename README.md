@@ -51,7 +51,7 @@ no server, no licence fees.
 <p align="center"><img src="assets/screenshots/studio.png" alt="AutoFlowMate Studio with a flow open" width="900"></p>
 
 **AutoFlowMate Studio** shows your automation as a **flowchart**. Pick an action from the list on
-the left (more than 100 of them, in 21 groups), drop it into the chart, and fill in its details on
+the left (104 of them, in 22 groups), drop it into the chart, and fill in its details on
 the right. Press **▶ Run** and watch it work.
 
 ## What you can automate
@@ -66,6 +66,7 @@ the right. Press **▶ Run** and watch it work.
 | 🖥 **Any Windows program** | Click buttons and menus, type text, use keyboard shortcuts in Tally, Excel, Notepad or your own software |
 | 🔎 **Reading the screen** | Find a picture on screen and click it, read text on screen (OCR) |
 | 🗄 **Databases** | Save records in a built-in database, or read and write SQL Server, MySQL, Access or Tally through ODBC |
+| 🔒 **Personal data (DPDP)** | Black out PAN, Aadhaar, mobile numbers, names, dates of birth and patient details in thousands of documents; swap account numbers for tokens you can turn back later |
 | 🤖 **AI** | Ask an AI model (a local one, or OpenAI, Gemini, Claude) to classify comments, summarise text or pull out details |
 | 🧮 **Text, dates and sums** | Work out a due date, get the weekday, add GST, round amounts, find an invoice number in text |
 | 💬 **Asking you** | Show a message, ask a yes/no question, or ask you to type something (a CAPTCHA, for example) |
@@ -79,6 +80,33 @@ don't apply are hidden, and **▶ Try it** shows what a text or date step will p
 the whole flow.
 
 <p align="center"><img src="assets/screenshots/help.png" alt="Help on every field, and Try it" width="460"></p>
+
+### 🔒 Protect personal data (India's DPDP Act) · beta
+Point **redact_files** at a single file or a folder of thousands of documents (pick types with
+wildcards such as `*.pdf;*.docx`) and get redacted copies of the same type, offline and without AI. It finds PAN, Aadhaar (checked with the Aadhaar checksum, so other 12-digit numbers
+are left alone), mobile numbers, e-mail, bank account numbers, IFSC, cards, UPI IDs, passport,
+voter ID and driving licence numbers, and labelled details such as *Name:*, *DOB:*, *Sex:*,
+*UHID:* and *Diagnosis:*. Add your own patterns (an employee code, a policy number) and lists of
+names. Word and Excel files keep their formatting (pictures inside them are checked too); PDFs,
+scans and pictures get solid black boxes, with no hidden text left behind. A report says what was
+found in each file (counts only). It fails closed: a file that can't be checked completely (an
+unreadable scan, for example) is never written, and the flow stops before anything is sent on.
+It supports DPDP work rather than making a process compliant by itself: patterns and OCR can miss
+things, so spot-check the results.
+
+<p align="center"><img src="assets/screenshots/redaction.png" alt="A discharge summary before and after redaction" width="900"></p>
+
+Need to share a table but keep the IDs? **pseudonymize** swaps account numbers, PAN or mobile
+numbers for tokens such as `ACC-YQ9DMBP200WAXDWZ`. The same number always gets the same token, so
+totals still add up, but nobody can work back to the number. The originals are kept encrypted in a
+vault, and **depseudonymize** restores them for whoever holds the key. (Pseudonymised is not
+anonymous: equal values stay equal and the other columns remain.)
+
+### 📋 Start from a template
+**File > New from template** offers ready-made flows: redact a folder, redact documents as they
+arrive, pseudonymise and restore a table, Word letters from an Excel list, PDF invoices to an
+Excel register, sort a folder by file type, zip and mail a backup. Save your own flows as
+templates too (**File > Save as template**), so a colleague can reuse them.
 
 ### ⏺ Record, like a macro
 Press **⏺ Record** and just do the job once. Your clicks and typing become steps you can edit
@@ -144,6 +172,8 @@ AutoFlowMate.
 | `classify_comments.json` | Asks an AI model to mark each customer comment as positive, negative or neutral, and saves the result to Excel. |
 | `tally_balance_sheet_export.json` | Opens TallyPrime and exports the Balance Sheet. |
 | `tally_export_and_mail.json` | Exports the Tally Balance Sheet and mails it (as an Outlook draft by default). |
+| `redact_documents.json` | **Offline.** Redacts a folder of sample documents (text PDF, scanned PDF, Word, Excel, picture, text, CSV) full of made-up Indian personal data, with a report. |
+| `pseudonymize_accounts.json` | **Offline.** Replaces account, PAN and mobile numbers in a customer list with tokens, then restores the originals from the encrypted vault. |
 | `pyautogui_tour.json` | A tour of mouse movement, screenshots, pixel colours and finding a picture on screen. |
 
 ## Get started
@@ -170,7 +200,7 @@ The [full guide](docs/GUIDE.md) explains every feature in detail, and the
 AutoFlowMate is written in **Rust** and is a Cargo workspace of three crates:
 
 ```
-crates/autoflow-core   flow model, the 100 actions, engine, validation, recorder, triggers
+crates/autoflow-core   flow model, the 104 actions, engine, validation, recorder, triggers
 crates/autoflow-cli    autoflow.exe: run / validate / schedule / watch / record / inspect ...
 crates/autoflow-gui    autoflow-studio.exe: the visual editor (egui)
 examples/              sample flows (validated by CI)

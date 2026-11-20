@@ -15,8 +15,11 @@ pub mod mail;
 pub mod mailread;
 pub mod ocr;
 pub mod presets;
+pub mod pseudo;
 pub mod recorder;
+pub mod redact;
 pub mod schedule;
+pub mod templates;
 pub mod textops;
 #[cfg(windows)]
 pub mod uia;

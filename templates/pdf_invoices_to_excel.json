@@ -1,0 +1,27 @@
+{
+  "name": "PDF invoices to an Excel register",
+  "description": "Reads every PDF in a folder, picks out the invoice number, date and total with regular expressions, and writes one row per invoice to an Excel register. Adjust the three patterns to your invoices' wording (▶ Try it on a text_extract step shows what a pattern finds).",
+  "variables": {
+    "folder": "invoices",
+    "register": "invoice_register.xlsx"
+  },
+  "steps": [
+    { "id": "list", "action": "dir_list", "path": "${folder}", "pattern": "*.pdf", "output_var": "files" },
+    { "id": "init", "action": "set_variable", "name": "register_rows", "value": [] },
+    {
+      "id": "each",
+      "action": "for_each",
+      "items": "${files}",
+      "item_var": "file",
+      "steps": [
+        { "id": "text", "action": "read_pdf", "path": "${file}", "output_var": "text" },
+        { "id": "no", "action": "text_extract", "input": "${text}", "pattern": "(?i)invoice\\s*(?:no|number|#)[.:\\s]*([A-Z0-9/-]+)", "group": 1, "output_var": "invoice_no" },
+        { "id": "date", "action": "text_extract", "input": "${text}", "pattern": "(\\d{1,2}[./-]\\d{1,2}[./-]\\d{2,4})", "group": 1, "output_var": "invoice_date" },
+        { "id": "total", "action": "text_extract", "input": "${text}", "pattern": "(?i)(?:grand\\s+)?total[^\\d]*([\\d,]+\\.?\\d*)", "group": 1, "output_var": "total" },
+        { "id": "add", "action": "list_append", "name": "register_rows", "value": { "File": "${file}", "Invoice": "${invoice_no}", "Date": "${invoice_date}", "Total": "${total}" } }
+      ]
+    },
+    { "id": "write", "action": "write_excel", "path": "${register}", "sheet": "Invoices", "data": "${register_rows}" },
+    { "id": "done", "action": "log", "message": "wrote ${register}" }
+  ]
+}

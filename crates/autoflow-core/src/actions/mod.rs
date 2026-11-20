@@ -2015,6 +2015,234 @@ impl Default for AiPrompt {
 
 // ---------------------------------------------------------------- registration
 
+pub use crate::redact::{MaskStyle, OcrMode};
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct RedactText {
+    /// The text to clean (interpolated), e.g. "${pdf_text}".
+    pub input: String,
+    /// Built-in rules to use (empty = all): pan, aadhaar, mobile, email, bank_account, ifsc, card,
+    /// upi, passport, voter_id, driving_licence, dob, age, gender, name, patient_id, health,
+    /// address, pincode. "none" = only your own patterns and words.
+    pub rules: Vec<String>,
+    /// Your own regular expressions, by label, e.g. {"EMPLOYEE_ID": "EMP-\\d{5}"}. To redact only
+    /// part of a match, name that part `value`: {"POLICY": "Policy No:\\s*(?P<value>\\S+)"}.
+    /// Start with (?i) to ignore upper/lower case.
+    pub patterns: Map<String, Value>,
+    /// Words or names to redact wherever they appear (whole words, any case).
+    pub words: Vec<String>,
+    /// A text or CSV file with more words or names, one per line (first column).
+    pub words_file: String,
+    /// label = [PAN], mask = XXXXXXXXXX, partial = XXXXXX234F (last 4 kept), text = replace_with.
+    pub mask_style: MaskStyle,
+    /// The replacement when mask_style is text, e.g. "***".
+    pub replace_with: String,
+    /// Check the Aadhaar (Verhoeff) and card (Luhn) checksums, so other 12-16 digit numbers
+    /// (order numbers, phone bills) are left alone.
+    pub strict: bool,
+    /// Variable receiving the cleaned text.
+    pub output_var: String,
+    /// Variable receiving what was found, e.g. {"PAN": 1, "MOBILE": 2} (optional).
+    pub report_var: String,
+}
+impl Default for RedactText {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            rules: vec![],
+            patterns: Map::new(),
+            words: vec![],
+            words_file: String::new(),
+            mask_style: MaskStyle::Label,
+            replace_with: String::new(),
+            strict: true,
+            output_var: "redacted".into(),
+            report_var: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct RedactFiles {
+    /// A file, or a folder of documents to redact. The originals are never changed.
+    pub input: String,
+    /// Where the redacted copies go: a folder (the input's sub-folders are kept), or a file name
+    /// when input is one file. Must not be the input.
+    pub output: String,
+    /// Which files, e.g. "*.pdf;*.docx" (empty = every supported file: PDF, Word .docx, Excel
+    /// .xlsx, pictures, text, CSV, JSON, XML, HTML).
+    pub include: String,
+    /// Include sub-folders.
+    pub recursive: bool,
+    /// Built-in rules to use (empty = all): pan, aadhaar, mobile, email, bank_account, ifsc, card,
+    /// upi, passport, voter_id, driving_licence, dob, age, gender, name, patient_id, health,
+    /// address, pincode. "none" = only your own patterns and words.
+    pub rules: Vec<String>,
+    /// Your own regular expressions, by label, e.g. {"EMPLOYEE_ID": "EMP-\\d{5}"}. To redact only
+    /// part of a match, name that part `value`: {"POLICY": "Policy No:\\s*(?P<value>\\S+)"}.
+    pub patterns: Map<String, Value>,
+    /// Words or names to redact wherever they appear (whole words, any case).
+    pub words: Vec<String>,
+    /// A text or CSV file with more words or names, one per line (first column).
+    pub words_file: String,
+    /// label = [PAN], mask = XXXXXXXXXX, partial = XXXXXX234F (last 4 kept), text = replace_with.
+    /// PDFs and pictures always get black boxes.
+    pub mask_style: MaskStyle,
+    /// The replacement when mask_style is text, e.g. "***".
+    pub replace_with: String,
+    /// Check the Aadhaar (Verhoeff) and card (Luhn) checksums, so other long numbers are left alone.
+    pub strict: bool,
+    /// auto = scanned pages and pictures are read with Windows OCR; always = OCR every PDF page
+    /// too (finds text inside pictures; slower); never = no OCR.
+    pub ocr: OcrMode,
+    /// OCR language tag such as en-US (empty = the Windows display languages).
+    pub ocr_language: String,
+    /// Also read text turned sideways or upside down (landscape scans, rotated ID cards). OCR
+    /// takes four passes, so it is slower; turn off only for upright documents.
+    pub ocr_rotated: bool,
+    /// Resolution of the redacted PDF pages in dots per inch (150 is clear and compact; 200-300 for small print).
+    pub pdf_dpi: u32,
+    /// Word and Excel: clear the author and "last saved by" fields and redact the document
+    /// properties (title, subject, keywords, comments, custom properties). PDFs and pictures are
+    /// rebuilt from pixels, so they keep no metadata at all.
+    pub clear_metadata: bool,
+    /// Redo files that are already in the output folder.
+    pub overwrite: bool,
+    /// Files worked on at the same time (0 = automatic).
+    pub threads: u32,
+    /// A CSV report: one line per file with what was found (counts only, never the values).
+    pub report: String,
+    /// Variable receiving a summary: {"files": 120, "redacted": 80, "clean": 35, "unverified": 1,
+    /// "skipped": 3, "failed": 1, "found": {"PAN": 95...}}.
+    pub summary_var: String,
+    /// Let the flow go on when some files failed or could not be checked (unverified). Off by
+    /// default: the step then fails, so later steps (zip, e-mail, upload) never send a folder that
+    /// is not completely redacted. The report and summary are written either way.
+    pub continue_on_problems: bool,
+}
+impl Default for RedactFiles {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            output: String::new(),
+            include: String::new(),
+            recursive: true,
+            rules: vec![],
+            patterns: Map::new(),
+            words: vec![],
+            words_file: String::new(),
+            mask_style: MaskStyle::Label,
+            replace_with: String::new(),
+            strict: true,
+            ocr: OcrMode::Auto,
+            ocr_language: String::new(),
+            ocr_rotated: true,
+            pdf_dpi: 150,
+            clear_metadata: true,
+            overwrite: false,
+            threads: 0,
+            report: String::new(),
+            summary_var: "redaction".into(),
+            continue_on_problems: false,
+        }
+    }
+}
+
+/// What to do with a value the vault doesn't know.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UnknownToken {
+    /// Leave it as it is (and count it in the log).
+    #[default]
+    Keep,
+    /// Make it empty.
+    Empty,
+    /// Stop the step with an error.
+    Fail,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Pseudonymize {
+    /// One value to replace (interpolated), e.g. "${row.AccountNo}". Leave empty when using data.
+    pub input: String,
+    /// Or a whole table: a list of records such as "${rows}" (from read_excel / read_csv).
+    pub data: Value,
+    /// With data: the columns to replace, e.g. ["AccountNo", "PAN"] (the other columns stay).
+    pub columns: Vec<String>,
+    /// Text in front of every token, e.g. "ACC-" gives ACC-7K2M9QX4T1B3HC0D.
+    pub prefix: String,
+    /// Keeps purposes apart: the same value gets different tokens in different domains. Use one per
+    /// purpose and kind, e.g. "vendor_share_2026:account", so tables shared for different purposes
+    /// can't be linked. Empty = one shared domain (the validator warns).
+    pub domain: String,
+    /// Remove spaces and dashes and use capitals before making the token, so "1234 5678" and
+    /// "12345678" get the same token (the vault keeps the tidied value).
+    pub normalize: bool,
+    /// The vault file keeping the original values, encrypted (a SQLite file).
+    pub vault: String,
+    /// Name of the key in Windows Credential Manager. Created on first use; back it up, without
+    /// it the vault cannot be read.
+    pub key_secret: String,
+    /// Variable receiving the token (with input) or the new table (with data).
+    pub output_var: String,
+    /// Variable receiving how many values were replaced (optional).
+    pub count_var: String,
+}
+impl Default for Pseudonymize {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            data: Value::Null,
+            columns: vec![],
+            prefix: "ID-".into(),
+            domain: String::new(),
+            normalize: false,
+            vault: "pseudonyms.db".into(),
+            key_secret: "pseudonym_key".into(),
+            output_var: "token".into(),
+            count_var: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Depseudonymize {
+    /// One token to turn back (interpolated), e.g. "${row.AccountNo}". Leave empty when using data.
+    pub input: String,
+    /// Or a whole table: a list of records such as "${rows}".
+    pub data: Value,
+    /// With data: the columns holding tokens, e.g. ["AccountNo"].
+    pub columns: Vec<String>,
+    /// The vault file made by pseudonymize.
+    pub vault: String,
+    /// Name of the key in Windows Credential Manager (the same as when the tokens were made).
+    pub key_secret: String,
+    /// keep = leave unknown values as they are, empty = blank them, fail = stop with an error.
+    pub unknown: UnknownToken,
+    /// Variable receiving the original value (with input) or the restored table (with data).
+    pub output_var: String,
+    /// Variable receiving how many values were restored (optional).
+    pub count_var: String,
+}
+impl Default for Depseudonymize {
+    fn default() -> Self {
+        Self {
+            input: String::new(),
+            data: Value::Null,
+            columns: vec![],
+            vault: "pseudonyms.db".into(),
+            key_secret: "pseudonym_key".into(),
+            unknown: UnknownToken::Keep,
+            output_var: "value".into(),
+            count_var: String::new(),
+        }
+    }
+}
+
 /// Metadata about an action, for the editor palette, `autoflow actions` and docs.
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionInfo {
@@ -2102,6 +2330,11 @@ actions! {
     "Text", "text_extract", TextExtract(TextExtract), "Pick out text with a regular expression (first match or all).";
     "Text", "text_split", TextSplit(TextSplit), "Split text into a list (by comma, line, tab or pattern).";
     "Text", "text_join", TextJoin(TextJoin), "Join a list into one text.";
+
+    "Privacy", "redact_files", RedactFiles(RedactFiles), "(Beta) Redact personal data (PAN, Aadhaar, mobile, names, DOB, patient details, your own patterns) in a folder of PDF, Word, Excel, picture and text files, offline.";
+    "Privacy", "redact_text", RedactText(RedactText), "(Beta) Redact personal data in a text (Indian DPDP identifiers, labelled details, your own patterns).";
+    "Privacy", "pseudonymize", Pseudonymize(Pseudonymize), "(Beta) Replace IDs (account numbers, PAN, mobile...) with tokens that only your key can turn back; originals kept encrypted in a vault.";
+    "Privacy", "depseudonymize", Depseudonymize(Depseudonymize), "(Beta) Turn tokens made by pseudonymize back into the original values (needs the vault and the key).";
 
     "Date & Math", "date_calc", DateCalc(DateCalc), "Format, add to, subtract or compare dates.";
     "Date & Math", "calculate", Calculate(Calculate), "Evaluate arithmetic such as ${amount} * 18 / 100.";

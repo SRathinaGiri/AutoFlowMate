@@ -35,7 +35,12 @@ odbc-api.workspace = true
 rusqlite.workspace = true
 zip.workspace = true
 quick-xml.workspace = true
+lopdf.workspace = true
+image.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+aes-gcm.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 uiautomation.workspace = true
-windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_System_WinRT", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }
+windows = { version = "0.62", features = ["Data_Pdf", "Foundation", "Foundation_Collections", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage", "Storage_Streams", "Win32_System_WinRT", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_LibraryLoader", "Win32_Graphics_Gdi"] }

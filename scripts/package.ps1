@@ -23,7 +23,7 @@ New-Item -ItemType Directory -Force (Join-Path $stage 'assets') | Out-Null
 Copy-Item assets\wordmark.png, assets\wordmark-dark.png, assets\splash.png (Join-Path $stage 'assets')
 Copy-Item assets\screenshots (Join-Path $stage 'assets\screenshots') -Recurse
 foreach ($f in 'CONTRIBUTING.md', 'SECURITY.md') { Copy-Item $f $stage }
-foreach ($dir in 'skills', 'schema', 'docs', 'lang') { Copy-Item $dir (Join-Path $stage $dir) -Recurse }
+foreach ($dir in 'skills', 'schema', 'docs', 'lang', 'templates') { Copy-Item $dir (Join-Path $stage $dir) -Recurse }
 
 # Examples without run output or logs.
 $ex = Join-Path $stage 'examples'
@@ -41,6 +41,8 @@ Quick start:
   autoflow-studio.exe examples\file_organizer.json
   autoflow.exe run examples\web_form_demo.json
   autoflow.exe run examples\documents_demo.json   (offline: PDF table, Word letter, zip)
+  autoflow.exe run examples\redact_documents.json (offline: redact PAN, Aadhaar, names... in a folder)
+  autoflow.exe templates                          (ready-made flows to start from)
   autoflow.exe record my_flow.json                (record clicks and typing; Ctrl+Alt+R stops)
 
 Keep autoflow.exe next to autoflow-studio.exe (scheduled tasks run it).

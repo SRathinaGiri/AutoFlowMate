@@ -102,6 +102,7 @@ const HISTORY_LIMIT: usize = 200;
 enum Pending {
     New,
     Open(Option<PathBuf>),
+    Template(PathBuf),
     Close,
 }
 
@@ -159,6 +160,10 @@ struct Studio {
     settings_ui: Option<settings::SettingsUi>,
     /// "How recording works" is shown before recording starts.
     record_prompt: bool,
+    /// File > New from template: the templates found (None = window closed).
+    template_list: Option<Vec<autoflow_core::templates::TemplateInfo>>,
+    /// File > Save as template: the name being typed (None = window closed).
+    template_name: Option<String>,
     /// Per-action field descriptions, allowed values and defaults from the schema.
     schema: schema_info::SchemaInfo,
     /// Font, text size and palette behaviour (View menu).
@@ -255,6 +260,8 @@ impl Studio {
             cache: smart::Cache::default(),
             settings_ui: None,
             record_prompt: false,
+            template_list: None,
+            template_name: None,
             schema: schema_info::SchemaInfo::load(),
             prefs: look::UiPrefs::load(),
             open_category: Some("Flow".into()),
@@ -347,6 +354,7 @@ impl Studio {
             Pending::New => self.new_flow(),
             Pending::Open(None) => self.open_dialog(),
             Pending::Open(Some(path)) => self.open_path(path),
+            Pending::Template(path) => self.start_from_template(path),
             Pending::Close => {
                 self.allow_close = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -589,6 +597,115 @@ impl Studio {
                 self.dirty = false;
             }
             Err(e) => self.info(LogKind::Error, format!("save failed: {e:#}")),
+        }
+    }
+
+    /// Start a new, unsaved flow from a template (the template itself is never changed).
+    fn start_from_template(&mut self, p: PathBuf) {
+        match Flow::load(&p) {
+            Ok(f) => {
+                self.new_flow();
+                self.info(
+                    LogKind::Info,
+                    format!("{} \"{}\" - {}", tr("started from the template"), f.name, tr("set the values in the Variables tab, then Save")),
+                );
+                self.flow = f;
+                self.dirty = true;
+                self.sync_vars_buf();
+                self.reset_history();
+            }
+            Err(e) => self.info(LogKind::Error, format!("{e:#}")),
+        }
+    }
+
+    fn templates_window(&mut self, ctx: &egui::Context) {
+        let Some(list) = &self.template_list else { return };
+        let mut pick: Option<PathBuf> = None;
+        let mut open = true;
+        let mut close = false;
+        egui::Window::new(tr("📋 New from template")).open(&mut open).default_width(640.0).default_height(520.0).collapsible(false).show(ctx, |ui| {
+            ui.label(tr("Start from a ready-made flow. The template is copied; set its values in the Variables tab and save it under a new name."));
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().max_height(440.0).show(ui, |ui| {
+                if list.is_empty() {
+                    ui.label(tr("No templates found."));
+                }
+                let mut shown_own = false;
+                for t in list {
+                    if t.own && !shown_own {
+                        shown_own = true;
+                        ui.separator();
+                        ui.label(RichText::new(tr("Your templates")).strong());
+                    }
+                    ui.group(|ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            if ui.button(RichText::new(tr("Use")).strong()).clicked() {
+                                pick = Some(t.path.clone());
+                            }
+                            ui.label(RichText::new(&t.name).strong());
+                        });
+                        if !t.description.is_empty() {
+                            ui.add(egui::Label::new(RichText::new(&t.description).weak()).wrap());
+                        }
+                    });
+                }
+            });
+            ui.horizontal(|ui| {
+                if let Some(d) = autoflow_core::templates::user_dir() {
+                    if ui.button(tr("📂 Open my templates folder")).clicked() {
+                        let _ = std::fs::create_dir_all(&d);
+                        let _ = std::process::Command::new("explorer").arg(&d).spawn();
+                    }
+                }
+                if ui.button(tr("Cancel")).clicked() {
+                    close = true;
+                }
+            });
+        });
+        if !open || close {
+            self.template_list = None;
+        }
+        if let Some(p) = pick {
+            self.template_list = None;
+            self.guard(Pending::Template(p), ctx);
+        }
+    }
+
+    fn save_template_window(&mut self, ctx: &egui::Context) {
+        let Some(name) = self.template_name.as_mut() else { return };
+        let mut done: Option<bool> = None;
+        egui::Window::new(tr("💾 Save as template")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            ui.label(tr("Save this flow as a template you can start new flows from (File > New from template)."));
+            ui.horizontal(|ui| {
+                ui.label(tr("Name"));
+                ui.add(egui::TextEdit::singleline(name).desired_width(300.0));
+            });
+            ui.weak(tr("Tip: say what to change in the flow's description; it is shown in the template list."));
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new(tr("💾 Save")).strong()).clicked() {
+                    done = Some(true);
+                }
+                if ui.button(tr("Cancel")).clicked() {
+                    done = Some(false);
+                }
+            });
+        });
+        match done {
+            Some(true) => {
+                let name = self.template_name.take().unwrap_or_default();
+                let mut flow = self.flow.clone();
+                flow.assign_ids();
+                if !name.trim().is_empty() {
+                    flow.name = name.trim().to_string();
+                }
+                match autoflow_core::templates::save_own(&flow.to_json(), &flow.name) {
+                    Ok(p) => self.info(LogKind::Ok, format!("{} {}", tr("saved the template"), p.display())),
+                    Err(e) => self.info(LogKind::Error, format!("{e:#}")),
+                }
+            }
+            Some(false) => self.template_name = None,
+            None => {}
         }
     }
 
@@ -862,6 +979,14 @@ impl Studio {
                         self.guard(Pending::New, &ctx);
                         ui.close();
                     }
+                    if ui
+                        .button(tr("📋 New from template…"))
+                        .on_hover_text(tr("Start from a ready-made flow: redaction, pseudonymisation, mail merge, invoices to Excel..."))
+                        .clicked()
+                    {
+                        self.template_list = Some(autoflow_core::templates::list());
+                        ui.close();
+                    }
                     if ui.button(tr("Open…  (Ctrl+O)")).clicked() {
                         self.guard(Pending::Open(None), &ctx);
                         ui.close();
@@ -872,6 +997,10 @@ impl Studio {
                     }
                     if ui.button(tr("Save as…")).clicked() {
                         self.save(true);
+                        ui.close();
+                    }
+                    if ui.button(tr("Save as template…")).on_hover_text(tr("Keep this flow as a starting point for new flows")).clicked() {
+                        self.template_name = Some(self.flow.name.clone());
                         ui.close();
                     }
                     ui.separator();
@@ -1413,7 +1542,7 @@ impl Studio {
                 self.apply(TreeOp::Delete(p.clone()));
             }
         });
-        if matches!(category, "Text" | "Date & Math") || matches!(name, "set_variable" | "increment" | "list_append") {
+        if matches!(category, "Text" | "Date & Math") || matches!(name, "set_variable" | "increment" | "list_append" | "redact_text") {
             ui.add_space(6.0);
             if ui
                 .button(RichText::new(tr("▶ Try it")).strong())
@@ -2317,6 +2446,8 @@ impl eframe::App for Studio {
         self.secret_window(&ctx);
         self.paused_window(&ctx);
         self.record_prompt_window(&ctx);
+        self.templates_window(&ctx);
+        self.save_template_window(&ctx);
         if settings::show(&ctx, &mut self.settings_ui) {
             self.lists.presets = autoflow_core::presets::Presets::load();
         }
@@ -2475,6 +2606,7 @@ fn cat_color(cat: &str) -> Color32 {
         "Internet" => Color32::from_rgb(70, 130, 200),
         "Database" => Color32::from_rgb(120, 140, 90),
         "Documents" => Color32::from_rgb(70, 110, 200),
+        "Privacy" => Color32::from_rgb(90, 90, 110),
         "AI" => Color32::from_rgb(160, 90, 230),
         "Text" => Color32::from_rgb(190, 150, 90),
         "Date & Math" => Color32::from_rgb(80, 170, 200),

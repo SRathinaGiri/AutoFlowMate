@@ -123,12 +123,17 @@ enum Cmd {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
-    /// Create a new, empty flow file.
+    /// Create a new flow file: empty, or a copy of a template (see `autoflow templates`).
     New {
         file: PathBuf,
         #[arg(long, default_value = "New flow")]
         name: String,
+        /// Start from this template (its file name, e.g. redact_folder, or its title).
+        #[arg(long)]
+        template: Option<String>,
     },
+    /// List the flow templates you can start from (built-in and your own).
+    Templates,
     /// Show the UI element under the mouse pointer (to build ui_* selectors).
     Inspect {
         /// Seconds to wait before capturing, so you can point at something.
@@ -200,6 +205,14 @@ enum SecretCmd {
     Check { name: String },
     /// Delete the password stored under NAME.
     Delete { name: String },
+    /// Make a new random key for pseudonymize under NAME (default pseudonym_key) and show it once
+    /// so you can back it up. Refuses to replace an existing key.
+    NewKey {
+        #[arg(default_value = "pseudonym_key")]
+        name: String,
+    },
+    /// Show what is stored under NAME, to back up a pseudonymisation key (asks first).
+    Show { name: String },
 }
 
 #[derive(Subcommand)]
@@ -285,6 +298,25 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
                 SecretCmd::Delete { name } => {
                     secrets::delete(&name)?;
                     println!("deleted `{name}`");
+                }
+                SecretCmd::NewKey { name } => {
+                    if secrets::exists(&name) {
+                        bail!("`{name}` already exists; replacing it would make its vault unreadable (delete it first if you are sure)");
+                    }
+                    let key = autoflow_core::pseudo::new_key_text();
+                    secrets::set(&name, &key)?;
+                    println!("stored a new key under `{name}`. Back it up somewhere safe (a password manager), then clear this screen:");
+                    println!("{key}");
+                    println!("to restore it on another PC:  autoflow secret set {name}   (paste the key)");
+                }
+                SecretCmd::Show { name } => {
+                    eprint!("This shows the secret `{name}` on screen. Type yes to continue: ");
+                    let mut answer = String::new();
+                    std::io::stdin().read_line(&mut answer)?;
+                    if answer.trim() != "yes" {
+                        bail!("not shown");
+                    }
+                    println!("{}", secrets::get(&name)?);
                 }
             }
             Ok(ExitCode::SUCCESS)
@@ -502,13 +534,30 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
-        Cmd::New { file, name } => {
+        Cmd::New { file, name, template } => {
             if file.exists() {
                 bail!("{} already exists", file.display());
             }
-            let flow = Flow { name, ..Flow::default() };
-            flow.save(&file)?;
-            println!("created {}", file.display());
+            if let Some(t) = template {
+                let info = autoflow_core::templates::find(&t).ok_or_else(|| anyhow::anyhow!("no template `{t}`; see `autoflow templates`"))?;
+                std::fs::write(&file, autoflow_core::templates::read(&info)?)?;
+                println!("created {} from the template \"{}\"", file.display(), info.name);
+            } else {
+                let flow = Flow { name, ..Flow::default() };
+                flow.save(&file)?;
+                println!("created {}", file.display());
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Templates => {
+            let all = autoflow_core::templates::list();
+            if all.is_empty() {
+                println!("no templates found");
+            }
+            for t in all {
+                println!("{:<28} {}{}", t.id, t.name, if t.own { "  (yours)" } else { "" });
+            }
+            println!("use one:  autoflow new my_flow.json --template <name>");
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Inspect { delay, at } => inspect(delay, at),

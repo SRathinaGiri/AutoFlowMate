@@ -1,0 +1,33 @@
+{
+  "name": "Redact each document as it arrives in a folder",
+  "description": "Watches the folder 'incoming': every new document is redacted into the output folder and the original is moved to 'processed'. A document that cannot be redacted completely is not written and is moved to 'failed' for a person to check. Start it with `autoflow watch <this file>`, or schedule it at log-on with --watch.",
+  "variables": {
+    "output_folder": "redacted"
+  },
+  "triggers": [
+    {
+      "kind": "file",
+      "folder": "incoming",
+      "pattern": "*.*",
+      "variable": "file",
+      "move_to": "processed",
+      "move_failed_to": "failed",
+      "include_existing": true
+    }
+  ],
+  "steps": [
+    {
+      "id": "redact",
+      "action": "redact_files",
+      "input": "${file}",
+      "output": "${output_folder}",
+      "overwrite": true,
+      "summary_var": "r"
+    },
+    {
+      "id": "done",
+      "action": "log",
+      "message": "redacted ${file}"
+    }
+  ]
+}

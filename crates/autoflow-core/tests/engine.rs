@@ -189,3 +189,34 @@ fn settings_default_and_roundtrip() {
     let back: Flow = serde_json::from_str(&f.to_json()).unwrap();
     assert_eq!(back.settings, f.settings);
 }
+
+#[test]
+fn redaction_fails_closed_unless_told_otherwise() {
+    let dir = tmpdir("redact_closed");
+    let inbox = dir.join("in");
+    std::fs::create_dir_all(&inbox).unwrap();
+    std::fs::write(inbox.join("good.txt"), "PAN ABCPE1234F").unwrap();
+    // A damaged Word file cannot be redacted.
+    std::fs::write(inbox.join("broken.docx"), b"this is not a zip").unwrap();
+    let flow = |cont: bool| {
+        json!({"name":"t","steps":[
+            {"action":"redact_files","input":"in","output":"out","report":"out/report.csv","continue_on_problems":cont,"overwrite":true,"summary_var":"s"},
+            {"action":"file_write","path":"after.txt","content":"ran"}
+        ]})
+    };
+    let (r, _) = run(flow(false), &dir);
+    assert!(!r.success, "a failed file must stop the flow");
+    assert!(r.message.contains("could not be redacted completely"), "{}", r.message);
+    assert!(!dir.join("after.txt").exists(), "later steps must not run");
+    assert!(!dir.join("out").join("broken.docx").exists(), "nothing unredacted is written");
+    assert_eq!(std::fs::read_to_string(dir.join("out").join("good.txt")).unwrap(), "PAN [PAN]");
+    let report = std::fs::read_to_string(dir.join("out").join("report.csv")).unwrap();
+    assert!(report.contains("broken.docx,failed"), "{report}");
+    assert!(!report.contains("ABCPE1234F"));
+    assert_eq!(r.variables["s"]["failed"], json!(1));
+
+    let (r, _) = run(flow(true), &dir);
+    assert!(r.success, "{}", r.message);
+    assert!(dir.join("after.txt").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}

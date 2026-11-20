@@ -1,0 +1,30 @@
+{
+  "name": "Redact personal data in a folder of documents (DPDP)",
+  "description": "Runs offline, no AI. Makes redacted copies of every document in data/redact/inbox (PDF, scanned PDF, Word, Excel, picture, text, CSV) in output/redacted, keeping the folder structure; the originals are not changed. Finds PAN, Aadhaar (checksum-verified), mobile numbers, e-mail, bank accounts, IFSC, cards, UPI IDs, passport, voter ID, driving licence, and labelled details (Name, DOB, Age, Sex, UHID, Diagnosis, Address, PIN), plus the names in data/redact/names_to_redact.txt and a company pattern (EMP-12345). Writes a CSV report with counts only. A file that cannot be redacted completely is not written and stops the flow, so nothing half-redacted is passed on. Point input_folder at your own folder of thousands of files.",
+  "variables": {
+    "input_folder": "data/redact/inbox",
+    "output_folder": "output/redacted",
+    "names_file": "data/redact/names_to_redact.txt"
+  },
+  "steps": [
+    {
+      "id": "redact",
+      "action": "redact_files",
+      "input": "${input_folder}",
+      "output": "${output_folder}",
+      "patterns": {
+        "EMPLOYEE_ID": "EMP-\\d{5}"
+      },
+      "words_file": "${names_file}",
+      "mask_style": "label",
+      "report": "${output_folder}/redaction_report.csv",
+      "overwrite": true,
+      "summary_var": "redaction"
+    },
+    {
+      "id": "summary",
+      "action": "log",
+      "message": "${redaction.files} file(s): ${redaction.redacted} redacted, ${redaction.clean} clean, ${redaction.skipped} skipped, ${redaction.failed} failed. Report: ${output_folder}/redaction_report.csv"
+    }
+  ]
+}

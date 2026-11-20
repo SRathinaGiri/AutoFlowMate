@@ -392,12 +392,15 @@ struct Collector {
     page: u32,
     flip: Option<pdf_extract::Transform>,
     glyphs: Vec<Glyph>,
+    /// Lower-left corner of each page's media box, in page order.
+    origins: Vec<(u32, f64, f64)>,
 }
 
 impl pdf_extract::OutputDev for Collector {
     fn begin_page(&mut self, page: u32, media: &pdf_extract::MediaBox, _: Option<(f64, f64, f64, f64)>) -> Result<(), pdf_extract::OutputError> {
         self.page = page;
         self.flip = Some(pdf_extract::Transform::row_major(1., 0., 0., -1., 0., media.ury - media.lly));
+        self.origins.push((page, media.llx, media.lly));
         Ok(())
     }
     fn end_page(&mut self) -> Result<(), pdf_extract::OutputError> {
@@ -445,6 +448,38 @@ pub fn pdf_text(path: &Path, pages: &[u32]) -> Result<(String, usize)> {
         out.push('\n');
     }
     Ok((out.trim_end().to_string(), n))
+}
+
+/// A character on a PDF page: position in points from the page's top-left corner (`y` is the
+/// baseline), advance width and font size.
+#[derive(Debug, Clone)]
+pub struct PageGlyph {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub size: f64,
+    pub ch: String,
+}
+
+/// The characters of one PDF page.
+#[derive(Debug, Clone, Default)]
+pub struct PageGlyphs {
+    pub glyphs: Vec<PageGlyph>,
+}
+
+/// Every page's characters with their positions, in page order (pages without text are empty).
+pub fn pdf_glyph_pages(path: &Path) -> Result<Vec<PageGlyphs>> {
+    let doc = pdf_extract::Document::load(path).map_err(|e| anyhow!("cannot open PDF {}: {e}", path.display()))?;
+    let mut c = Collector::default();
+    pdf_extract::output_doc(&doc, &mut c).map_err(|e| anyhow!("cannot read PDF {}: {e}", path.display()))?;
+    let mut pages: Vec<PageGlyphs> = vec![PageGlyphs::default(); c.origins.len()];
+    let index: std::collections::HashMap<u32, (usize, f64, f64)> = c.origins.iter().enumerate().map(|(i, (p, x, y))| (*p, (i, *x, *y))).collect();
+    for g in c.glyphs {
+        if let Some((i, llx, lly)) = index.get(&g.page) {
+            pages[*i].glyphs.push(PageGlyph { x: g.x - llx, y: g.y + lly, w: g.w, size: g.size, ch: g.ch });
+        }
+    }
+    Ok(pages)
 }
 
 /// Lines of a PDF: (page, cells).

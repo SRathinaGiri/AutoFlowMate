@@ -1,0 +1,22 @@
+{
+  "name": "Zip a folder and mail it (backup)",
+  "description": "Zips a folder into a dated file and opens an Outlook draft with the zip attached, for you to check and send. Schedule it (for example daily at 18:00) for regular backups. Set send_now to true in the mail step to send without the draft.",
+  "variables": {
+    "folder": "reports",
+    "backup_folder": "backups",
+    "to": "someone@example.com"
+  },
+  "steps": [
+    { "id": "name", "action": "set_variable", "name": "zip_file", "value": "${backup_folder}\\backup_${timestamp}.zip" },
+    { "id": "zip", "action": "zip_create", "path": "${zip_file}", "sources": ["${folder}"], "count_var": "n" },
+    {
+      "id": "mail",
+      "action": "outlook_send",
+      "to": "${to}",
+      "subject": "Backup ${date}",
+      "body": "Backup of ${folder} (${n} files) attached.",
+      "attachments": ["${zip_file}"],
+      "send_now": false
+    }
+  ]
+}

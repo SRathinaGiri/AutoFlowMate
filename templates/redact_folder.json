@@ -1,0 +1,25 @@
+{
+  "name": "Redact personal data in a folder (DPDP)",
+  "description": "Makes redacted copies of every document in a folder (PDF, scanned PDF, Word, Excel, pictures, text, CSV): PAN, Aadhaar, mobile, e-mail, bank accounts, names, DOB, patient details and more. Offline, no AI; the originals are not changed. If any file cannot be redacted completely, it is not written and the flow stops with a message (see the report), so an incomplete folder is never passed on. Set input_folder and output_folder in the Variables tab; list extra names in names_file (one per line) and add your own patterns in the redact step.",
+  "variables": {
+    "input_folder": "to_redact",
+    "output_folder": "redacted",
+    "names_file": ""
+  },
+  "steps": [
+    {
+      "id": "redact",
+      "action": "redact_files",
+      "input": "${input_folder}",
+      "output": "${output_folder}",
+      "words_file": "${names_file}",
+      "report": "${output_folder}/redaction_report_${timestamp}.csv",
+      "summary_var": "redaction"
+    },
+    {
+      "id": "summary",
+      "action": "log",
+      "message": "${redaction.files} file(s): ${redaction.redacted} redacted, ${redaction.clean} clean, ${redaction.skipped} skipped (type not supported, not copied)"
+    }
+  ]
+}

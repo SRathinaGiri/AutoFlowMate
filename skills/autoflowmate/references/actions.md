@@ -591,6 +591,101 @@ Join a list into one text.
 {"action":"text_join","items":"","separator":", ","output_var":"text"}
 ```
 
+## Privacy
+
+### `redact_files`
+
+(Beta) Redact personal data (PAN, Aadhaar, mobile, names, DOB, patient details, your own patterns) in a folder of PDF, Word, Excel, picture and text files, offline.
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | A file, or a folder of documents to redact. The originals are never changed. |
+| `output` | `""` | Where the redacted copies go: a folder (the input's sub-folders are kept), or a file name when input is one file. Must not be the input. |
+| `include` | `""` | Which files, e.g. "*.pdf;*.docx" (empty = every supported file: PDF, Word .docx, Excel .xlsx, pictures, text, CSV, JSON, XML, HTML). |
+| `recursive` | `true` | Include sub-folders. |
+| `rules` | `[]` | Built-in rules to use (empty = all): pan, aadhaar, mobile, email, bank_account, ifsc, card, upi, passport, voter_id, driving_licence, dob, age, gender, name, patient_id, health, address, pincode. "none" = only your own patterns and words. |
+| `patterns` | `{}` | Your own regular expressions, by label, e.g. {"EMPLOYEE_ID": "EMP-\\d{5}"}. To redact only part of a match, name that part `value`: {"POLICY": "Policy No:\\s*(?P<value>\\S+)"}. |
+| `words` | `[]` | Words or names to redact wherever they appear (whole words, any case). |
+| `words_file` | `""` | A text or CSV file with more words or names, one per line (first column). |
+| `mask_style` | `"label"` | label = [PAN], mask = XXXXXXXXXX, partial = XXXXXX234F (last 4 kept), text = replace_with. PDFs and pictures always get black boxes. |
+| `replace_with` | `""` | The replacement when mask_style is text, e.g. "***". |
+| `strict` | `true` | Check the Aadhaar (Verhoeff) and card (Luhn) checksums, so other long numbers are left alone. |
+| `ocr` | `"auto"` | auto = scanned pages and pictures are read with Windows OCR; always = OCR every PDF page too (finds text inside pictures; slower); never = no OCR. |
+| `ocr_language` | `""` | OCR language tag such as en-US (empty = the Windows display languages). |
+| `ocr_rotated` | `true` | Also read text turned sideways or upside down (landscape scans, rotated ID cards). OCR takes four passes, so it is slower; turn off only for upright documents. |
+| `pdf_dpi` | `150` | Resolution of the redacted PDF pages in dots per inch (150 is clear and compact; 200-300 for small print). |
+| `clear_metadata` | `true` | Word and Excel: clear the author and "last saved by" fields and redact the document properties (title, subject, keywords, comments, custom properties). PDFs and pictures are rebuilt from pixels, so they keep no metadata at all. |
+| `overwrite` | `false` | Redo files that are already in the output folder. |
+| `threads` | `0` | Files worked on at the same time (0 = automatic). |
+| `report` | `""` | A CSV report: one line per file with what was found (counts only, never the values). |
+| `summary_var` | `"redaction"` | Variable receiving a summary: {"files": 120, "redacted": 80, "clean": 35, "unverified": 1, "skipped": 3, "failed": 1, "found": {"PAN": 95...}}. |
+| `continue_on_problems` | `false` | Let the flow go on when some files failed or could not be checked (unverified). Off by default: the step then fails, so later steps (zip, e-mail, upload) never send a folder that is not completely redacted. The report and summary are written either way. |
+
+```json
+{"action":"redact_files","input":"","output":"","include":"","recursive":true,"rules":[],"patterns":{},"words":[],"words_file":"","mask_style":"label","replace_with":"","strict":true,"ocr":"auto","ocr_language":"","ocr_rotated":true,"pdf_dpi":150,"clear_metadata":true,"overwrite":false,"threads":0,"report":"","summary_var":"redaction","continue_on_problems":false}
+```
+
+### `redact_text`
+
+(Beta) Redact personal data in a text (Indian DPDP identifiers, labelled details, your own patterns).
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | The text to clean (interpolated), e.g. "${pdf_text}". |
+| `rules` | `[]` | Built-in rules to use (empty = all): pan, aadhaar, mobile, email, bank_account, ifsc, card, upi, passport, voter_id, driving_licence, dob, age, gender, name, patient_id, health, address, pincode. "none" = only your own patterns and words. |
+| `patterns` | `{}` | Your own regular expressions, by label, e.g. {"EMPLOYEE_ID": "EMP-\\d{5}"}. To redact only part of a match, name that part `value`: {"POLICY": "Policy No:\\s*(?P<value>\\S+)"}. Start with (?i) to ignore upper/lower case. |
+| `words` | `[]` | Words or names to redact wherever they appear (whole words, any case). |
+| `words_file` | `""` | A text or CSV file with more words or names, one per line (first column). |
+| `mask_style` | `"label"` | label = [PAN], mask = XXXXXXXXXX, partial = XXXXXX234F (last 4 kept), text = replace_with. |
+| `replace_with` | `""` | The replacement when mask_style is text, e.g. "***". |
+| `strict` | `true` | Check the Aadhaar (Verhoeff) and card (Luhn) checksums, so other 12-16 digit numbers (order numbers, phone bills) are left alone. |
+| `output_var` | `"redacted"` | Variable receiving the cleaned text. |
+| `report_var` | `""` | Variable receiving what was found, e.g. {"PAN": 1, "MOBILE": 2} (optional). |
+
+```json
+{"action":"redact_text","input":"","rules":[],"patterns":{},"words":[],"words_file":"","mask_style":"label","replace_with":"","strict":true,"output_var":"redacted","report_var":""}
+```
+
+### `pseudonymize`
+
+(Beta) Replace IDs (account numbers, PAN, mobile...) with tokens that only your key can turn back; originals kept encrypted in a vault.
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | One value to replace (interpolated), e.g. "${row.AccountNo}". Leave empty when using data. |
+| `data` | `null` | Or a whole table: a list of records such as "${rows}" (from read_excel / read_csv). |
+| `columns` | `[]` | With data: the columns to replace, e.g. ["AccountNo", "PAN"] (the other columns stay). |
+| `prefix` | `"ID-"` | Text in front of every token, e.g. "ACC-" gives ACC-7K2M9QX4T1B3HC0D. |
+| `domain` | `""` | Keeps purposes apart: the same value gets different tokens in different domains. Use one per purpose and kind, e.g. "vendor_share_2026:account", so tables shared for different purposes can't be linked. Empty = one shared domain (the validator warns). |
+| `normalize` | `false` | Remove spaces and dashes and use capitals before making the token, so "1234 5678" and "12345678" get the same token (the vault keeps the tidied value). |
+| `vault` | `"pseudonyms.db"` | The vault file keeping the original values, encrypted (a SQLite file). |
+| `key_secret` | `"pseudonym_key"` | Name of the key in Windows Credential Manager. Created on first use; back it up, without it the vault cannot be read. |
+| `output_var` | `"token"` | Variable receiving the token (with input) or the new table (with data). |
+| `count_var` | `""` | Variable receiving how many values were replaced (optional). |
+
+```json
+{"action":"pseudonymize","input":"","data":null,"columns":[],"prefix":"ID-","domain":"","normalize":false,"vault":"pseudonyms.db","key_secret":"pseudonym_key","output_var":"token","count_var":""}
+```
+
+### `depseudonymize`
+
+(Beta) Turn tokens made by pseudonymize back into the original values (needs the vault and the key).
+
+| field | default | description |
+|---|---|---|
+| `input` | `""` | One token to turn back (interpolated), e.g. "${row.AccountNo}". Leave empty when using data. |
+| `data` | `null` | Or a whole table: a list of records such as "${rows}". |
+| `columns` | `[]` | With data: the columns holding tokens, e.g. ["AccountNo"]. |
+| `vault` | `"pseudonyms.db"` | The vault file made by pseudonymize. |
+| `key_secret` | `"pseudonym_key"` | Name of the key in Windows Credential Manager (the same as when the tokens were made). |
+| `unknown` | `"keep"` | keep = leave unknown values as they are, empty = blank them, fail = stop with an error. |
+| `output_var` | `"value"` | Variable receiving the original value (with input) or the restored table (with data). |
+| `count_var` | `""` | Variable receiving how many values were restored (optional). |
+
+```json
+{"action":"depseudonymize","input":"","data":null,"columns":[],"vault":"pseudonyms.db","key_secret":"pseudonym_key","unknown":"keep","output_var":"value","count_var":""}
+```
+
 ## Date & Math
 
 ### `date_calc`

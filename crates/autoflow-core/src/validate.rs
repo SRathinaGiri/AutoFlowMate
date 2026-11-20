@@ -333,6 +333,61 @@ fn check_sql(issues: &mut Vec<Issue>, loc: &str, name: &str, db: &crate::actions
     }
 }
 
+/// Rule names, own patterns and the replacement of a redaction step.
+fn check_redaction(
+    rules: &[String],
+    patterns: &serde_json::Map<String, serde_json::Value>,
+    style: crate::redact::MaskStyle,
+    replace_with: &str,
+    action: &str,
+    loc: &str,
+    issues: &mut Vec<Issue>,
+) {
+    for r in rules.iter().flat_map(|r| r.split([',', ';'])) {
+        let n = r.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+        if n.is_empty() || n.contains("${") || n == "all" || n == "none" {
+            continue;
+        }
+        if !crate::redact::RULES.iter().any(|(name, ..)| *name == n) {
+            issues.push(err(loc, format!("{action}: unknown rule `{r}`; known: {}", crate::redact::RULES.iter().map(|r| r.0).collect::<Vec<_>>().join(", "))));
+        }
+    }
+    for (label, p) in patterns {
+        let Some(p) = p.as_str() else {
+            issues.push(err(loc, format!("{action}: pattern `{label}` must be text")));
+            continue;
+        };
+        if p.contains("${") {
+            continue;
+        }
+        if let Err(e) = regex::Regex::new(p) {
+            issues.push(err(loc, format!("{action}: pattern `{label}` is not a valid regular expression: {}", e.to_string().lines().last().unwrap_or(""))));
+        } else if regex::Regex::new(p).map(|re| re.is_match("")).unwrap_or(false) {
+            issues.push(err(loc, format!("{action}: pattern `{label}` matches empty text; it would find nothing useful")));
+        }
+    }
+    if style == crate::redact::MaskStyle::Text && replace_with.is_empty() {
+        issues.push(warn(loc, format!("{action}: mask_style is text but replace_with is empty, so matches are simply removed")));
+    }
+}
+
+/// `input` (one value) or `data` + `columns` (a table), not both.
+fn check_table_input(input: &str, data: &serde_json::Value, columns: &[String], action: &str, loc: &str, issues: &mut Vec<Issue>) {
+    let has_data = match data {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(s) => !s.trim().is_empty(),
+        _ => true,
+    };
+    match (input.trim().is_empty(), has_data) {
+        (true, false) => issues.push(err(loc, format!("{action}: give input (one value) or data (a table)"))),
+        (false, true) => issues.push(err(loc, format!("{action}: give input or data, not both"))),
+        _ => {}
+    }
+    if has_data && !matches!(data, serde_json::Value::Array(a) if a.iter().all(|v| !v.is_object())) && columns.iter().all(|c| c.trim().is_empty()) {
+        issues.push(err(loc, format!("{action}: data needs columns, e.g. [\"AccountNo\"]")));
+    }
+}
+
 fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue>) {
     let need = |issues: &mut Vec<Issue>, field: &str, v: &str| {
         if v.trim().is_empty() {
@@ -501,6 +556,50 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             if x.steps.is_empty() {
                 issues.push(warn(loc, "try: no steps to try".into()));
             }
+        }
+        Action::RedactText(x) => {
+            need(issues, "output_var", &x.output_var);
+            check_redaction(&x.rules, &x.patterns, x.mask_style, &x.replace_with, a.name(), loc, issues);
+        }
+        Action::RedactFiles(x) => {
+            need(issues, "input", &x.input);
+            need(issues, "output", &x.output);
+            check_redaction(&x.rules, &x.patterns, x.mask_style, &x.replace_with, a.name(), loc, issues);
+            let norm = |s: &str| s.trim().trim_end_matches(['/', '\\']).replace('\\', "/").to_ascii_lowercase();
+            if !x.input.trim().is_empty() && norm(&x.input) == norm(&x.output) {
+                issues.push(err(loc, "redact_files: output must differ from input, so the originals stay as they are".into()));
+            }
+            if x.pdf_dpi != 0 && !(72..=400).contains(&x.pdf_dpi) {
+                issues.push(warn(loc, format!("redact_files: pdf_dpi {} is outside 72-400; it will be clamped", x.pdf_dpi)));
+            }
+            if x.threads > 32 {
+                issues.push(warn(loc, "redact_files: more than 32 threads uses a lot of memory; it will be limited to 32".into()));
+            }
+            if !x.report.trim().is_empty() && !x.report.contains("${") && !x.report.trim().to_ascii_lowercase().ends_with(".csv") {
+                issues.push(warn(loc, "redact_files: the report is a CSV file; name it .csv".into()));
+            }
+            if x.continue_on_problems {
+                issues.push(warn(
+                    loc,
+                    "redact_files: continue_on_problems lets the flow go on although some files were not (fully) redacted; check summary.failed and summary.unverified".into(),
+                ));
+            }
+        }
+        Action::Pseudonymize(x) => {
+            need(issues, "output_var", &x.output_var);
+            need(issues, "vault", &x.vault);
+            check_table_input(&x.input, &x.data, &x.columns, a.name(), loc, issues);
+            if x.domain.trim().is_empty() {
+                issues.push(warn(
+                    loc,
+                    "pseudonymize: no domain set - the same value gets the same token in every table that shares this key, so they can be linked. Set a purpose-specific domain such as \"customer_account:v1\"".into(),
+                ));
+            }
+        }
+        Action::Depseudonymize(x) => {
+            need(issues, "output_var", &x.output_var);
+            need(issues, "vault", &x.vault);
+            check_table_input(&x.input, &x.data, &x.columns, a.name(), loc, issues);
         }
         Action::TextTransform(x) => need(issues, "output_var", &x.output_var),
         Action::TextReplace(x) => {

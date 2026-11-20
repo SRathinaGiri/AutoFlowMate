@@ -1,0 +1,29 @@
+{
+  "name": "Word letters from an Excel list (mail merge)",
+  "description": "Makes one Word letter per row of an Excel sheet: the template's {{placeholders}} (for example {{Name}}, {{Amount}}, {{Date}}) are filled from the row's columns. Put the template and the workbook next to this flow, or change the paths in the Variables tab.",
+  "variables": {
+    "workbook": "customers.xlsx",
+    "template": "letter_template.docx",
+    "output_folder": "letters"
+  },
+  "steps": [
+    { "id": "read", "action": "read_excel", "path": "${workbook}", "output_var": "rows", "count_var": "n" },
+    {
+      "id": "each",
+      "action": "for_each",
+      "items": "${rows}",
+      "item_var": "row",
+      "index_var": "i",
+      "steps": [
+        {
+          "id": "fill",
+          "action": "word_fill",
+          "template": "${template}",
+          "path": "${output_folder}/letter_${i}_${row.Name}.docx",
+          "values": { "Name": "${row.Name}", "Amount": "${row.Amount}", "Date": "${date}" }
+        }
+      ]
+    },
+    { "id": "done", "action": "log", "message": "made ${n} letter(s) in ${output_folder}" }
+  ]
+}

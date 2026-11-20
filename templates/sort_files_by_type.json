@@ -1,0 +1,26 @@
+{
+  "name": "Sort a folder's files into sub-folders by type",
+  "description": "Moves every file in a folder (Downloads by default) into a sub-folder named after its extension: pdf, xlsx, jpg... Files without an extension stay where they are. Try it with Dry run first.",
+  "variables": {
+    "folder": "${env.USERPROFILE}\\Downloads"
+  },
+  "steps": [
+    { "id": "list", "action": "dir_list", "path": "${folder}", "pattern": "*", "output_var": "files" },
+    {
+      "id": "each",
+      "action": "for_each",
+      "items": "${files}",
+      "item_var": "file",
+      "steps": [
+        { "id": "info", "action": "file_info", "path": "${file}", "output_var": "fi" },
+        {
+          "id": "has_ext",
+          "action": "if",
+          "condition": { "left": "${fi.extension}", "op": "not_empty" },
+          "then": [ { "id": "move", "action": "file_move", "source": "${file}", "destination": "${folder}\\${fi.extension}\\" } ]
+        }
+      ]
+    },
+    { "id": "done", "action": "log", "message": "sorted ${folder}" }
+  ]
+}

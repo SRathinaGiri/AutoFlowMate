@@ -1,0 +1,42 @@
+{
+  "name": "Pseudonymise ID columns of a table",
+  "description": "Replaces ID columns of a CSV file (account numbers, PAN, mobile, customer IDs...) with tokens, for sharing with people who don't need the real IDs. The result is pseudonymised, not anonymous: equal IDs get equal tokens (so totals and joins still work, and so does counting how often an ID appears), and the other columns are unchanged. Use a domain per purpose (e.g. customer_account:v1) so tables made for different purposes can't be linked. The originals are kept encrypted in the vault; only the key in Windows Credential Manager can turn tokens back (template 'Restore pseudonymised columns'). Back up the key with `autoflow secret show pseudonym_key`.",
+  "variables": {
+    "input_file": "customers.csv",
+    "output_file": "customers_shareable.csv",
+    "vault": "pseudonyms.db"
+  },
+  "steps": [
+    {
+      "id": "read",
+      "action": "read_csv",
+      "path": "${input_file}",
+      "output_var": "rows",
+      "count_var": "n"
+    },
+    {
+      "id": "tokens",
+      "action": "pseudonymize",
+      "data": "${rows}",
+      "columns": [
+        "AccountNo"
+      ],
+      "prefix": "ID-",
+      "vault": "${vault}",
+      "output_var": "rows",
+      "count_var": "replaced",
+      "domain": "customer_account:v1"
+    },
+    {
+      "id": "write",
+      "action": "write_csv",
+      "path": "${output_file}",
+      "data": "${rows}"
+    },
+    {
+      "id": "done",
+      "action": "log",
+      "message": "${n} rows, ${replaced} values replaced: ${output_file}"
+    }
+  ]
+}

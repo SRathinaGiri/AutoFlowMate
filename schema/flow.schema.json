@@ -930,6 +930,62 @@
           ]
         },
         {
+          "description": "(Beta) Redact personal data (PAN, Aadhaar, mobile, names, DOB, patient details, your own patterns) in a folder of PDF, Word, Excel, picture and text files, offline.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "redact_files"
+            }
+          },
+          "$ref": "#/$defs/RedactFiles",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "(Beta) Redact personal data in a text (Indian DPDP identifiers, labelled details, your own patterns).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "redact_text"
+            }
+          },
+          "$ref": "#/$defs/RedactText",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "(Beta) Replace IDs (account numbers, PAN, mobile...) with tokens that only your key can turn back; originals kept encrypted in a vault.",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "pseudonymize"
+            }
+          },
+          "$ref": "#/$defs/Pseudonymize",
+          "required": [
+            "action"
+          ]
+        },
+        {
+          "description": "(Beta) Turn tokens made by pseudonymize back into the original values (needs the vault and the key).",
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "const": "depseudonymize"
+            }
+          },
+          "$ref": "#/$defs/Depseudonymize",
+          "required": [
+            "action"
+          ]
+        },
+        {
           "description": "Format, add to, subtract or compare dates.",
           "type": "object",
           "properties": {
@@ -2857,6 +2913,358 @@
           "description": "Variable receiving the text.",
           "type": "string",
           "default": "text"
+        }
+      }
+    },
+    "MaskStyle": {
+      "description": "How redacted text is replaced.",
+      "oneOf": [
+        {
+          "description": "The kind in brackets: [PAN], [MOBILE], [NAME]...",
+          "type": "string",
+          "const": "label"
+        },
+        {
+          "description": "Every letter and digit becomes X; spaces and dashes stay (XXXXX XXXXX).",
+          "type": "string",
+          "const": "mask"
+        },
+        {
+          "description": "Like mask, but the last 4 letters/digits stay visible (XXXXXXXX1234), handy for audit trails.",
+          "type": "string",
+          "const": "partial"
+        },
+        {
+          "description": "The text given in `replace_with`.",
+          "type": "string",
+          "const": "text"
+        }
+      ]
+    },
+    "OcrMode": {
+      "description": "When PDFs and pictures are read with OCR.",
+      "oneOf": [
+        {
+          "description": "Text PDFs use their own text; pages without text (scans) are read with OCR.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Also OCR pages that have text (catches pictures of text inside text PDFs; slower).",
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "description": "Never OCR: scanned pages and pictures are left unredacted (and reported).",
+          "type": "string",
+          "const": "never"
+        }
+      ]
+    },
+    "RedactFiles": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "A file, or a folder of documents to redact. The originals are never changed.",
+          "type": "string",
+          "default": ""
+        },
+        "output": {
+          "description": "Where the redacted copies go: a folder (the input's sub-folders are kept), or a file name\nwhen input is one file. Must not be the input.",
+          "type": "string",
+          "default": ""
+        },
+        "include": {
+          "description": "Which files, e.g. \"*.pdf;*.docx\" (empty = every supported file: PDF, Word .docx, Excel\n.xlsx, pictures, text, CSV, JSON, XML, HTML).",
+          "type": "string",
+          "default": ""
+        },
+        "recursive": {
+          "description": "Include sub-folders.",
+          "type": "boolean",
+          "default": true
+        },
+        "rules": {
+          "description": "Built-in rules to use (empty = all): pan, aadhaar, mobile, email, bank_account, ifsc, card,\nupi, passport, voter_id, driving_licence, dob, age, gender, name, patient_id, health,\naddress, pincode. \"none\" = only your own patterns and words.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "patterns": {
+          "description": "Your own regular expressions, by label, e.g. {\"EMPLOYEE_ID\": \"EMP-\\\\d{5}\"}. To redact only\npart of a match, name that part `value`: {\"POLICY\": \"Policy No:\\\\s*(?P<value>\\\\S+)\"}.",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "words": {
+          "description": "Words or names to redact wherever they appear (whole words, any case).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "words_file": {
+          "description": "A text or CSV file with more words or names, one per line (first column).",
+          "type": "string",
+          "default": ""
+        },
+        "mask_style": {
+          "description": "label = [PAN], mask = XXXXXXXXXX, partial = XXXXXX234F (last 4 kept), text = replace_with.\nPDFs and pictures always get black boxes.",
+          "$ref": "#/$defs/MaskStyle",
+          "default": "label"
+        },
+        "replace_with": {
+          "description": "The replacement when mask_style is text, e.g. \"***\".",
+          "type": "string",
+          "default": ""
+        },
+        "strict": {
+          "description": "Check the Aadhaar (Verhoeff) and card (Luhn) checksums, so other long numbers are left alone.",
+          "type": "boolean",
+          "default": true
+        },
+        "ocr": {
+          "description": "auto = scanned pages and pictures are read with Windows OCR; always = OCR every PDF page\ntoo (finds text inside pictures; slower); never = no OCR.",
+          "$ref": "#/$defs/OcrMode",
+          "default": "auto"
+        },
+        "ocr_language": {
+          "description": "OCR language tag such as en-US (empty = the Windows display languages).",
+          "type": "string",
+          "default": ""
+        },
+        "ocr_rotated": {
+          "description": "Also read text turned sideways or upside down (landscape scans, rotated ID cards). OCR\ntakes four passes, so it is slower; turn off only for upright documents.",
+          "type": "boolean",
+          "default": true
+        },
+        "pdf_dpi": {
+          "description": "Resolution of the redacted PDF pages in dots per inch (150 is clear and compact; 200-300 for small print).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 150
+        },
+        "clear_metadata": {
+          "description": "Word and Excel: clear the author and \"last saved by\" fields and redact the document\nproperties (title, subject, keywords, comments, custom properties). PDFs and pictures are\nrebuilt from pixels, so they keep no metadata at all.",
+          "type": "boolean",
+          "default": true
+        },
+        "overwrite": {
+          "description": "Redo files that are already in the output folder.",
+          "type": "boolean",
+          "default": false
+        },
+        "threads": {
+          "description": "Files worked on at the same time (0 = automatic).",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0,
+          "default": 0
+        },
+        "report": {
+          "description": "A CSV report: one line per file with what was found (counts only, never the values).",
+          "type": "string",
+          "default": ""
+        },
+        "summary_var": {
+          "description": "Variable receiving a summary: {\"files\": 120, \"redacted\": 80, \"clean\": 35, \"unverified\": 1,\n\"skipped\": 3, \"failed\": 1, \"found\": {\"PAN\": 95...}}.",
+          "type": "string",
+          "default": "redaction"
+        },
+        "continue_on_problems": {
+          "description": "Let the flow go on when some files failed or could not be checked (unverified). Off by\ndefault: the step then fails, so later steps (zip, e-mail, upload) never send a folder that\nis not completely redacted. The report and summary are written either way.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "RedactText": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "The text to clean (interpolated), e.g. \"${pdf_text}\".",
+          "type": "string",
+          "default": ""
+        },
+        "rules": {
+          "description": "Built-in rules to use (empty = all): pan, aadhaar, mobile, email, bank_account, ifsc, card,\nupi, passport, voter_id, driving_licence, dob, age, gender, name, patient_id, health,\naddress, pincode. \"none\" = only your own patterns and words.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "patterns": {
+          "description": "Your own regular expressions, by label, e.g. {\"EMPLOYEE_ID\": \"EMP-\\\\d{5}\"}. To redact only\npart of a match, name that part `value`: {\"POLICY\": \"Policy No:\\\\s*(?P<value>\\\\S+)\"}.\nStart with (?i) to ignore upper/lower case.",
+          "type": "object",
+          "additionalProperties": true,
+          "default": {}
+        },
+        "words": {
+          "description": "Words or names to redact wherever they appear (whole words, any case).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "words_file": {
+          "description": "A text or CSV file with more words or names, one per line (first column).",
+          "type": "string",
+          "default": ""
+        },
+        "mask_style": {
+          "description": "label = [PAN], mask = XXXXXXXXXX, partial = XXXXXX234F (last 4 kept), text = replace_with.",
+          "$ref": "#/$defs/MaskStyle",
+          "default": "label"
+        },
+        "replace_with": {
+          "description": "The replacement when mask_style is text, e.g. \"***\".",
+          "type": "string",
+          "default": ""
+        },
+        "strict": {
+          "description": "Check the Aadhaar (Verhoeff) and card (Luhn) checksums, so other 12-16 digit numbers\n(order numbers, phone bills) are left alone.",
+          "type": "boolean",
+          "default": true
+        },
+        "output_var": {
+          "description": "Variable receiving the cleaned text.",
+          "type": "string",
+          "default": "redacted"
+        },
+        "report_var": {
+          "description": "Variable receiving what was found, e.g. {\"PAN\": 1, \"MOBILE\": 2} (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "Pseudonymize": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "One value to replace (interpolated), e.g. \"${row.AccountNo}\". Leave empty when using data.",
+          "type": "string",
+          "default": ""
+        },
+        "data": {
+          "description": "Or a whole table: a list of records such as \"${rows}\" (from read_excel / read_csv).",
+          "default": null
+        },
+        "columns": {
+          "description": "With data: the columns to replace, e.g. [\"AccountNo\", \"PAN\"] (the other columns stay).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "prefix": {
+          "description": "Text in front of every token, e.g. \"ACC-\" gives ACC-7K2M9QX4T1B3HC0D.",
+          "type": "string",
+          "default": "ID-"
+        },
+        "domain": {
+          "description": "Keeps purposes apart: the same value gets different tokens in different domains. Use one per\npurpose and kind, e.g. \"vendor_share_2026:account\", so tables shared for different purposes\ncan't be linked. Empty = one shared domain (the validator warns).",
+          "type": "string",
+          "default": ""
+        },
+        "normalize": {
+          "description": "Remove spaces and dashes and use capitals before making the token, so \"1234 5678\" and\n\"12345678\" get the same token (the vault keeps the tidied value).",
+          "type": "boolean",
+          "default": false
+        },
+        "vault": {
+          "description": "The vault file keeping the original values, encrypted (a SQLite file).",
+          "type": "string",
+          "default": "pseudonyms.db"
+        },
+        "key_secret": {
+          "description": "Name of the key in Windows Credential Manager. Created on first use; back it up, without\nit the vault cannot be read.",
+          "type": "string",
+          "default": "pseudonym_key"
+        },
+        "output_var": {
+          "description": "Variable receiving the token (with input) or the new table (with data).",
+          "type": "string",
+          "default": "token"
+        },
+        "count_var": {
+          "description": "Variable receiving how many values were replaced (optional).",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "UnknownToken": {
+      "description": "What to do with a value the vault doesn't know.",
+      "oneOf": [
+        {
+          "description": "Leave it as it is (and count it in the log).",
+          "type": "string",
+          "const": "keep"
+        },
+        {
+          "description": "Make it empty.",
+          "type": "string",
+          "const": "empty"
+        },
+        {
+          "description": "Stop the step with an error.",
+          "type": "string",
+          "const": "fail"
+        }
+      ]
+    },
+    "Depseudonymize": {
+      "type": "object",
+      "properties": {
+        "input": {
+          "description": "One token to turn back (interpolated), e.g. \"${row.AccountNo}\". Leave empty when using data.",
+          "type": "string",
+          "default": ""
+        },
+        "data": {
+          "description": "Or a whole table: a list of records such as \"${rows}\".",
+          "default": null
+        },
+        "columns": {
+          "description": "With data: the columns holding tokens, e.g. [\"AccountNo\"].",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "vault": {
+          "description": "The vault file made by pseudonymize.",
+          "type": "string",
+          "default": "pseudonyms.db"
+        },
+        "key_secret": {
+          "description": "Name of the key in Windows Credential Manager (the same as when the tokens were made).",
+          "type": "string",
+          "default": "pseudonym_key"
+        },
+        "unknown": {
+          "description": "keep = leave unknown values as they are, empty = blank them, fail = stop with an error.",
+          "$ref": "#/$defs/UnknownToken",
+          "default": "keep"
+        },
+        "output_var": {
+          "description": "Variable receiving the original value (with input) or the restored table (with data).",
+          "type": "string",
+          "default": "value"
+        },
+        "count_var": {
+          "description": "Variable receiving how many values were restored (optional).",
+          "type": "string",
+          "default": ""
         }
       }
     },
