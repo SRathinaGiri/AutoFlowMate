@@ -41,6 +41,26 @@ fn breakpoint_pauses_with_variables_then_continues() {
     h.join().unwrap();
 }
 
+/// A resume that arrives before the run starts waiting (here: from inside the event callback)
+/// must not be lost; earlier this hung until the run was stopped.
+#[test]
+fn resume_before_wait_is_not_lost() {
+    let debug = Arc::new(Debugger::new(Vec::<String>::new(), true));
+    let opts = RunOptions { failsafe: Some(false), debug: Some(debug.clone()), ..Default::default() };
+    let (tx, rx) = channel();
+    let f = flow();
+    let d2 = debug.clone();
+    std::thread::spawn(move || {
+        let r = run_flow(&f, Default::default(), &opts, &mut |e| {
+            if let Event::Paused { .. } = e {
+                d2.resume(true);
+            }
+        });
+        tx.send(r.success).unwrap();
+    });
+    assert!(rx.recv_timeout(Duration::from_secs(10)).expect("run hung"), "the run finished successfully");
+}
+
 #[test]
 fn stepping_pauses_before_every_step_and_stop_ends_it() {
     let debug = Arc::new(Debugger::new(Vec::<String>::new(), true));

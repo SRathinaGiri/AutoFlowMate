@@ -1,5 +1,9 @@
 # Databases
 
+In Studio, the ▾ next to **Connection** lists the ODBC data sources (DSNs) and drivers installed
+on the PC (choosing a driver fills in a connection string to complete) and offers "SQLite database
+file…"; **🔌 Test** opens the connection once.
+
 `connection` is a SQLite file (`sqlite:output/app.db` or a path ending in `.db`; created when
 missing) or an ODBC connection string: `DSN=MyDsn`,
 `Driver={ODBC Driver 18 for SQL Server};Server=.;Database=Sales;Trusted_Connection=yes;TrustServerCertificate=yes`,

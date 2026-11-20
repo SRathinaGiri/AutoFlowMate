@@ -33,15 +33,11 @@ pub struct ImapSettings {
 }
 
 /// IMAP server for well-known providers.
-pub fn imap_defaults(provider: &str) -> Option<(&'static str, u16)> {
-    Some(match provider.trim().to_ascii_lowercase().as_str() {
-        "gmail" | "google" => ("imap.gmail.com", 993),
-        "outlook365" | "office365" | "outlook.com" | "hotmail" => ("outlook.office365.com", 993),
-        "yahoo" => ("imap.mail.yahoo.com", 993),
-        "zoho" => ("imap.zoho.com", 993),
-        "zoho.in" | "zoho_in" => ("imap.zoho.in", 993),
-        _ => return None,
-    })
+/// IMAP server for a mail provider preset (Studio: File > Settings > E-mail providers).
+pub fn imap_defaults(provider: &str) -> Option<(String, u16)> {
+    let presets = crate::presets::Presets::load();
+    let p = presets.find_mail(provider).filter(|p| !p.imap_host.trim().is_empty())?;
+    Some((p.imap_host.trim().to_string(), if p.imap_port == 0 { 993 } else { p.imap_port }))
 }
 
 fn imap_quote(s: &str) -> String {

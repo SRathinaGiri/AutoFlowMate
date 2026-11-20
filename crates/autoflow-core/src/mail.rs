@@ -64,16 +64,29 @@ pub struct SmtpSettings {
     pub timeout: Duration,
 }
 
-/// Host, port and security for a provider name (`gmail`, `outlook365`).
-pub fn provider_defaults(provider: &str) -> Option<(&'static str, u16, Security)> {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "gmail" | "google" => Some(("smtp.gmail.com", 587, Security::StartTls)),
-        "outlook365" | "office365" | "microsoft365" | "m365" => Some(("smtp.office365.com", 587, Security::StartTls)),
-        "outlook.com" | "hotmail" => Some(("smtp-mail.outlook.com", 587, Security::StartTls)),
-        "yahoo" => Some(("smtp.mail.yahoo.com", 465, Security::Tls)),
-        "zoho" => Some(("smtp.zoho.in", 587, Security::StartTls)),
-        _ => None,
-    }
+/// SMTP host, port and security for a mail provider preset (`gmail`, `outlook365`...;
+/// Studio: File > Settings > E-mail providers).
+pub fn provider_defaults(provider: &str) -> Option<(String, u16, Security)> {
+    provider_defaults_in(&crate::presets::Presets::load(), provider)
+}
+
+pub fn provider_defaults_in(presets: &crate::presets::Presets, provider: &str) -> Option<(String, u16, Security)> {
+    let p = presets.find_mail(provider).filter(|p| !p.smtp_host.trim().is_empty())?;
+    let sec = match p.smtp_security.trim().to_ascii_lowercase().as_str() {
+        "tls" | "ssl" => Security::Tls,
+        "none" | "plain" => Security::None,
+        _ => Security::StartTls,
+    };
+    let port = if p.smtp_port != 0 {
+        p.smtp_port
+    } else {
+        match sec {
+            Security::Tls => 465,
+            Security::None => 25,
+            Security::StartTls => 587,
+        }
+    };
+    Some((p.smtp_host.trim().to_string(), port, sec))
 }
 
 #[derive(Debug, Clone, Default)]
@@ -234,8 +247,9 @@ mod tests {
     #[test]
     fn addresses_and_providers() {
         assert_eq!(split_addresses("a@x.com; b@y.com,  ,c@z.com"), ["a@x.com", "b@y.com", "c@z.com"]);
-        assert_eq!(provider_defaults("Gmail"), Some(("smtp.gmail.com", 587, Security::StartTls)));
-        assert!(provider_defaults("custom").is_none());
+        let p = crate::presets::Presets::builtin();
+        assert_eq!(provider_defaults_in(&p, "Gmail"), Some(("smtp.gmail.com".to_string(), 587, Security::StartTls)));
+        assert!(provider_defaults_in(&p, "custom").is_none());
     }
 
     #[test]

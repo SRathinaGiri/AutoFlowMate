@@ -4,6 +4,8 @@
 mod flowchart;
 mod form;
 mod icons;
+mod settings;
+mod smart;
 mod tree;
 mod variables;
 
@@ -119,6 +121,12 @@ struct Studio {
     allow_close: bool,
     /// A recording in progress: its stop flag and where the steps arrive.
     recording: Option<(Arc<AtomicBool>, Receiver<RecordResult>)>,
+    /// Presets, ODBC sources (for the property editors).
+    lists: smart::Lists,
+    /// Results of editor buttons (loaded models, connection tests).
+    cache: smart::Cache,
+    /// The Settings window, when open.
+    settings_ui: Option<settings::SettingsUi>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -202,6 +210,9 @@ impl Studio {
             pending: None,
             allow_close: false,
             recording: None,
+            lists: smart::Lists::load(),
+            cache: smart::Cache::default(),
+            settings_ui: None,
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -778,6 +789,11 @@ impl Studio {
                     self.save(true);
                     ui.close();
                 }
+                ui.separator();
+                if ui.button("⚙ Settings…").on_hover_text("AI and e-mail provider lists").clicked() {
+                    self.settings_ui = Some(settings::SettingsUi::new());
+                    ui.close();
+                }
             });
             ui.menu_button("Edit", |ui| {
                 if ui.add_enabled(!self.history.undo.is_empty(), egui::Button::new("Undo  (Ctrl+Z)")).clicked() {
@@ -1154,6 +1170,10 @@ impl Studio {
             new_var: None,
             table: table.as_ref(),
             secret_request: None,
+            lists: &self.lists,
+            cache: &mut self.cache,
+            ctx: Map::new(),
+            open_settings: false,
         };
         let mut changed = form.object(ui, "a", &mut action_part);
         ui.add_space(8.0);
@@ -1163,6 +1183,9 @@ impl Studio {
         // "➕ New variable…" chosen in a field: declare it now.
         if let Some(name) = form.secret_request.take() {
             self.secret_dialog = Some(SecretDialog { name, first: String::new(), second: String::new(), error: None });
+        }
+        if form.open_settings {
+            self.settings_ui = Some(settings::SettingsUi::new());
         }
         if let Some((vname, vtype)) = form.new_var.take() {
             variables::add_variable(&mut self.flow, &vname, vtype);
@@ -1278,6 +1301,10 @@ impl Studio {
                 new_var: None,
                 table: None,
                 secret_request: None,
+                lists: &self.lists,
+                cache: &mut self.cache,
+                ctx: Map::new(),
+                open_settings: false,
             };
             if f.object(ui, "settings", o) {
                 if let Ok(s) = serde_json::from_value(v) {
@@ -1329,6 +1356,10 @@ impl Studio {
                         new_var: None,
                         table: None,
                         secret_request: None,
+                        lists: &self.lists,
+                        cache: &mut self.cache,
+                        ctx: Map::new(),
+                        open_settings: false,
                     };
                     if f.object(ui, &format!("triggers.{i}"), o) {
                         o.insert("kind".into(), kind);
@@ -2071,6 +2102,9 @@ impl eframe::App for Studio {
         self.preview_window(&ctx);
         self.secret_window(&ctx);
         self.paused_window(&ctx);
+        if settings::show(&ctx, &mut self.settings_ui) {
+            self.lists.presets = autoflow_core::presets::Presets::load();
+        }
         self.unsaved_window(&ctx);
         self.splash(&ctx);
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));

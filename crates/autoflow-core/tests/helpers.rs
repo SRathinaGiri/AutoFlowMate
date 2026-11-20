@@ -90,7 +90,7 @@ fn validation_catches_mistakes() {
         {"id": "a", "action": "text_extract", "pattern": "(", "output_var": "m"},
         {"id": "b", "action": "date_calc", "operation": "add", "unit": "fortnights", "output_var": "d"},
         {"id": "c", "action": "try", "steps": [{"id": "c1", "action": "log", "message": "x"}], "catch": [{"id": "c2", "action": "nope"}]},
-        {"id": "e", "action": "ai_prompt", "provider": "openai", "prompt": "hi"}
+        {"id": "e", "action": "ai_prompt", "provider": "nope", "prompt": "hi"}
     ]})
     .to_string();
     let (_, issues) = validate_json(&text);
@@ -100,12 +100,12 @@ fn validation_catches_mistakes() {
         &json!({"name": "v", "steps": [
             {"id": "a", "action": "text_extract", "pattern": "(", "output_var": "m"},
             {"id": "b", "action": "date_calc", "operation": "add", "unit": "fortnights", "output_var": "d"},
-            {"id": "e", "action": "ai_prompt", "provider": "openai", "prompt": "hi"}
+            {"id": "e", "action": "ai_prompt", "provider": "nope", "prompt": "hi"}
         ]})
         .to_string(),
     );
     let all = issues.iter().map(|i| i.message.clone()).collect::<Vec<_>>().join("\n");
     assert!(all.contains("bad regular expression"), "{all}");
     assert!(all.contains("unknown unit"), "{all}");
-    assert!(all.contains("needs api_key_secret"), "{all}");
+    assert!(all.contains("unknown AI provider"), "{all}");
 }

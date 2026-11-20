@@ -1,11 +1,11 @@
 //! `ai_prompt`: one prompt, one reply, from a local or cloud language model.
 //!
-//! Providers:
-//! - `lmstudio` / `ollama` / `openai_compatible`: the OpenAI chat-completions format
-//!   (LM Studio's local server, Ollama, vLLM, LocalAI, Groq, OpenRouter...).
-//! - `openai`: api.openai.com.
-//! - `gemini`: Google's Gemini API (generateContent).
-//! - `anthropic`: Anthropic's Messages API (Claude).
+//! A step names a provider preset (see `presets.rs`; Studio: File > Settings > AI providers).
+//! Each preset speaks one API:
+//! - OpenAI-compatible chat completions (LM Studio, Ollama, vLLM, LocalAI, Groq, OpenRouter...),
+//! - OpenAI (api.openai.com),
+//! - Google Gemini (generateContent),
+//! - Anthropic Messages (Claude).
 //!
 //! API keys are read from Windows Credential Manager (`autoflow secret set NAME`), never from the flow.
 
@@ -15,61 +15,37 @@ use std::time::Duration;
 
 use crate::http;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Provider {
-    LmStudio,
-    Ollama,
-    OpenAiCompatible,
-    OpenAi,
-    Gemini,
-    Anthropic,
+pub use crate::presets::AiApi;
+
+/// A provider name resolved through the presets: API, server, default model, key.
+#[derive(Debug, Clone)]
+pub struct Resolved {
+    pub api: AiApi,
+    pub base_url: String,
+    pub default_model: String,
+    pub needs_key: bool,
+    pub key_secret: String,
 }
 
-impl Provider {
-    pub fn parse(s: &str) -> Result<Provider> {
-        Ok(match s.trim().to_ascii_lowercase().replace(['-', ' '], "_").as_str() {
-            "" | "lmstudio" | "lm_studio" => Provider::LmStudio,
-            "ollama" => Provider::Ollama,
-            "openai_compatible" | "compatible" | "custom" => Provider::OpenAiCompatible,
-            "openai" | "chatgpt" => Provider::OpenAi,
-            "gemini" | "google" => Provider::Gemini,
-            "anthropic" | "claude" => Provider::Anthropic,
-            other => bail!("unknown AI provider `{other}` (use lmstudio, ollama, openai_compatible, openai, gemini or anthropic)"),
-        })
-    }
+/// Look a provider name up in the presets (Studio: File > Settings).
+pub fn resolve(provider: &str) -> Result<Resolved> {
+    resolve_in(&crate::presets::Presets::load(), provider)
+}
 
-    pub fn default_base_url(self) -> &'static str {
-        match self {
-            Provider::LmStudio => "http://localhost:1234/v1",
-            Provider::Ollama => "http://localhost:11434/v1",
-            Provider::OpenAiCompatible => "",
-            Provider::OpenAi => "https://api.openai.com/v1",
-            Provider::Gemini => "https://generativelanguage.googleapis.com/v1beta",
-            Provider::Anthropic => "https://api.anthropic.com",
-        }
-    }
-
-    /// Model used when the step leaves `model` empty. Local servers use whatever model is loaded.
-    pub fn default_model(self) -> &'static str {
-        match self {
-            Provider::OpenAi => "gpt-4.1-mini",
-            Provider::Gemini => "gemini-2.5-flash",
-            Provider::Anthropic => "claude-opus-5-5",
-            _ => "",
-        }
-    }
-
-    /// Cloud providers need an API key.
-    pub fn needs_key(self) -> bool {
-        matches!(self, Provider::OpenAi | Provider::Gemini | Provider::Anthropic)
-    }
+pub fn resolve_in(presets: &crate::presets::Presets, provider: &str) -> Result<Resolved> {
+    let p = presets.find_ai(provider).ok_or_else(|| {
+        let names: Vec<&str> = presets.ai.iter().map(|p| p.name.as_str()).collect();
+        anyhow!("unknown AI provider `{}` (known: {}; add more in Studio: File > Settings > AI providers)", provider.trim(), names.join(", "))
+    })?;
+    Ok(Resolved { api: p.api, base_url: p.base_url.clone(), default_model: p.default_model.clone(), needs_key: p.needs_key, key_secret: p.key_secret.clone() })
 }
 
 #[derive(Debug, Clone)]
 pub struct Request {
-    pub provider: Provider,
+    pub api: AiApi,
     pub model: String,
     pub base_url: String,
+    pub needs_key: bool,
     pub api_key: String,
     pub system: String,
     pub prompt: String,
@@ -80,20 +56,25 @@ pub struct Request {
     pub timeout: Duration,
 }
 
+fn is_local(base: &str) -> bool {
+    let b = base.to_ascii_lowercase();
+    b.contains("://localhost") || b.contains("://127.0.0.1") || b.contains("://[::1]")
+}
+
 /// The model's text reply. Returns (reply, model actually used).
 pub fn complete(r: &Request) -> Result<(String, String)> {
-    let base = if r.base_url.trim().is_empty() { r.provider.default_base_url().to_string() } else { r.base_url.trim().to_string() };
+    let base = r.base_url.trim().trim_end_matches('/').to_string();
     if base.is_empty() {
-        bail!("set base_url for provider openai_compatible (e.g. http://localhost:8000/v1)");
+        bail!("set base_url (the server address, e.g. http://localhost:8000/v1)");
     }
-    let base = base.trim_end_matches('/').to_string();
-    if r.provider.needs_key() && r.api_key.is_empty() {
+    if r.needs_key && r.api_key.is_empty() {
         bail!("this provider needs an API key: store it with `autoflow secret set NAME` and put NAME in api_key_secret");
     }
-    let model = if r.model.trim().is_empty() { r.provider.default_model().to_string() } else { r.model.trim().to_string() };
-    let reply = match r.provider {
-        Provider::Gemini => gemini(r, &base, &model)?,
-        Provider::Anthropic => anthropic(r, &base, &model)?,
+    let model = r.model.trim().to_string();
+    let reply = match r.api {
+        AiApi::Gemini | AiApi::Anthropic if model.is_empty() => bail!("set model"),
+        AiApi::Gemini => gemini(r, &base, &model)?,
+        AiApi::Anthropic => anthropic(r, &base, &model)?,
         _ => {
             let model = if model.is_empty() { first_local_model(r, &base)? } else { model };
             let reply = chat_completions(r, &base, &model)?;
@@ -101,6 +82,17 @@ pub fn complete(r: &Request) -> Result<(String, String)> {
         }
     };
     Ok((strip_thinking(&reply), model))
+}
+
+/// Models an OpenAI-compatible server offers (LM Studio / Ollama: the downloaded or loaded ones).
+pub fn list_models(base_url: &str, api_key: &str) -> Result<Vec<String>> {
+    let base = base_url.trim().trim_end_matches('/');
+    let headers = if api_key.is_empty() { vec![] } else { vec![("authorization".to_string(), format!("Bearer {api_key}"))] };
+    let v = http::get_json(&format!("{base}/models"), &headers, Duration::from_secs(5))?;
+    Ok(v.get("data")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|m| m.get("id").and_then(Value::as_str)).map(str::to_string).collect())
+        .unwrap_or_default())
 }
 
 fn bearer(r: &Request) -> Vec<(String, String)> {
@@ -132,12 +124,12 @@ fn chat_completions(r: &Request, base: &str, model: &str) -> Result<String> {
     messages.push(json!({"role": "user", "content": r.prompt}));
     let mut body = json!({"model": model, "messages": messages, "stream": false});
     // OpenAI's newer models only accept max_completion_tokens; local servers expect max_tokens.
-    let limit_key = if r.provider == Provider::OpenAi { "max_completion_tokens" } else { "max_tokens" };
+    let limit_key = if r.api == AiApi::Openai { "max_completion_tokens" } else { "max_tokens" };
     body[limit_key] = json!(r.max_tokens);
     if let Some(t) = r.temperature {
         body["temperature"] = json!(t);
     }
-    if r.json && r.provider == Provider::OpenAi {
+    if r.json && r.api == AiApi::Openai {
         body["response_format"] = json!({"type": "json_object"});
     }
     let v = http::post_json(&format!("{base}/chat/completions"), &bearer(r), &body, r.timeout).map_err(|e| key_hint(e, r))?;
@@ -232,7 +224,7 @@ fn key_hint(e: anyhow::Error, r: &Request) -> anyhow::Error {
     let msg = format!("{e:#}");
     if msg.starts_with("HTTP 401") || msg.starts_with("HTTP 403") {
         anyhow!("{msg} - check the API key stored in Credential Manager (api_key_secret)")
-    } else if msg.to_lowercase().contains("connect") && matches!(r.provider, Provider::LmStudio | Provider::Ollama) {
+    } else if msg.to_lowercase().contains("connect") && is_local(&r.base_url) {
         anyhow!("{msg} - is the local AI server (LM Studio / Ollama) running?")
     } else {
         e
@@ -350,8 +342,9 @@ mod tests {
 
     #[test]
     fn providers() {
-        assert_eq!(Provider::parse("LM Studio").unwrap(), Provider::LmStudio);
-        assert_eq!(Provider::parse("claude").unwrap(), Provider::Anthropic);
-        assert!(Provider::parse("nope").is_err());
+        let p = crate::presets::Presets::builtin();
+        assert_eq!(resolve_in(&p, "LM Studio").unwrap().base_url, "http://localhost:1234/v1");
+        assert_eq!(resolve_in(&p, "claude").unwrap().api, AiApi::Anthropic);
+        assert!(resolve_in(&p, "nope").unwrap_err().to_string().contains("Settings"));
     }
 }

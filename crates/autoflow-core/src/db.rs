@@ -194,6 +194,53 @@ pub fn odbc_drivers() -> Vec<String> {
     odbc_api::environment().ok().and_then(|e| e.drivers().ok()).map(|d| d.into_iter().map(|d| d.description).collect()).unwrap_or_default()
 }
 
+/// ODBC data sources (DSNs) set up on this PC: (name, driver).
+pub fn odbc_data_sources() -> Vec<(String, String)> {
+    odbc_api::environment().ok().and_then(|e| e.data_sources().ok()).map(|d| d.into_iter().map(|s| (s.server_name, s.driver)).collect()).unwrap_or_default()
+}
+
+/// A connection string to start from for a driver, with the parts the user fills in.
+pub fn connection_template(driver: &str) -> String {
+    let d = driver.to_lowercase();
+    let rest = if d.contains("excel") {
+        "DBQ=C:\\data\\book.xlsx;ReadOnly=1"
+    } else if d.contains("access") && d.contains("text") {
+        "DefaultDir=C:\\data;Extensions=csv,txt"
+    } else if d.contains("access") {
+        "DBQ=C:\\data\\database.accdb"
+    } else if d.contains("dbase") {
+        "DefaultDir=C:\\data"
+    } else if d.contains("sql server") {
+        "Server=.;Database=MyDatabase;Trusted_Connection=yes;TrustServerCertificate=yes"
+    } else if d.contains("mysql") || d.contains("mariadb") {
+        "Server=localhost;Database=mydb;UID=user;PWD={password}"
+    } else if d.contains("postgres") {
+        "Server=localhost;Port=5432;Database=mydb;UID=user;PWD={password}"
+    } else if d.contains("oracle") {
+        "DBQ=//host:1521/service;UID=user;PWD={password}"
+    } else if d.contains("tally") {
+        "Server=localhost;Port=9000"
+    } else {
+        "Server=;Database=;UID=;PWD={password}"
+    };
+    format!("Driver={{{driver}}};{rest}")
+}
+
+/// Open the connection once to check it works (Studio's Test button).
+pub fn test_connection(conn: &str, flow_dir: &Path) -> Result<String> {
+    if let Some(f) = sqlite_file(conn, flow_dir) {
+        if f != ":memory:" && !Path::new(&f).exists() {
+            return Ok(format!("{f} does not exist yet; it will be created on the first db_execute"));
+        }
+        let mut c = open(conn, flow_dir, true)?;
+        let tables = query(&mut c, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name", &[], 0)?;
+        let names: Vec<String> = tables.iter().filter_map(|t| t.get("name").and_then(Value::as_str)).map(str::to_string).collect();
+        return Ok(format!("connected; tables: {}", if names.is_empty() { "(none)".into() } else { names.join(", ") }));
+    }
+    open(conn, flow_dir, true)?;
+    Ok("connected".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

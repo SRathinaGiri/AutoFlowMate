@@ -30,6 +30,12 @@ the step before anything is sent.
 Sending mail on the user's behalf is an outward action. Confirm recipients with the user, and
 use `send_now: false` or a test address the first time.
 
+## Provider presets
+
+`provider` names a preset from **File > Settings > E-mail providers** (gmail, outlook365,
+outlook.com, yahoo, zoho, zoho.in, plus any the user adds, such as a company server). It fills in
+the SMTP and IMAP servers, ports and security; set `smtp_host` / `imap_host` to override.
+
 ## Reading e-mail
 
 - **`read_email`** (IMAP): `provider` gmail / outlook365 / yahoo / zoho / zoho.in, or `imap_host`

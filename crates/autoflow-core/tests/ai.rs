@@ -1,7 +1,7 @@
 //! ai_prompt / http_request / write_csv against a fake local HTTP server that
 //! speaks the OpenAI-compatible (LM Studio), Gemini and Anthropic formats.
 
-use autoflow_core::ai::{complete, Provider, Request};
+use autoflow_core::ai::{complete, AiApi, Request};
 use autoflow_core::{run_flow, Flow, RunOptions};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -62,11 +62,12 @@ fn fake_server() -> (String, Log) {
     (base, log)
 }
 
-fn req(provider: Provider, base: &str, prompt: &str) -> Request {
+fn req(api: AiApi, base: &str, prompt: &str, model: &str) -> Request {
     Request {
-        provider,
-        model: String::new(),
+        api,
+        model: model.into(),
         base_url: base.into(),
+        needs_key: api != AiApi::OpenaiCompatible,
         api_key: "test-key".into(),
         system: "Classify.".into(),
         prompt: prompt.into(),
@@ -81,13 +82,13 @@ fn req(provider: Provider, base: &str, prompt: &str) -> Request {
 fn providers_speak_their_formats() {
     let (base, log) = fake_server();
 
-    let (reply, model) = complete(&req(Provider::LmStudio, &format!("{base}/v1"), "great product")).unwrap();
+    let (reply, model) = complete(&req(AiApi::OpenaiCompatible, &format!("{base}/v1"), "great product", "")).unwrap();
     assert_eq!((reply.as_str(), model.as_str()), ("Fav", "fake-local-model"), "thinking stripped, loaded model used");
 
-    let (reply, model) = complete(&req(Provider::Gemini, &base, "bad service")).unwrap();
+    let (reply, model) = complete(&req(AiApi::Gemini, &base, "bad service", "gemini-2.5-flash")).unwrap();
     assert_eq!((reply.as_str(), model.as_str()), ("UnFav", "gemini-2.5-flash"));
 
-    let (reply, model) = complete(&req(Provider::Anthropic, &base, "bad service")).unwrap();
+    let (reply, model) = complete(&req(AiApi::Anthropic, &base, "bad service", "claude-opus-5-5")).unwrap();
     assert_eq!((reply.as_str(), model.as_str()), ("UnFav", "claude-opus-5-5"));
 
     let log = log.lock().unwrap();
@@ -111,6 +112,8 @@ fn providers_speak_their_formats() {
 
 #[test]
 fn classify_rows_and_write_csv() {
+    // Use the built-in presets, not this PC's own settings file.
+    std::env::set_var("AUTOFLOW_PRESETS", std::env::temp_dir().join("afm-no-presets.json"));
     let (base, _log) = fake_server();
     let dir = std::env::temp_dir().join(format!("afm_ai_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

@@ -261,7 +261,7 @@
           "default": "imap"
         },
         "provider": {
-          "description": "IMAP: gmail, outlook365, yahoo, zoho, zoho.in, or custom with imap_host.",
+          "description": "IMAP: a provider from File > Settings > E-mail providers, or custom with imap_host.",
           "type": "string",
           "default": "gmail"
         },
@@ -3097,7 +3097,7 @@
       "type": "object",
       "properties": {
         "provider": {
-          "description": "lmstudio (local, default), ollama (local), openai_compatible, openai, gemini or anthropic.",
+          "description": "A provider from File > Settings > AI providers: lmstudio (local, default), ollama (local),\nopenai, gemini, anthropic, openai_compatible (+ base_url), or one you added. Empty fields\nbelow use the provider's server, default model and key name.",
           "type": "string",
           "default": "lmstudio"
         },
@@ -4716,7 +4716,7 @@
       "type": "object",
       "properties": {
         "provider": {
-          "description": "`gmail`, `outlook365`, `outlook.com`, `yahoo`, `zoho` (fills server/port), or `custom`.",
+          "description": "A provider from File > Settings > E-mail providers (gmail, outlook365, outlook.com, yahoo,\nzoho, or one you added; fills server and port), or custom.",
           "type": "string",
           "default": "gmail"
         },
@@ -4858,7 +4858,7 @@
       "type": "object",
       "properties": {
         "provider": {
-          "description": "gmail, outlook365, yahoo, zoho, zoho.in, or custom (then set imap_host).",
+          "description": "A provider from File > Settings > E-mail providers (gmail, outlook365, yahoo, zoho, zoho.in,\nor one you added), or custom (then set imap_host).",
           "type": "string",
           "default": "gmail"
         },

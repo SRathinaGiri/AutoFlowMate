@@ -694,7 +694,7 @@ Ask a local (LM Studio, Ollama) or cloud (OpenAI, Gemini, Claude) AI model; opti
 
 | field | default | description |
 |---|---|---|
-| `provider` | `"lmstudio"` | lmstudio (local, default), ollama (local), openai_compatible, openai, gemini or anthropic. |
+| `provider` | `"lmstudio"` | A provider from File > Settings > AI providers: lmstudio (local, default), ollama (local), openai, gemini, anthropic, openai_compatible (+ base_url), or one you added. Empty fields below use the provider's server, default model and key name. |
 | `model` | `""` | Model name. Empty = the model loaded in LM Studio/Ollama, or a default for cloud providers. |
 | `base_url` | `""` | Server address; empty = the provider's default (LM Studio: http://localhost:1234/v1). |
 | `api_key_secret` | `""` | Name of the API key stored with `autoflow secret set NAME` (not needed for local servers). |
@@ -1508,7 +1508,7 @@ Send an e-mail with attachments through SMTP (Gmail, Microsoft 365, any server).
 
 | field | default | description |
 |---|---|---|
-| `provider` | `"gmail"` | `gmail`, `outlook365`, `outlook.com`, `yahoo`, `zoho` (fills server/port), or `custom`. |
+| `provider` | `"gmail"` | A provider from File > Settings > E-mail providers (gmail, outlook365, outlook.com, yahoo, zoho, or one you added; fills server and port), or custom. |
 | `smtp_host` | `""` | SMTP server (custom provider), e.g. `smtp.yourcompany.com`. |
 | `smtp_port` | `0` | SMTP port; 0 = the provider's default (587). |
 | `security` | `"starttls"` | `starttls` (port 587), `tls` (port 465) or `none` (internal relays only). |
@@ -1554,7 +1554,7 @@ Read messages from an IMAP mailbox (Gmail...) and save their attachments.
 
 | field | default | description |
 |---|---|---|
-| `provider` | `"gmail"` | gmail, outlook365, yahoo, zoho, zoho.in, or custom (then set imap_host). |
+| `provider` | `"gmail"` | A provider from File > Settings > E-mail providers (gmail, outlook365, yahoo, zoho, zoho.in, or one you added), or custom (then set imap_host). |
 | `imap_host` | `""` | IMAP server; empty = the provider's. |
 | `imap_port` | `0` | IMAP port (0 = 993, TLS). |
 | `username` | `""` | Mailbox login, usually the e-mail address. |

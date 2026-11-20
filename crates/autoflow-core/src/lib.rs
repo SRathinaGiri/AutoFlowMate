@@ -14,6 +14,7 @@ pub mod input;
 pub mod mail;
 pub mod mailread;
 pub mod ocr;
+pub mod presets;
 pub mod recorder;
 pub mod schedule;
 pub mod textops;

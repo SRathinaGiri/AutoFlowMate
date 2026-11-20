@@ -573,14 +573,14 @@ fn check_action(a: &Action, loc: &str, loop_depth: usize, issues: &mut Vec<Issue
             need(issues, "prompt", &x.prompt);
             need(issues, "output_var", &x.output_var);
             if !x.provider.contains("${") {
-                match crate::ai::Provider::parse(&x.provider) {
+                match crate::ai::resolve(&x.provider) {
                     Err(e) => issues.push(err(loc, format!("ai_prompt: {e}"))),
-                    Ok(p) if p.needs_key() && x.api_key_secret.trim().is_empty() => issues.push(err(
+                    Ok(p) if p.needs_key && x.api_key_secret.trim().is_empty() && p.key_secret.trim().is_empty() => issues.push(err(
                         loc,
                         format!("ai_prompt: provider {} needs api_key_secret (store the key with `autoflow secret set NAME`)", x.provider.trim()),
                     )),
-                    Ok(crate::ai::Provider::OpenAiCompatible) if x.base_url.trim().is_empty() => {
-                        issues.push(err(loc, "ai_prompt: openai_compatible needs base_url".into()))
+                    Ok(p) if p.base_url.trim().is_empty() && x.base_url.trim().is_empty() => {
+                        issues.push(err(loc, format!("ai_prompt: provider {} has no server address; set base_url", x.provider.trim())))
                     }
                     _ => {}
                 }

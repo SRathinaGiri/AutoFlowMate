@@ -18,13 +18,16 @@ Copy-Item target\release\autoflow.exe, target\release\autoflow-studio.exe $stage
 Copy-Item README.md $stage
 if (Test-Path LICENSE) { Copy-Item LICENSE $stage }
 Copy-Item assets\autoflowmate.png $stage
+# Logo images the README shows.
+New-Item -ItemType Directory -Force (Join-Path $stage 'assets') | Out-Null
+Copy-Item assets\wordmark.png, assets\wordmark-dark.png (Join-Path $stage 'assets')
 foreach ($dir in 'skills', 'schema', 'docs') { Copy-Item $dir (Join-Path $stage $dir) -Recurse }
 
 # Examples without run output or logs.
 $ex = Join-Path $stage 'examples'
 New-Item -ItemType Directory -Force $ex | Out-Null
 Get-ChildItem examples -File -Filter *.json | Copy-Item -Destination $ex
-foreach ($dir in 'images', 'web') { if (Test-Path "examples\$dir") { Copy-Item "examples\$dir" (Join-Path $ex $dir) -Recurse } }
+foreach ($dir in 'images', 'web', 'data') { if (Test-Path "examples\$dir") { Copy-Item "examples\$dir" (Join-Path $ex $dir) -Recurse } }
 
 @"
 AutoFlowMate $version - portable Windows build
@@ -35,6 +38,8 @@ AutoFlowMate $version - portable Windows build
 Quick start:
   autoflow-studio.exe examples\file_organizer.json
   autoflow.exe run examples\web_form_demo.json
+  autoflow.exe run examples\documents_demo.json   (offline: PDF table, Word letter, zip)
+  autoflow.exe record my_flow.json                (record clicks and typing; Ctrl+Alt+R stops)
 
 Keep autoflow.exe next to autoflow-studio.exe (scheduled tasks run it).
 Abort a running flow: move the mouse into a screen corner or press Ctrl+Alt+Q.

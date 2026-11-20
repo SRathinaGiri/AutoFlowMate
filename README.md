@@ -213,6 +213,14 @@ rows the flow will get. Text files work with `file_read`, and `for_each` loops o
 Example: `examples/data_import_demo.json`. The GST example reads its GSTINs from
 `examples/data/gstins.xlsx`.
 
+## Settings: provider lists
+
+**File > Settings** in Studio holds the lists that the `provider` fields offer: AI providers
+(server, default model, model list, key name) and e-mail providers (SMTP and IMAP servers). Change
+them, or add your own, such as Groq, OpenRouter, a company LLM server or your mail server. They're
+saved in `%APPDATA%\AutoFlowMate\presets.json` and used by Studio, the command line and
+scheduled tasks on that PC. Fields left empty in a step show, and use, the provider's defaults.
+
 ## Writing results, text, dates and maths
 
 Collect results with `list_append` (a record per row) and save them with `write_csv` (Excel

@@ -63,7 +63,7 @@ impl Default for FileTrigger {
 pub struct EmailTrigger {
     /// "imap" (Gmail, Zoho, any IMAP server) or "outlook" (the Outlook desktop app).
     pub source: String,
-    /// IMAP: gmail, outlook365, yahoo, zoho, zoho.in, or custom with imap_host.
+    /// IMAP: a provider from File > Settings > E-mail providers, or custom with imap_host.
     pub provider: String,
     /// IMAP server; empty = the provider's.
     pub imap_host: String,

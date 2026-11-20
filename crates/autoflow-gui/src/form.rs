@@ -54,7 +54,6 @@ fn choices(key: &str) -> Option<&'static [&'static str]> {
             "matches",
         ],
         "browser" => &["edge", "chrome"],
-        "provider" => &["gmail", "outlook365", "outlook.com", "yahoo", "zoho", "custom"],
         "security" => &["starttls", "tls", "none"],
         _ => return None,
     })
@@ -257,6 +256,14 @@ pub struct Form<'a> {
     pub table: Option<&'a TableInfo>,
     /// Set when the user clicks "Set password…" for a secret name.
     pub secret_request: Option<String>,
+    /// Presets, ODBC sources and other lists the editors offer.
+    pub lists: &'a crate::smart::Lists,
+    /// Results of "list models" / "test connection" buttons.
+    pub cache: &'a mut crate::smart::Cache,
+    /// The other fields of the object being edited (e.g. the chosen provider).
+    pub ctx: Map<String, Value>,
+    /// Set when the user asks to edit the provider lists.
+    pub open_settings: bool,
 }
 
 /// What the editor knows about a data file (for the sheet / column dropdowns).
@@ -271,6 +278,7 @@ impl Form<'_> {
     /// Edit all fields of an object. Returns true if anything changed.
     pub fn object(&mut self, ui: &mut egui::Ui, prefix: &str, obj: &mut Map<String, Value>) -> bool {
         let mut changed = false;
+        self.ctx = obj.clone();
         let keys: Vec<String> = obj.keys().filter(|k| !SKIP.contains(&k.as_str())).cloned().collect();
         egui::Grid::new(format!("grid_{prefix}")).num_columns(2).spacing([10.0, 7.0]).striped(true).min_col_width(90.0).show(ui, |ui| {
             for key in keys {
@@ -290,6 +298,21 @@ impl Form<'_> {
     }
 
     fn field(&mut self, ui: &mut egui::Ui, path: &str, key: &str, v: &mut Value) -> bool {
+        // Lists that depend on the action and on the user's settings / this PC.
+        if key == "provider" && (self.action == "ai_prompt" || crate::smart::is_mail_action(&self.action)) {
+            let items = crate::smart::provider_items(self.lists, &self.action);
+            let c = crate::smart::text_with_list(ui, path, v, &items, "pick from the list ▸", 160.0);
+            if ui.small_button("⚙").on_hover_text("Edit the provider list: File > Settings").clicked() {
+                self.open_settings = true;
+            }
+            return c;
+        }
+        if self.action == "ai_prompt" && key == "model" {
+            return crate::smart::model_field(ui, path, v, self.lists, &self.ctx, self.cache);
+        }
+        if matches!(self.action.as_str(), "db_query" | "db_execute") && key == "connection" {
+            return crate::smart::connection_field(ui, path, v, self.lists, self.flow_dir, self.cache);
+        }
         if let Some(opts) = choices(key) {
             return combo(ui, path, v, opts);
         }
@@ -369,7 +392,18 @@ impl Form<'_> {
             Value::String(_) if key.ends_with("_secret") => {
                 let mut s = v.as_str().unwrap_or("").to_string();
                 let mut changed = ui
-                    .add_sized([120.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text(if key == "password_secret" { "e.g. gmail" } else { "e.g. openai" }))
+                    .add_sized(
+                        [120.0, 22.0],
+                        egui::TextEdit::singleline(&mut s).hint_text(match self.hint(key) {
+                            h if h.is_empty() => match self.action.as_str() {
+                                "db_query" | "db_execute" => "e.g. sqlserver".to_string(),
+                                "ai_prompt" => "e.g. openai".to_string(),
+                                "http_request" => "e.g. myapi".to_string(),
+                                _ => "e.g. gmail".to_string(),
+                            },
+                            h => h,
+                        }),
+                    )
                     .changed();
                 let stored = !s.trim().is_empty() && !s.contains("${") && autoflow_core::mail::secrets::exists(&s);
                 if stored {
@@ -421,11 +455,75 @@ impl Form<'_> {
                 | (_, "duration_ms")
                 | ("type_text", "delay_ms")
                 | ("key_press", "interval_ms")
+                | ("ai_prompt", "temperature")
+                | ("calculate", "decimals")
         )
+    }
+
+    /// Hint shown in an empty text field: the provider's default, else the help's example.
+    fn hint(&self, key: &str) -> String {
+        if self.action == "ai_prompt" {
+            if let Some(p) = crate::smart::ai_preset(self.lists, &self.ctx) {
+                match key {
+                    "base_url" if !p.base_url.is_empty() => return format!("default: {}", p.base_url),
+                    "base_url" => return "required for this provider, e.g. http://localhost:8000/v1".into(),
+                    "api_key_secret" if !p.needs_key => return "not needed".into(),
+                    "api_key_secret" if !p.key_secret.is_empty() => return format!("default: {}", p.key_secret),
+                    _ => {}
+                }
+            }
+        }
+        if crate::smart::is_mail_action(&self.action) {
+            let prov = self.ctx.get("provider").and_then(Value::as_str).unwrap_or("");
+            if let Some(m) = self.lists.presets.find_mail(prov) {
+                match key {
+                    "smtp_host" if !m.smtp_host.is_empty() => return format!("{} (from {})", m.smtp_host, m.name),
+                    "imap_host" if !m.imap_host.is_empty() => return format!("{} (from {})", m.imap_host, m.name),
+                    _ => {}
+                }
+            }
+        }
+        self.help.get(key).and_then(|h| crate::smart::example_hint(h)).unwrap_or_default()
     }
 
     fn optional(&mut self, ui: &mut egui::Ui, path: &str, key: &str, v: &mut Value) -> bool {
         let is_pos = matches!(key, "x" | "y" | "from_x" | "from_y");
+        if matches!(key, "temperature" | "decimals") {
+            let (label, tip) = if key == "temperature" {
+                ("provider default", "Leave the randomness to the AI service (Claude always uses its own)")
+            } else {
+                ("no rounding", "Keep every decimal place")
+            };
+            let mut use_default = v.is_null();
+            let mut changed = ui.checkbox(&mut use_default, label).on_hover_text(tip).changed();
+            if changed {
+                *v = if use_default {
+                    Value::Null
+                } else if key == "temperature" {
+                    Value::from(0.0)
+                } else {
+                    Value::from(2)
+                };
+            }
+            if key == "temperature" {
+                if let Some(mut f) = v.as_f64() {
+                    if ui
+                        .add(egui::DragValue::new(&mut f).range(0.0..=2.0).speed(0.05).max_decimals(2))
+                        .on_hover_text("0 = most predictable, 1 = creative")
+                        .changed()
+                    {
+                        *v = Value::from(f);
+                        changed = true;
+                    }
+                }
+            } else if let Some(mut n) = v.as_u64() {
+                if ui.add(egui::DragValue::new(&mut n).range(0..=10).suffix(" decimals")).changed() {
+                    *v = Value::from(n);
+                    changed = true;
+                }
+            }
+            return changed;
+        }
         let label = if is_pos { "current position" } else { "flow default" };
         let mut use_default = v.is_null();
         let mut changed = false;
@@ -578,15 +676,18 @@ impl Form<'_> {
             });
         } else if MULTILINE.contains(&key) {
             ui.vertical(|ui| {
-                changed |=
-                    ui.add(egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(matches!(key, "script" | "sql"))).changed();
+                let hint = self.hint(key);
+                changed |= ui
+                    .add(egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(matches!(key, "script" | "sql")).hint_text(hint))
+                    .changed();
                 changed |= self.insert_var_menu(ui, path, &mut s, key);
             });
         } else {
             let reserve = if pk.is_some() { 90.0 } else { 34.0 } + if key == "keys" { 30.0 } else { 0.0 };
             // Capped: a box sized to "all available width" makes the side panel grow every frame.
             let w = (ui.available_width() - reserve).clamp(80.0, 230.0);
-            changed |= ui.add_sized([w, 22.0], egui::TextEdit::singleline(&mut s)).changed();
+            let hint = self.hint(key);
+            changed |= ui.add_sized([w, 22.0], egui::TextEdit::singleline(&mut s).hint_text(hint)).changed();
             if key == "keys" {
                 egui::ComboBox::from_id_salt(format!("{path}#keys")).selected_text("▾").width(24.0).show_ui(ui, |ui| {
                     for k in COMMON_KEYS {

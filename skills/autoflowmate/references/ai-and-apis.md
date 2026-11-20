@@ -11,6 +11,15 @@
 | `gemini` | `api_key_secret` | default model `gemini-2.5-flash` |
 | `anthropic` | `api_key_secret` | Claude; default model `claude-opus-5-5` |
 
+These are **provider presets**. The user can change them or add more (Groq, OpenRouter, a company
+server) in Studio under **File > Settings > AI providers**; they are saved in
+`%APPDATA%\AutoFlowMate\presets.json`. A step's empty `model`, `base_url` and `api_key_secret`
+take the preset's default model, server and key name (`openai` → secret `openai`, and so on), so
+a minimal step is just `provider` + `prompt`. A flow that names a self-made preset needs the same
+preset on the PC that runs it; for flows you hand to other people prefer the built-in names or
+spell out `base_url` and `model`. In Studio, the ⟳ next to Model lists the models LM Studio or
+Ollama currently has.
+
 - `system` = instructions, `prompt` = the text with `${variables}`.
 - **`labels`** (e.g. `["Fav", "UnFav", "Neutral"]`) tells the model to answer with one label and
   guarantees the stored value is exactly one of them; an answer matching none fails the step

@@ -1072,7 +1072,8 @@ impl Default for ReadPdf {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct SendEmail {
-    /// `gmail`, `outlook365`, `outlook.com`, `yahoo`, `zoho` (fills server/port), or `custom`.
+    /// A provider from File > Settings > E-mail providers (gmail, outlook365, outlook.com, yahoo,
+    /// zoho, or one you added; fills server and port), or custom.
     pub provider: String,
     /// SMTP server (custom provider), e.g. `smtp.yourcompany.com`.
     pub smtp_host: String,
@@ -1349,7 +1350,8 @@ impl Default for MailFilter {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ReadEmail {
-    /// gmail, outlook365, yahoo, zoho, zoho.in, or custom (then set imap_host).
+    /// A provider from File > Settings > E-mail providers (gmail, outlook365, yahoo, zoho, zoho.in,
+    /// or one you added), or custom (then set imap_host).
     pub provider: String,
     /// IMAP server; empty = the provider's.
     pub imap_host: String,
@@ -1964,7 +1966,9 @@ impl Default for HttpRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AiPrompt {
-    /// lmstudio (local, default), ollama (local), openai_compatible, openai, gemini or anthropic.
+    /// A provider from File > Settings > AI providers: lmstudio (local, default), ollama (local),
+    /// openai, gemini, anthropic, openai_compatible (+ base_url), or one you added. Empty fields
+    /// below use the provider's server, default model and key name.
     pub provider: String,
     /// Model name. Empty = the model loaded in LM Studio/Ollama, or a default for cloud providers.
     pub model: String,

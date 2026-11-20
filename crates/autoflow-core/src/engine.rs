@@ -76,9 +76,15 @@ impl Debugger {
     }
 
     /// Block until resumed or the run is stopped.
+    /// Get ready to pause. Called before the Paused event is sent, so a resume that arrives
+    /// before `wait` starts is not lost.
+    fn arm(&self) {
+        *self.go.lock().unwrap() = false;
+    }
+
+    /// Block until resumed (since the last `arm`) or the run is stopped.
     fn wait(&self, stop: &AtomicBool) {
         let mut go = self.go.lock().unwrap();
-        *go = false;
         while !*go && !stop.load(Ordering::Relaxed) {
             go = self.wake.wait_timeout(go, Duration::from_millis(50)).unwrap().0;
         }
@@ -388,6 +394,7 @@ impl<'a> Context<'a> {
         if let Some(d) = self.opts.debug.clone() {
             if d.should_pause(&id) {
                 let variables = self.vars.map.clone();
+                d.arm();
                 self.emit(Event::Paused { id: id.clone(), action: action.clone(), variables });
                 d.wait(&self.opts.stop);
                 self.check_cancel()?;
@@ -1111,7 +1118,7 @@ impl<'a> Context<'a> {
                         };
                         let host = self.text(&a.smtp_host)?;
                         if host.trim().is_empty() {
-                            bail!("set smtp_host (or provider gmail / outlook365)");
+                            bail!("set smtp_host, or a provider from File > Settings > E-mail providers (gmail, outlook365...)");
                         }
                         (host, if a.smtp_port == 0 { default_port } else { a.smtp_port }, sec)
                     }
@@ -1132,7 +1139,7 @@ impl<'a> Context<'a> {
                 let (host, port) = match (self.text(&a.imap_host)?, crate::mailread::imap_defaults(&provider)) {
                     (h, _) if !h.trim().is_empty() => (h.trim().to_string(), if a.imap_port == 0 { 993 } else { a.imap_port }),
                     (_, Some((h, p))) => (h.to_string(), if a.imap_port == 0 { p } else { a.imap_port }),
-                    _ => bail!("set imap_host (or provider gmail / outlook365 / yahoo / zoho)"),
+                    _ => bail!("set imap_host, or a provider from File > Settings > E-mail providers (gmail, outlook365...)"),
                 };
                 let username = self.text(&a.username)?;
                 let password = crate::mail::secrets::get(&self.text(&a.password_secret)?)?;
@@ -1813,7 +1820,8 @@ impl<'a> Context<'a> {
     }
 
     fn ai_prompt(&mut self, a: &AiPrompt) -> Result<()> {
-        let provider = crate::ai::Provider::parse(&self.text(&a.provider)?)?;
+        let provider_name = self.text(&a.provider)?;
+        let preset = crate::ai::resolve(&provider_name)?;
         let labels: Vec<String> = a.labels.iter().map(|l| self.text(l)).collect::<Result<Vec<_>>>()?.into_iter().filter(|l| !l.trim().is_empty()).collect();
         let mut system = self.text(&a.system)?;
         if !labels.is_empty() {
@@ -1825,16 +1833,19 @@ impl<'a> Context<'a> {
         if prompt.trim().is_empty() {
             bail!("ai_prompt needs a prompt");
         }
-        if self.dry(format!("ask {provider:?}: {}", prompt.chars().take(80).collect::<String>())) {
+        if self.dry(format!("ask {}: {}", provider_name.trim(), prompt.chars().take(80).collect::<String>())) {
             let v = labels.first().map(|l| json!(l)).unwrap_or_else(|| json!("[dry-run reply]"));
             return self.set_var(&a.output_var, v);
         }
-        let secret = self.text(&a.api_key_secret)?;
-        let api_key = if secret.trim().is_empty() { String::new() } else { crate::mail::secrets::get(secret.trim())? };
+        // Empty fields fall back to the provider preset (server, default model, key name).
+        let or = |v: String, d: &str| if v.trim().is_empty() { d.to_string() } else { v.trim().to_string() };
+        let secret = or(self.text(&a.api_key_secret)?, &preset.key_secret);
+        let api_key = if secret.is_empty() { String::new() } else { crate::mail::secrets::get(&secret)? };
         let req = crate::ai::Request {
-            provider,
-            model: self.text(&a.model)?,
-            base_url: self.text(&a.base_url)?,
+            api: preset.api,
+            model: or(self.text(&a.model)?, &preset.default_model),
+            base_url: or(self.text(&a.base_url)?, &preset.base_url),
+            needs_key: preset.needs_key,
             api_key,
             system,
             prompt,

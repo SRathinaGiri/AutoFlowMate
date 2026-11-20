@@ -470,7 +470,7 @@ mod write_tests {
 
     #[test]
     fn csv_round_trip() {
-        let dir = std::env::temp_dir().join(format!("afm_csv_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("afm_write_{}", std::process::id()));
         let p = dir.join("out.csv");
         let t = to_table(&json!([{"Comment": "bad, \"awful\"", "Label": "UnFav"}]), &[]).unwrap();
         write_csv(&p, &t, ",", true, false, true, false).unwrap();
