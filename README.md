@@ -26,6 +26,24 @@ licence: anyone may use it, change it and share it, free of charge, without warr
 
 > The name has two meanings: it **auto**mates your **flow**, and it is your friendly **AutoFlow mate**.
 
+## Who is it for?
+
+AutoFlowMate sits between big, expensive enterprise automation suites and do-it-yourself
+scripting. It is free, it is one portable folder, and it needs nothing else installed: no Python,
+no server, no licence fees.
+
+- **Accounting, finance and back-office teams** in small firms and practices: Tally exports, Excel
+  and CSV registers, invoice tables taken from PDFs, GST calculations and portal look-ups (you type
+  the CAPTCHA), payment letters filled in Word, and mails with the results.
+- **Everyday office users** who want the boring part of their day done for them: build a flow by
+  dragging boxes in a flowchart, or just record what you do. Studio speaks your language (Tamil is
+  included).
+- **IT and Windows administrators:** schedule flows with Windows Task Scheduler, react to files
+  and mails as they arrive, talk to databases, and keep passwords in the Windows Credential
+  Manager. Every command can report in JSON for monitoring scripts.
+- **People who work with AI assistants:** flows are plain JSON with a strict schema and a dry-run
+  mode, so an assistant can write, check and run desktop automations safely.
+
 ---
 
 ## What it looks like
