@@ -18,9 +18,11 @@ Copy-Item target\release\autoflow.exe, target\release\autoflow-studio.exe $stage
 Copy-Item README.md $stage
 if (Test-Path LICENSE) { Copy-Item LICENSE $stage }
 Copy-Item assets\autoflowmate.png $stage
-# Logo images the README shows.
+# Logo, splash and screenshot images the README shows.
 New-Item -ItemType Directory -Force (Join-Path $stage 'assets') | Out-Null
-Copy-Item assets\wordmark.png, assets\wordmark-dark.png (Join-Path $stage 'assets')
+Copy-Item assets\wordmark.png, assets\wordmark-dark.png, assets\splash.png (Join-Path $stage 'assets')
+Copy-Item assets\screenshots (Join-Path $stage 'assets\screenshots') -Recurse
+foreach ($f in 'CONTRIBUTING.md', 'SECURITY.md') { Copy-Item $f $stage }
 foreach ($dir in 'skills', 'schema', 'docs', 'lang') { Copy-Item $dir (Join-Path $stage $dir) -Recurse }
 
 # Examples without run output or logs.

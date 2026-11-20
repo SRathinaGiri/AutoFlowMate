@@ -1,0 +1,34 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: flow
+    attributes:
+      label: Flow (JSON) or steps to reproduce
+      description: Paste the flow, or the smallest part of it that shows the problem. Remove passwords, e-mail addresses and other personal data.
+      render: json
+  - type: textarea
+    id: log
+    attributes:
+      label: Run log or error message
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: AutoFlowMate version
+      description: Help > About in Studio, or `autoflow --version`
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 23H2

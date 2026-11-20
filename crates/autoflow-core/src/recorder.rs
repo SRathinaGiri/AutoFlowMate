@@ -506,7 +506,7 @@ mod hooks {
             };
             RegisterClassW(&wc);
             let (sw, _) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
-            let (w, h) = (380, 118);
+            let (w, h) = (380, 140);
             let win = CreateWindowExW(
                 WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
                 class,
@@ -528,12 +528,12 @@ mod hooks {
             let label = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
-                w!("● Recording: 0 steps     (Ctrl+Alt+R also stops)"),
+                w!("● Recording: 0 steps\r\nCtrl+Alt+R also stops"),
                 WS_CHILD | WS_VISIBLE,
                 12,
-                10,
+                8,
                 rc.right - 24,
-                20,
+                36,
                 Some(win),
                 None,
                 Some(module.into()),
@@ -546,9 +546,9 @@ mod hooks {
                 w!("■  Stop recording"),
                 WS_CHILD | WS_VISIBLE | WINDOW_STYLE(0x0000_0001), // BS_DEFPUSHBUTTON
                 12,
-                36,
+                50,
                 rc.right - 24,
-                rc.bottom - 46,
+                rc.bottom - 60,
                 Some(win),
                 Some(HMENU(STOP_ID as *mut _)),
                 Some(module.into()),
@@ -701,7 +701,7 @@ pub fn record(opts: RecordOptions, stop: Arc<AtomicBool>, progress: &mut dyn FnM
                 progress(&summary(s));
             }
             shown = conv.steps.len();
-            hooks::set_label(&format!("● Recording: {shown} step(s)     (Ctrl+Alt+R also stops)"));
+            hooks::set_label(&format!("● Recording: {shown} step(s)\r\nCtrl+Alt+R also stops"));
         }
     }
     stop.store(true, Ordering::Relaxed);

@@ -1115,7 +1115,9 @@ impl Studio {
             if ui.small_button(tr("flow settings")).clicked() {
                 self.sel = Selection::None;
             }
-            ui.separator();
+        });
+        // View switch and zoom on their own row, so a long flow name never splits them.
+        ui.horizontal_wrapped(|ui| {
             ui.selectable_value(&mut self.view, View::Flowchart, tr("Flowchart"));
             ui.selectable_value(&mut self.view, View::List, tr("List"));
             ui.selectable_value(&mut self.view, View::Json, "JSON");
