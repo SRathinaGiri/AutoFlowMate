@@ -51,3 +51,8 @@ aes-gcm = "0.10"
 opt-level = 3
 lto = "thin"
 strip = true
+
+# Integer overflow in AutoFlowMate's own code is a bug: stop with an error instead of silently
+# wrapping, also in release builds (the cost is negligible).
+[profile.release.package.autoflow-core]
+overflow-checks = true

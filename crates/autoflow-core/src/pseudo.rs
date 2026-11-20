@@ -56,6 +56,10 @@ fn base32(bytes: &[u8], chars: usize) -> String {
     let mut out = String::with_capacity(chars);
     let (mut acc, mut bits) = (0u32, 0u32);
     for &b in bytes {
+        // Enough characters: stop before the bit buffer can grow past 32 bits.
+        if out.len() >= chars {
+            break;
+        }
         acc = (acc << 8) | b as u32;
         bits += 8;
         while bits >= 5 && out.len() < chars {
