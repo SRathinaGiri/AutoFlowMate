@@ -43,7 +43,7 @@ zip = { version = "9", default-features = false, features = ["deflate-flate2-zli
 quick-xml = "0.42"
 lopdf = "0.42"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp", "tiff"] }
-hmac = "0.12"
+hmac = "0.13"
 sha2 = "0.10"
 aes-gcm = "0.10"
 
