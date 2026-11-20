@@ -1,5 +1,5 @@
 # cargo-deny policy, checked by CI on every push and pull request:
-#   cargo deny check licenses bans sources
+#   cargo deny check licenses bans sources advisories
 # AutoFlowMate is MIT. Dependencies must use permissive licences only, so anyone can use,
 # change and ship it, including commercially. Copyleft licences (GPL, LGPL, AGPL, MPL, EUPL...)
 # are not allowed. Adding a licence here needs the maintainer's agreement in the pull request.
@@ -41,6 +41,13 @@ ignore = true
 [[licenses.exceptions]]
 crate = "auto_generate_cdp"
 allow = ["GPL-3.0", "GPL-3.0-only", "GPL-3.0-or-later"]
+
+[advisories]
+# Known security vulnerabilities (RustSec) and yanked crates fail CI. "Unmaintained" notices are
+# not part of the gate: chrono (dates, also used by calamine, lopdf and imap) is marked
+# unmaintained (RUSTSEC-2026-0543) with no replacement yet; it has no known vulnerability.
+unmaintained = "none"
+yanked = "deny"
 
 [bans]
 multiple-versions = "allow"

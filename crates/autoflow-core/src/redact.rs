@@ -181,6 +181,8 @@ pub struct Redactor {
     strict: bool,
     /// Identifier rules that are on and have an OCR-tolerant form.
     loose: Vec<Loose>,
+    /// Everything that decides what gets redacted, as text (part of the manifest's policy hash).
+    policy: String,
 }
 
 /// An identifier as OCR may misread it: look-alike characters (O/0, I/1, S/5...) allowed, then
@@ -372,7 +374,10 @@ impl Redactor {
                 }
             })
             .collect();
-        Ok(Self { detectors, style: o.style, replace_with: o.replace_with.clone(), strict: o.strict, loose: loose_rules(&on) })
+        let mut sorted_rules = on.clone();
+        sorted_rules.sort();
+        let policy = format!("{sorted_rules:?}|{:?}|{words:?}|{:?}|{:?}|{}", o.custom, o.style, o.replace_with, o.strict);
+        Ok(Self { detectors, style: o.style, replace_with: o.replace_with.clone(), strict: o.strict, loose: loose_rules(&on), policy })
     }
 
     /// Personal data in `text`, without overlaps (the longer match wins), in order.
@@ -728,6 +733,16 @@ fn redact_office(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions) 
     let ext = ext_of(input);
     let file = std::fs::File::open(input).with_context(|| format!("cannot open {}", input.display()))?;
     let mut zip = zip::ZipArchive::new(file).map_err(|_| anyhow!("not a valid .{ext} file (or it is password-protected)"))?;
+    if zip.len() > MAX_OFFICE_PARTS {
+        bail!("{} parts inside, over the limit of {MAX_OFFICE_PARTS}", zip.len());
+    }
+    let mut unpacked = 0u64;
+    for i in 0..zip.len() {
+        unpacked += zip.by_index_raw(i).map(|e| e.size()).unwrap_or(0);
+    }
+    if unpacked > MAX_OFFICE_UNPACKED {
+        bail!("unpacks to {} MB, over the limit of {} MB", unpacked >> 20, MAX_OFFICE_UNPACKED >> 20);
+    }
     let mut o = Outcome::default();
     let (word, excel) = (word_tokens(), excel_tokens());
     let mut parts: Vec<(String, Vec<u8>)> = vec![];
@@ -737,7 +752,7 @@ fn redact_office(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions) 
         let mut entry = zip.by_index(i)?;
         let name = entry.name().map(|n| n.into_owned()).map_err(|e| anyhow!("bad entry name: {e}"))?;
         let mut data = vec![];
-        entry.read_to_end(&mut data)?;
+        entry.by_ref().take(MAX_OFFICE_UNPACKED).read_to_end(&mut data)?;
         let xml_part = name.ends_with(".xml");
         let mut new = if xml_part && fo.clear_metadata && name.starts_with("docProps/") {
             Some(clean_props(&String::from_utf8_lossy(&data), red, &mut o.counts))
@@ -769,9 +784,8 @@ fn redact_office(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions) 
             pictures += 1;
             let pext = ext_of(Path::new(&name));
             if IMAGE_EXT.contains(&pext.as_str()) && fo.ocr != OcrMode::Never {
-                match image::load_from_memory(&bytes) {
-                    Ok(img) => {
-                        let mut img = img.to_rgba8();
+                match load_picture(&bytes) {
+                    Ok(mut img) => {
                         let (rects, verified) = check_picture(&img, red, fo, &mut o.counts)?;
                         if !verified {
                             unreadable += 1;
@@ -801,9 +815,17 @@ fn redact_office(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions) 
 }
 
 fn write_zip(output: &Path, parts: &[(String, Vec<u8>)]) -> Result<()> {
-    let tmp = output.with_extension("redact.tmp");
+    let tmp = temp_for(output);
+    let r = write_zip_to(&tmp, output, parts).and_then(|_| replace_file(&tmp, output));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
+fn write_zip_to(tmp: &Path, output: &Path, parts: &[(String, Vec<u8>)]) -> Result<()> {
     {
-        let mut w = zip::ZipWriter::new(std::fs::File::create(&tmp).with_context(|| format!("cannot write {}", output.display()))?);
+        let mut w = zip::ZipWriter::new(std::fs::File::create(tmp).with_context(|| format!("cannot write {}", output.display()))?);
         let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
         for (name, data) in parts {
             w.start_file(name.as_str(), opts)?;
@@ -811,7 +833,26 @@ fn write_zip(output: &Path, parts: &[(String, Vec<u8>)]) -> Result<()> {
         }
         w.finish()?;
     }
-    replace_file(&tmp, output)
+    Ok(())
+}
+
+/// A temporary file next to `out` (same folder, so the final rename is atomic).
+fn temp_for(out: &Path) -> PathBuf {
+    let name = out.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    out.with_file_name(format!(".{name}.{}-{n}.afmtmp", std::process::id()))
+}
+
+/// Write a file all at once: to a temporary file first, then renamed into place, so a failure or
+/// a stop never leaves a half-written output.
+fn write_atomic(out: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = temp_for(out);
+    let r = std::fs::write(&tmp, bytes).with_context(|| format!("cannot write {}", out.display())).and_then(|_| replace_file(&tmp, out));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 fn replace_file(tmp: &Path, out: &Path) -> Result<()> {
@@ -821,6 +862,33 @@ fn replace_file(tmp: &Path, out: &Path) -> Result<()> {
 }
 
 // ---------------------------------------------------------------- text files
+
+/// Limits that keep one huge or malformed file from exhausting memory or disk. A file over a
+/// limit fails (and is not written).
+pub const MAX_FILE_BYTES: u64 = 1 << 30; // 1 GB
+pub const MAX_PDF_PAGES: usize = 5_000;
+pub const MAX_PICTURE_PIXELS: u64 = 150_000_000; // 150 megapixels
+pub const MAX_OFFICE_UNPACKED: u64 = 4 << 30; // 4 GB in total inside a .docx / .xlsx
+pub const MAX_OFFICE_PARTS: usize = 50_000;
+
+/// Open a picture with size limits.
+fn load_picture(bytes: &[u8]) -> Result<image::RgbaImage> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(40_000);
+    limits.max_image_height = Some(40_000);
+    limits.max_alloc = Some(MAX_PICTURE_PIXELS * 4);
+    reader.limits(limits);
+    let (w, h) = reader.into_dimensions().map_err(|e| anyhow!("cannot read picture: {e}"))?;
+    if w as u64 * h as u64 > MAX_PICTURE_PIXELS {
+        bail!("picture is {w} x {h} pixels, over the limit of {} megapixels", MAX_PICTURE_PIXELS / 1_000_000);
+    }
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(MAX_PICTURE_PIXELS * 4);
+    reader.limits(limits);
+    Ok(reader.decode().map_err(|e| anyhow!("cannot read picture: {e}"))?.to_rgba8())
+}
 
 const TEXT_EXT: &[&str] = &["txt", "csv", "tsv", "json", "xml", "html", "htm", "md", "log", "ini", "yaml", "yml", "sql", "eml", "rtf"];
 const IMAGE_EXT: &[&str] = &["png", "jpg", "jpeg", "bmp", "tif", "tiff"];
@@ -1086,7 +1154,8 @@ fn redact_image(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions) -
     if fo.ocr == OcrMode::Never {
         bail!("pictures need OCR (ocr is set to never)");
     }
-    let mut img = image::open(input).with_context(|| format!("cannot read picture {}", input.display()))?.to_rgba8();
+    let bytes = std::fs::read(input).with_context(|| format!("cannot read {}", input.display()))?;
+    let mut img = load_picture(&bytes)?;
     let mut o = Outcome { pages: 1, ..Default::default() };
     let (rects, verified) = check_picture(&img, red, fo, &mut o.counts)?;
     if !verified {
@@ -1096,7 +1165,7 @@ fn redact_image(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions) -
     if !fo.dry_run && o.unverified == 0 {
         black_out(&mut img, &rects);
         let bytes = encode_like(img, &ext_of(output))?;
-        std::fs::write(output, bytes).with_context(|| format!("cannot write {}", output.display()))?;
+        write_atomic(output, &bytes)?;
     }
     Ok(o)
 }
@@ -1164,6 +1233,9 @@ fn redact_pdf(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions) -> 
     let glyph_pages = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| crate::documents::pdf_glyph_pages(input))).ok().and_then(|r| r.ok());
     let renderer = pdfrender::Pdf::open(input)?;
     let n = renderer.page_count();
+    if n > MAX_PDF_PAGES {
+        bail!("{n} pages, over the limit of {MAX_PDF_PAGES}");
+    }
     let with_pictures = pdf_pages_with_pictures(input, n);
     let mut o = Outcome { pages: n, ..Default::default() };
     let mut pdf = PdfBuilder::new();
@@ -1279,9 +1351,12 @@ impl PdfBuilder {
         self.doc.objects.insert(self.pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => count }));
         let catalog_id = self.doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => self.pages_id });
         self.doc.trailer.set("Root", catalog_id);
-        let tmp = output.with_extension("redact.tmp");
-        self.doc.save(&tmp).map_err(|e| anyhow!("cannot write {}: {e}", output.display()))?;
-        replace_file(&tmp, output)
+        let tmp = temp_for(output);
+        let r = self.doc.save(&tmp).map_err(|e| anyhow!("cannot write {}: {e}", output.display())).and_then(|_| replace_file(&tmp, output));
+        if r.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        r
     }
 }
 
@@ -1347,8 +1422,9 @@ mod pdfrender {
 pub struct FileResult {
     /// Path relative to the input folder (or the file name).
     pub file: String,
-    /// redacted, clean (read completely, nothing found), unverified (some content could not be
-    /// read: not written), skipped (type not supported: not copied), failed (error: not written).
+    /// redacted, clean (read completely, nothing found), unchanged (the existing output is proven
+    /// to come from this input with these settings), unverified (some content could not be read:
+    /// not written), skipped (type not supported: not copied), failed (error: not written).
     pub status: &'static str,
     pub counts: Counts,
     pub pages: usize,
@@ -1375,11 +1451,15 @@ pub fn redact_file(input: &Path, output: &Path, red: &Redactor, fo: &FileOptions
         }
     }
     let ext = ext_of(input);
+    let size = std::fs::metadata(input).with_context(|| format!("cannot read {}", input.display()))?.len();
+    if size > MAX_FILE_BYTES {
+        bail!("{} MB, over the limit of {} MB", size >> 20, MAX_FILE_BYTES >> 20);
+    }
     if TEXT_EXT.contains(&ext.as_str()) {
         let text = read_text_any(input)?;
         let (new, counts) = red.redact(&text);
         if !fo.dry_run {
-            std::fs::write(output, new).with_context(|| format!("cannot write {}", output.display()))?;
+            write_atomic(output, new.as_bytes())?;
         }
         Ok(Outcome { counts, ..Default::default() })
     } else if ext == "docx" || ext == "xlsx" {
@@ -1446,8 +1526,67 @@ pub fn list_inputs(input: &Path, include: &str, recursive: bool, exclude_dir: Op
     Ok(out)
 }
 
+/// Name of the manifest kept in the output folder.
+pub const MANIFEST: &str = ".autoflowmate-redaction.json";
+
+/// What the manifest remembers for one output file: proof that it was made from this exact input
+/// with these exact settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ManifestEntry {
+    pub input_sha256: String,
+    pub output_sha256: String,
+    pub policy: String,
+    pub tool: String,
+    pub at: String,
+}
+
+fn sha256_file(p: &Path) -> Result<String> {
+    use sha2::Digest as _;
+    let mut f = std::fs::File::open(p).with_context(|| format!("cannot read {}", p.display()))?;
+    let mut h = sha2::Sha256::new();
+    std::io::copy(&mut f, &mut h)?;
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The settings that decide the result, as one hash.
+fn policy_hash(red: &Redactor, fo: &FileOptions) -> String {
+    use sha2::Digest as _;
+    let text = format!("{}|{}|{:?}|{}|{}|{}|{}", env!("CARGO_PKG_VERSION"), red.policy, fo.ocr, fo.ocr_language, fo.ocr_rotated, fo.dpi, fo.clear_metadata);
+    sha2::Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn manifest_path(input: &Path, output: &Path) -> PathBuf {
+    if input.is_file() && output.extension().is_some() && !output.is_dir() {
+        output.parent().map(|d| d.join(MANIFEST)).unwrap_or_else(|| PathBuf::from(MANIFEST))
+    } else {
+        output.join(MANIFEST)
+    }
+}
+
+fn read_manifest(p: &Path) -> BTreeMap<String, ManifestEntry> {
+    std::fs::read_to_string(p)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("files").cloned())
+        .and_then(|f| serde_json::from_value(f).ok())
+        .unwrap_or_default()
+}
+
+fn write_manifest(p: &Path, files: &BTreeMap<String, ManifestEntry>) -> Result<()> {
+    if let Some(d) = p.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    let v = serde_json::json!({
+        "about": "AutoFlowMate redaction manifest: which output was made from which input with which settings. An output is reused only when all three still match.",
+        "files": files,
+    });
+    write_atomic(p, serde_json::to_string_pretty(&v)?.as_bytes())
+}
+
 /// Redact many files with several threads. `progress` is called (on this thread) after each file.
-/// `stop` is checked between files.
+/// `stop` is checked between files. An output that already exists is reused only when the
+/// manifest proves it was made from the same input with the same settings (status `unchanged`);
+/// otherwise the file is redone. `overwrite` redoes every file.
 #[allow(clippy::too_many_arguments)]
 pub fn redact_many(
     input: &Path,
@@ -1480,14 +1619,18 @@ pub fn redact_many(
         }
     };
     let threads = if threads == 0 { std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(6) } else { threads.clamp(1, 32) };
+    let mpath = manifest_path(input, output);
+    let mut manifest = read_manifest(&mpath);
+    let known = manifest.clone();
+    let policy = policy_hash(red, fo);
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let (tx, rx) = std::sync::mpsc::channel::<FileResult>();
+    let (tx, rx) = std::sync::mpsc::channel::<(FileResult, Option<ManifestEntry>)>();
     let mut results = Vec::with_capacity(files.len());
     std::thread::scope(|s| {
         for _ in 0..threads.min(files.len().max(1)) {
             let tx = tx.clone();
             let next = &next;
-            let (target, rel) = (&target, &rel);
+            let (target, rel, known, policy) = (&target, &rel, &known, &policy);
             s.spawn(move || loop {
                 let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if i >= files.len() || stop() {
@@ -1496,12 +1639,22 @@ pub fn redact_many(
                 let f = &files[i];
                 let out = target(f);
                 let mut r = FileResult { file: rel(f), status: "failed", counts: Counts::new(), pages: 0, note: String::new() };
+                let mut entry: Option<ManifestEntry> = None;
+                let existed = out.exists();
+                // Reuse an existing output only with proof: same input, same output, same settings.
+                let proven = existed && !overwrite && {
+                    let e = known.get(&r.file);
+                    e.is_some_and(|e| {
+                        e.policy == *policy && sha256_file(f).is_ok_and(|h| h == e.input_sha256) && sha256_file(&out).is_ok_and(|h| h == e.output_sha256)
+                    })
+                };
                 if !supported(f) {
                     r.status = "skipped";
                     r.note = "file type not supported (not copied)".into();
-                } else if out.exists() && !overwrite && !fo.dry_run {
-                    r.status = "skipped";
-                    r.note = "already in the output folder (set overwrite to redo)".into();
+                } else if proven {
+                    r.status = "unchanged";
+                    r.note = "already redacted from this input with the same settings".into();
+                    entry = known.get(&r.file).cloned();
                 } else {
                     match redact_file(f, &out, red, fo) {
                         Ok(o) => {
@@ -1515,26 +1668,62 @@ pub fn redact_many(
                             r.counts = o.counts;
                             r.pages = o.pages;
                             r.note = o.notes.join("; ");
+                            if existed && !overwrite {
+                                r.note = [r.note.as_str(), "the earlier output could not be proven current, so it was redone"]
+                                    .iter()
+                                    .filter(|s| !s.is_empty())
+                                    .copied()
+                                    .collect::<Vec<_>>()
+                                    .join("; ");
+                            }
                         }
                         Err(e) => r.note = format!("{e:#}"),
                     }
-                    // A file that was not completely redacted must not stay in the output folder
-                    // (for example from an earlier run).
-                    if matches!(r.status, "unverified" | "failed") && !fo.dry_run && out.exists() && overwrite {
-                        let _ = std::fs::remove_file(&out);
+                    if !fo.dry_run {
+                        if matches!(r.status, "redacted" | "clean") {
+                            if let (Ok(i), Ok(o)) = (sha256_file(f), sha256_file(&out)) {
+                                entry = Some(ManifestEntry {
+                                    input_sha256: i,
+                                    output_sha256: o,
+                                    policy: policy.clone(),
+                                    tool: env!("CARGO_PKG_VERSION").into(),
+                                    at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                                });
+                            }
+                        } else if out.exists() {
+                            // Not completely redacted: nothing of it may stay in the output folder,
+                            // including an output from an earlier run.
+                            let _ = std::fs::remove_file(&out);
+                        }
                     }
                 }
-                if tx.send(r).is_err() {
+                if tx.send((r, entry)).is_err() {
                     break;
                 }
             });
         }
         drop(tx);
-        for r in rx {
+        let mut since_save = 0;
+        for (r, entry) in rx {
             progress(&r);
+            if !fo.dry_run && r.status != "skipped" {
+                match entry {
+                    Some(e) => manifest.insert(r.file.clone(), e),
+                    None => manifest.remove(&r.file),
+                };
+                since_save += 1;
+                // Saved as it goes, so an interrupted run can continue.
+                if since_save >= 25 {
+                    let _ = write_manifest(&mpath, &manifest);
+                    since_save = 0;
+                }
+            }
             results.push(r);
         }
     });
+    if !fo.dry_run && !results.is_empty() {
+        let _ = write_manifest(&mpath, &manifest);
+    }
     results.sort_by(|a, b| a.file.cmp(&b.file));
     results
 }

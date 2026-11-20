@@ -339,14 +339,20 @@ logs). Other files are skipped and not copied, so nothing unredacted ends up in 
   left, so nothing can be copied out from under a box. Text PDFs use their own character
   positions; scanned pages, pages with pictures, and picture files are read with Windows OCR.
   `pdf_dpi` (default 150) sets the sharpness; use 200-300 for small print.
-- **Fails closed.** Each file ends as `redacted`, `clean` (read completely, nothing found),
+- **Fails closed.** Each file ends as `redacted`, `clean` (read completely, nothing found), `unchanged` (an earlier output proven current),
   `unverified` (a page or picture could not be read although it isn't blank, a picture format
   OCR can't open, or OCR switched off), `skipped` (type not supported) or `failed`. Unverified
   and failed files are **not written**, and the step fails after writing the report, so later
   steps (zip, e-mail, upload) never pass on an incomplete folder. Set `continue_on_problems` only
   when you will check those files by hand.
-- **Thousands of files:** several files are worked on at once. `overwrite: false` (the default)
-  skips files already in the output folder, so an interrupted run continues where it stopped.
+- **Thousands of files:** several files are worked on at once. A manifest in the output folder
+  (`.autoflowmate-redaction.json`) records which output was made from which input with which
+  settings (SHA-256 hashes). With `overwrite: false` (the default) an existing output is reused
+  only when the manifest proves it still matches its input and the current settings, so an
+  interrupted run continues where it stopped, while a stale or planted file is redone. Outputs are
+  written to a temporary file and renamed into place, so a stop never leaves half a file.
+- **Limits:** files over 1 GB, PDFs over 5,000 pages, pictures over 150 megapixels and Office files
+  that unpack to over 4 GB are reported as failed rather than risking memory or disk.
 - **Report:** `report` writes a CSV with one line per file: status (redacted, clean, skipped,
   failed, unverified) and counts per kind. It never contains the values. `summary_var` gives the
   totals to the flow.

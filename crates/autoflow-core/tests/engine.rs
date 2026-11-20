@@ -220,3 +220,35 @@ fn redaction_fails_closed_unless_told_otherwise() {
     assert!(dir.join("after.txt").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn existing_outputs_are_reused_only_with_proof() {
+    let dir = tmpdir("redact_manifest");
+    std::fs::create_dir_all(dir.join("in")).unwrap();
+    std::fs::create_dir_all(dir.join("out")).unwrap();
+    std::fs::write(dir.join("in").join("a.txt"), "PAN ABCPE1234F").unwrap();
+    // An unredacted copy already sits in the output folder (from elsewhere, or an old run).
+    std::fs::write(dir.join("out").join("a.txt"), "PAN ABCPE1234F").unwrap();
+    let flow = json!({"name":"t","steps":[{"action":"redact_files","input":"in","output":"out","summary_var":"s"}]});
+    let (r, _) = run(flow.clone(), &dir);
+    assert!(r.success, "{}", r.message);
+    assert_eq!(std::fs::read_to_string(dir.join("out").join("a.txt")).unwrap(), "PAN [PAN]", "an unproven output must be redone");
+    assert_eq!(r.variables["s"]["redacted"], json!(1));
+    // Second run: same input, same settings, output untouched -> reused.
+    let (r, _) = run(flow.clone(), &dir);
+    assert_eq!(r.variables["s"]["unchanged"], json!(1), "{:?}", r.variables["s"]);
+    // Someone edits the output: no longer proven -> redone.
+    std::fs::write(dir.join("out").join("a.txt"), "PAN ABCPE1234F").unwrap();
+    let (r, _) = run(flow.clone(), &dir);
+    assert_eq!(r.variables["s"]["redacted"], json!(1));
+    assert_eq!(std::fs::read_to_string(dir.join("out").join("a.txt")).unwrap(), "PAN [PAN]");
+    // The input changes -> redone.
+    std::fs::write(dir.join("in").join("a.txt"), "Mobile 9876543210").unwrap();
+    let (r, _) = run(flow, &dir);
+    assert_eq!(r.variables["s"]["redacted"], json!(1));
+    assert_eq!(std::fs::read_to_string(dir.join("out").join("a.txt")).unwrap(), "Mobile [MOBILE]");
+    // No temporary files are left behind.
+    let leftovers: Vec<_> = std::fs::read_dir(dir.join("out")).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".afmtmp")).collect();
+    assert!(leftovers.is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}

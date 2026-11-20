@@ -65,11 +65,12 @@ jobs:
           git diff --exit-code -- schema/flow.schema.json skills/autoflowmate/references/actions.md
           if ($LASTEXITCODE -ne 0) { throw "run 'autoflow schema' and 'autoflow docs' and commit the result" }
 
-  # Every dependency must have a permissive licence (no GPL/LGPL/AGPL/MPL); see deny.toml.
+  # Every dependency must have a permissive licence (no GPL/LGPL/AGPL/MPL), and none may have a
+  # known security vulnerability or be yanked; see deny.toml.
   licences:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check licenses bans sources
+          command: check licenses bans sources advisories

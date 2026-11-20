@@ -1029,6 +1029,7 @@ impl<'a> Context<'a> {
                     let (level, msg) = match r.status {
                         "redacted" => (LogLevel::Info, format!("✔ {}: {total} found - {}{note}", r.file, crate::redact::counts_text(&r.counts))),
                         "clean" => (LogLevel::Info, format!("✔ {}: nothing found{note}", r.file)),
+                        "unchanged" => (LogLevel::Info, format!("✔ {}: unchanged{note}", r.file)),
                         "skipped" => (LogLevel::Warn, format!("- {}: skipped{note}", r.file)),
                         "unverified" => (LogLevel::Warn, format!("? {}: NOT written, could not be checked completely{note}", r.file)),
                         _ => (LogLevel::Warn, format!("✖ {}: failed, NOT written{note}", r.file)),
@@ -1052,11 +1053,12 @@ impl<'a> Context<'a> {
                 self.log(
                     if problems > 0 { LogLevel::Warn } else { LogLevel::Info },
                     format!(
-                        "{} file(s) in {:.1}s: {} redacted, {} clean, {} unverified, {} skipped, {} failed; found {}",
+                        "{} file(s) in {:.1}s: {} redacted, {} clean, {} unchanged, {} unverified, {} skipped, {} failed; found {}",
                         results.len(),
                         started.elapsed().as_secs_f64(),
                         n("redacted"),
                         n("clean"),
+                        n("unchanged"),
                         n("unverified"),
                         n("skipped"),
                         n("failed"),
@@ -1065,7 +1067,7 @@ impl<'a> Context<'a> {
                 );
                 self.set_var(
                     &a.summary_var,
-                    json!({"files": results.len(), "redacted": n("redacted"), "clean": n("clean"), "unverified": n("unverified"), "skipped": n("skipped"), "failed": n("failed"), "found": found}),
+                    json!({"files": results.len(), "redacted": n("redacted"), "clean": n("clean"), "unchanged": n("unchanged"), "unverified": n("unverified"), "skipped": n("skipped"), "failed": n("failed"), "found": found}),
                 )?;
                 self.check_cancel()?;
                 // Fail closed: later steps (zip, e-mail, upload) must not run on a folder that is

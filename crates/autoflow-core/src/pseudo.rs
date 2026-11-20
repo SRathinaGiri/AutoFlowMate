@@ -155,6 +155,14 @@ impl Vault {
         }
         let known: Option<String> =
             self.conn.query_row("SELECT domain FROM pseudonyms WHERE token = ?1", [&token], |r| r.get(0)).optional().context("vault")?;
+        if let Some(stored_domain) = &known {
+            // The token is already in the vault: it must belong to this very value. (With 80-bit
+            // tokens a clash is practically impossible, but a token must never stand for two values.)
+            let stored = self.reveal(&token)?;
+            if stored_domain != domain || stored.as_deref() != Some(value) {
+                bail!("token {token} is already used for a different value in the vault; nothing was changed. Please report this.");
+            }
+        }
         if known.is_none() && !self.dry {
             self.begin()?;
             let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
@@ -242,6 +250,22 @@ mod tests {
         assert_eq!(key_from_secret("x y z"), key_from_secret(" x y z "));
         assert_eq!(normalize(" ab-12 34 "), "AB1234");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tokens_never_change_between_versions() {
+        // Vaults and shared files depend on this: the same key, domain and value must always
+        // give the same token. If this test fails, token making has changed - don't release that.
+        let path = std::env::temp_dir().join(format!("afm_pseudo_vec_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // These tokens were made by the published v0.4.0 build (its dry-run key is the passphrase
+        // "dry-run"), so this also proves vaults from v0.4.0 keep working.
+        let key = key_from_secret("dry-run");
+        let mut v = Vault::open(&path, &key, true, true).unwrap();
+        assert_eq!(v.token("account:v1", "ACC-", "001234567890").unwrap(), "ACC-T6F6F2JDGSR46MME");
+        assert_eq!(v.token("", "", "ABCPE1234F").unwrap(), "XWXAAH79V567QQ0Z");
+        drop(v);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

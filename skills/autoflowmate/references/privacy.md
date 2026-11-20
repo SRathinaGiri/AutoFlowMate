@@ -34,11 +34,18 @@ never changed and `output` must differ from `input`.
   off), that file is **not written** and the step **fails** after writing the report, so later
   steps (zip, mail, upload) never see an incomplete folder. Only set `continue_on_problems: true`
   when the user explicitly accepts that, and then check `summary.failed` / `summary.unverified`.
-- `summary_var` gets `{files, redacted, clean, unverified, skipped, failed, found: {PAN: n, ...}}`.
+- `summary_var` gets `{files, redacted, clean, unchanged, unverified, skipped, failed, found: {PAN: n, ...}}`.
   `clean` means read completely and nothing found. `skipped` = file type not supported (not copied).
+- **Existing outputs need proof.** The output folder keeps a manifest
+  (`.autoflowmate-redaction.json`) with the SHA-256 of each input and output and a hash of the
+  settings. A file already in the output folder is reused (`unchanged`) only when all three still
+  match; otherwise it is redone. A file that fails is removed from the output folder, even if an
+  earlier run had left it there. Outputs are written to a temporary file and renamed into place.
+- Limits: files over 1 GB, PDFs over 5,000 pages, pictures over 150 megapixels and Office files
+  that unpack to over 4 GB fail (and are not written).
 - The report lists counts per file, never the values.
-- Thousands of files: it uses several threads (`threads`, 0 = automatic). Use `overwrite: false`
-  (default) to continue an interrupted run without redoing finished files.
+- Thousands of files: it uses several threads (`threads`, 0 = automatic). With `overwrite: false`
+  (default) an interrupted run continues: files the manifest proves finished are not redone.
 
 ## Redact text: `redact_text`
 
