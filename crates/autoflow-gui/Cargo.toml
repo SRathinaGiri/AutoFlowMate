@@ -22,7 +22,7 @@ rfd.workspace = true
 arboard.workspace = true
 egui_extras = { version = "0.37", default-features = false, features = ["datepicker"] }
 chrono.workspace = true
-jiff = "0.2"
+jiff = "1.0"
 
 
 [target.'cfg(windows)'.build-dependencies]
