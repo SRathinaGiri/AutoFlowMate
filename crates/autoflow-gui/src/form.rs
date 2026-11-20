@@ -7,8 +7,9 @@
 //! * output-variable fields suggest existing names,
 //! * optional fields get a "use default / current position" checkbox.
 
+use crate::i18n::tr;
 use autoflow_core::flow::VarType;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::path::Path;
@@ -190,7 +191,13 @@ fn path_kind(action: &str, key: &str) -> Option<PathKind> {
 }
 
 /// "timeout_ms" -> "Timeout (ms)", "output_var" -> "Output variable".
+/// A field name as shown, translated.
 fn pretty(key: &str) -> String {
+    tr(&pretty_english(key))
+}
+
+/// A field name in English: "timeout_ms" -> "Timeout (ms)".
+pub(crate) fn pretty_english(key: &str) -> String {
     let special = match key {
         "id" => Some("Step id"),
         "x_var" => Some("X → variable"),
@@ -264,6 +271,34 @@ pub struct Form<'a> {
     pub ctx: Map<String, Value>,
     /// Set when the user asks to edit the provider lists.
     pub open_settings: bool,
+    /// What the schema says about each field of this action (allowed values, defaults).
+    pub fields: Option<&'a HashMap<String, crate::schema_info::FieldInfo>>,
+}
+
+/// Common date patterns for date_calc, with what they look like.
+const DATE_PATTERNS: &[(&str, &str)] = &[
+    ("dd-MM-yyyy", "day-month-year"),
+    ("dd/MM/yyyy", "day/month/year"),
+    ("yyyy-MM-dd", "year-month-day (sorts well)"),
+    ("dd-MMM-yyyy", "with short month name"),
+    ("dd MMMM yyyy", "with full month name"),
+    ("dddd", "weekday name"),
+    ("ddd", "short weekday name"),
+    ("MMMM", "month name"),
+    ("MMM yyyy", "month and year"),
+    ("yyyy", "year"),
+    ("HH:mm", "24-hour time"),
+    ("hh:mm tt", "12-hour time"),
+    ("dd-MM-yyyy HH:mm:ss", "date and time"),
+    ("yyyyMMdd_HHmmss", "for file names"),
+];
+
+/// Today's date in a pattern, e.g. "dddd" -> "Thursday".
+fn date_example(pattern: &str) -> String {
+    match autoflow_core::textops::parse_date("now", "") {
+        Ok(now) => autoflow_core::textops::format_date(&now, pattern),
+        Err(_) => String::new(),
+    }
 }
 
 /// What the editor knows about a data file (for the sheet / column dropdowns).
@@ -279,21 +314,36 @@ impl Form<'_> {
     pub fn object(&mut self, ui: &mut egui::Ui, prefix: &str, obj: &mut Map<String, Value>) -> bool {
         let mut changed = false;
         self.ctx = obj.clone();
-        let keys: Vec<String> = obj.keys().filter(|k| !SKIP.contains(&k.as_str())).cloned().collect();
+        let all: Vec<String> = obj.keys().filter(|k| !SKIP.contains(&k.as_str())).cloned().collect();
+        let (keys, hidden): (Vec<String>, Vec<String>) = all.into_iter().partition(|k| !self.hidden(k));
         egui::Grid::new(format!("grid_{prefix}")).num_columns(2).spacing([10.0, 7.0]).striped(true).min_col_width(90.0).show(ui, |ui| {
             for key in keys {
                 let path = format!("{prefix}.{key}");
-                let label = ui.label(pretty(&key));
-                if let Some(h) = self.help.get(&key) {
-                    label.on_hover_text(h);
+                let tip = self.tooltip(&key);
+                // "(?)" marks fields that have help; hovering the name or the field shows it.
+                let label = ui.horizontal(|ui| {
+                    ui.label(pretty(&key));
+                    if !tip.is_empty() {
+                        ui.label(RichText::new("(?)").small().color(ui.visuals().hyperlink_color));
+                    }
+                });
+                if !tip.is_empty() {
+                    label.response.on_hover_text(&tip);
                 }
                 let v = obj.get_mut(&key).unwrap();
-                ui.horizontal(|ui| {
+                let row = ui.horizontal(|ui| {
                     changed |= self.field(ui, &path, &key, v);
                 });
+                if !tip.is_empty() {
+                    row.response.on_hover_text(&tip);
+                }
                 ui.end_row();
             }
         });
+        if !hidden.is_empty() {
+            let names: Vec<String> = hidden.iter().map(|k| pretty(k)).collect();
+            ui.weak(format!("{} {}", tr("Not used with these choices:"), names.join(", ")));
+        }
         changed
     }
 
@@ -302,7 +352,7 @@ impl Form<'_> {
         if key == "provider" && (self.action == "ai_prompt" || crate::smart::is_mail_action(&self.action)) {
             let items = crate::smart::provider_items(self.lists, &self.action);
             let c = crate::smart::text_with_list(ui, path, v, &items, "pick from the list ▸", 160.0);
-            if ui.small_button("⚙").on_hover_text("Edit the provider list: File > Settings").clicked() {
+            if ui.small_button("⚙").on_hover_text(tr("Edit the provider list: File > Settings")).clicked() {
                 self.open_settings = true;
             }
             return c;
@@ -313,8 +363,16 @@ impl Form<'_> {
         if matches!(self.action.as_str(), "db_query" | "db_execute") && key == "connection" {
             return crate::smart::connection_field(ui, path, v, self.lists, self.flow_dir, self.cache);
         }
+        if let Some(opts) = self.fields.and_then(|f| f.get(key)).filter(|f| !f.options.is_empty()).map(|f| f.options.clone()) {
+            if v.is_string() {
+                return option_combo(ui, path, v, &opts);
+            }
+        }
         if let Some(opts) = choices(key) {
             return combo(ui, path, v, opts);
+        }
+        if self.action == "date_calc" && matches!(key, "format" | "input_format") {
+            return date_pattern_field(ui, path, v, key == "input_format");
         }
         // Optional numbers: null = "current position" / "flow default".
         if self.optional_number(key) {
@@ -359,13 +417,14 @@ impl Form<'_> {
                 let mut changed = false;
                 ui.vertical(|ui| {
                     let buf = self.json_buffers.entry(path.to_string()).or_insert_with(|| a.iter().filter_map(Value::as_str).collect::<Vec<_>>().join("\n"));
-                    let resp = ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(260.0).hint_text("one file per line, ${variables} allowed"));
+                    let resp =
+                        ui.add(egui::TextEdit::multiline(buf).desired_rows(2).desired_width(260.0).hint_text(tr("one file per line, ${variables} allowed")));
                     if resp.changed() {
                         changed = true;
                     }
                     let mut add: Vec<String> = vec![];
                     ui.horizontal(|ui| {
-                        if ui.button("📄 Add file…").clicked() {
+                        if ui.button(tr("📄 Add file…")).clicked() {
                             let mut d = rfd::FileDialog::new();
                             if let Some(dir) = self.flow_dir {
                                 d = d.set_directory(dir);
@@ -407,13 +466,13 @@ impl Form<'_> {
                     .changed();
                 let stored = !s.trim().is_empty() && !s.contains("${") && autoflow_core::mail::secrets::exists(&s);
                 if stored {
-                    ui.colored_label(Color32::from_rgb(70, 170, 90), "✔ stored");
+                    ui.colored_label(crate::look::ok(), tr("✔ stored"));
                 } else {
-                    ui.colored_label(Color32::from_rgb(220, 140, 40), "not stored");
+                    ui.colored_label(crate::look::warn(), tr("not stored"));
                 }
                 if ui
                     .button(if key == "password_secret" { "🔑 Set password…" } else { "🔑 Set key…" })
-                    .on_hover_text("Store the password / API key in Windows Credential Manager under this name. It is never saved in the flow.")
+                    .on_hover_text(tr("Store the password / API key in Windows Credential Manager under this name. It is never saved in the flow."))
                     .clicked()
                     && !s.trim().is_empty()
                 {
@@ -458,6 +517,73 @@ impl Form<'_> {
                 | ("ai_prompt", "temperature")
                 | ("calculate", "decimals")
         )
+    }
+
+    /// Tooltip for a field: what it is, the values it allows, and its default.
+    fn tooltip(&self, key: &str) -> String {
+        let mut t = self.help.get(key).map(|h| tr(h)).unwrap_or_default();
+        if let Some(f) = self.fields.and_then(|f| f.get(key)) {
+            if !f.options.is_empty() {
+                t.push_str(&format!("\n\n{}", tr("Choose one:")));
+                for (v, d) in &f.options {
+                    let d = tr(&d.replace('`', ""));
+                    t.push_str(&if d.is_empty() { format!("\n•  {v}") } else { format!("\n•  {v}: {d}") });
+                }
+            }
+            if let Some(d) = &f.default {
+                let shown = match d {
+                    Value::String(s) if s.is_empty() => String::new(),
+                    Value::String(s) => s.clone(),
+                    Value::Array(a) if a.is_empty() => String::new(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                };
+                if !shown.is_empty() {
+                    t.push_str(&format!("\n\n{} {shown}", tr("Default:")));
+                }
+            }
+        }
+        if t.trim().is_empty() {
+            return String::new();
+        }
+        if t.contains("${") || INT_EXPR.contains(&key) {
+            t.push_str(&format!("\n\n{}", tr("You can use variables: ${name}")));
+        }
+        t
+    }
+
+    /// Fields that do nothing with the current choices (hidden to keep the form short).
+    fn hidden(&self, key: &str) -> bool {
+        let get = |k: &str| self.ctx.get(k).and_then(Value::as_str).unwrap_or("").to_lowercase();
+        match self.action.as_str() {
+            "date_calc" => {
+                let op = get("operation");
+                match op.as_str() {
+                    "format" => matches!(key, "amount" | "unit" | "other_date"),
+                    "add" => key == "other_date",
+                    "diff" => matches!(key, "amount" | "format"),
+                    "parts" => matches!(key, "amount" | "unit" | "other_date" | "format"),
+                    _ => false,
+                }
+            }
+            "send_email" => {
+                let preset = self.lists.presets.find_mail(&get("provider")).is_some();
+                preset && self.ctx.get("smtp_host").and_then(Value::as_str).unwrap_or("").is_empty() && matches!(key, "smtp_host" | "smtp_port" | "security")
+            }
+            "read_email" => {
+                let preset = self.lists.presets.find_mail(&get("provider")).is_some();
+                preset && self.ctx.get("imap_host").and_then(Value::as_str).unwrap_or("").is_empty() && matches!(key, "imap_host" | "imap_port")
+            }
+            "trigger_email" => {
+                if get("source") == "outlook" {
+                    matches!(key, "provider" | "imap_host" | "imap_port" | "username" | "password_secret")
+                } else {
+                    key == "account"
+                }
+            }
+            "http_request" => matches!(get("method").as_str(), "" | "get" | "head") && key == "body",
+            _ => false,
+        }
     }
 
     /// Hint shown in an empty text field: the provider's default, else the help's example.
@@ -509,7 +635,7 @@ impl Form<'_> {
                 if let Some(mut f) = v.as_f64() {
                     if ui
                         .add(egui::DragValue::new(&mut f).range(0.0..=2.0).speed(0.05).max_decimals(2))
-                        .on_hover_text("0 = most predictable, 1 = creative")
+                        .on_hover_text(tr("0 = most predictable, 1 = creative"))
                         .changed()
                     {
                         *v = Value::from(f);
@@ -568,7 +694,7 @@ impl Form<'_> {
                 .selected_text(if current.is_empty() { "choose…".to_string() } else { current.clone() })
                 .show_ui(ui, |ui| {
                     if names.is_empty() {
-                        ui.weak("no number variables yet");
+                        ui.weak(tr("no number variables yet"));
                     }
                     for n in &names {
                         let t = format!("${{{n}}}");
@@ -577,7 +703,7 @@ impl Form<'_> {
                         }
                     }
                     ui.separator();
-                    if ui.button("➕ New variable…").clicked() {
+                    if ui.button(tr("➕ New variable…")).clicked() {
                         let name = self.suggest_name(key);
                         picked = Some(format!("${{{name}}}"));
                         self.new_var = Some((name, VarType::Integer));
@@ -616,11 +742,11 @@ impl Form<'_> {
     /// Output-variable name: type a new name or pick an existing one.
     fn var_name(&mut self, ui: &mut egui::Ui, path: &str, v: &mut Value) -> bool {
         let mut s = v.as_str().unwrap_or("").to_string();
-        let mut changed = ui.add_sized([150.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text("variable name")).changed();
+        let mut changed = ui.add_sized([150.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text(tr("variable name"))).changed();
         let names: Vec<String> = self.vars.iter().map(|(n, _)| n.clone()).collect();
         egui::ComboBox::from_id_salt(format!("{path}#names")).width(24.0).selected_text("▾").show_ui(ui, |ui| {
             if names.is_empty() {
-                ui.weak("no variables yet - type a new name");
+                ui.weak(tr("no variables yet - type a new name"));
             }
             for n in &names {
                 if ui.selectable_label(s == *n, n).clicked() {
@@ -720,9 +846,9 @@ impl Form<'_> {
         let names: Vec<String> = self.vars.iter().map(|(n, _)| n.clone()).collect();
         let resp = ui.menu_button(RichText::new("𝑥").strong(), |ui| {
             ui.set_min_width(220.0);
-            ui.label(RichText::new("Insert variable").strong());
+            ui.label(RichText::new(tr("Insert variable")).strong());
             if names.is_empty() {
-                ui.weak("no flow variables yet");
+                ui.weak(tr("no flow variables yet"));
             }
             for n in &names {
                 if ui.button(format!("${{{n}}}")).clicked() {
@@ -731,7 +857,7 @@ impl Form<'_> {
                 }
             }
             ui.separator();
-            ui.menu_button("Built-in", |ui| {
+            ui.menu_button(tr("Built-in"), |ui| {
                 for (n, d) in BUILTIN_VARS {
                     if ui.button(format!("${{{n}}}")).on_hover_text(*d).clicked() {
                         picked = Some(n.to_string());
@@ -739,7 +865,7 @@ impl Form<'_> {
                     }
                 }
             });
-            if ui.button("➕ New variable…").clicked() {
+            if ui.button(tr("➕ New variable…")).clicked() {
                 let name = self.suggest_name(key);
                 self.new_var = Some((name.clone(), VarType::Text));
                 picked = Some(name);
@@ -770,7 +896,7 @@ impl Form<'_> {
         };
         match kind {
             PathKind::Open(name, ext) => {
-                if ui.button("📄").on_hover_text("Choose a file…").clicked() {
+                if ui.button("📄").on_hover_text(tr("Choose a file…")).clicked() {
                     let mut d = dialog();
                     if ext != ["*"] {
                         d = d.add_filter(name, ext);
@@ -779,20 +905,20 @@ impl Form<'_> {
                 }
             }
             PathKind::Save(name, ext) => {
-                if ui.button("💾").on_hover_text("Choose where to save…").clicked() {
+                if ui.button("💾").on_hover_text(tr("Choose where to save…")).clicked() {
                     out = dialog().add_filter(name, ext).save_file();
                 }
             }
             PathKind::Folder => {
-                if ui.button("📁").on_hover_text("Choose a folder…").clicked() {
+                if ui.button("📁").on_hover_text(tr("Choose a folder…")).clicked() {
                     out = dialog().pick_folder();
                 }
             }
             PathKind::FileOrFolder => {
-                if ui.button("📄").on_hover_text("Choose a file…").clicked() {
+                if ui.button("📄").on_hover_text(tr("Choose a file…")).clicked() {
                     out = dialog().pick_file();
                 }
-                if ui.button("📁").on_hover_text("Choose a folder…").clicked() {
+                if ui.button("📁").on_hover_text(tr("Choose a folder…")).clicked() {
                     out = dialog().pick_folder().map(|p| {
                         // A trailing \ means "into this folder" for copy/move.
                         let mut s = p.into_os_string();
@@ -838,7 +964,7 @@ impl Form<'_> {
                 let mut s = v.as_str().unwrap_or("").to_string();
                 let lists: Vec<String> = self.vars.iter().filter(|(_, t)| matches!(t, None | Some(VarType::List))).map(|(n, _)| n.clone()).collect();
                 ui.horizontal(|ui| {
-                    if ui.add(egui::TextEdit::singleline(&mut s).desired_width(170.0).hint_text("${files}")).changed() {
+                    if ui.add(egui::TextEdit::singleline(&mut s).desired_width(170.0).hint_text(tr("${files}"))).changed() {
                         changed = true;
                     }
                     egui::ComboBox::from_id_salt(format!("{path}#lists")).selected_text("▾").width(24.0).show_ui(ui, |ui| {
@@ -873,7 +999,7 @@ impl Form<'_> {
                     }
                 }
                 Err(e) => {
-                    ui.colored_label(Color32::from_rgb(220, 80, 80), format!("JSON: {e}"));
+                    ui.colored_label(crate::look::err(), format!("JSON: {e}"));
                 }
             }
         });
@@ -905,7 +1031,7 @@ fn region(ui: &mut egui::Ui, path: &str, v: &mut Value) -> bool {
     let mut whole = v.is_null();
     let mut changed = false;
     ui.vertical(|ui| {
-        if ui.checkbox(&mut whole, "Whole screen").changed() {
+        if ui.checkbox(&mut whole, tr("Whole screen")).changed() {
             *v = if whole { Value::Null } else { serde_json::json!({"x": 0, "y": 0, "width": 400, "height": 300}) };
             changed = true;
         }
@@ -961,6 +1087,74 @@ pub fn schema_help() -> HashMap<String, String> {
     }
     walk(&schema, &mut out);
     out
+}
+
+/// A dropdown of allowed values, each with what it means.
+fn option_combo(ui: &mut egui::Ui, path: &str, v: &mut Value, opts: &[(String, String)]) -> bool {
+    let mut cur = v.as_str().unwrap_or("").to_string();
+    let before = cur.clone();
+    let cur_desc = opts.iter().find(|(o, _)| *o == cur).map(|(_, d)| d.replace('`', "")).unwrap_or_default();
+    let r = egui::ComboBox::from_id_salt(path).selected_text(cur.replace('_', " ")).width(170.0).show_ui(ui, |ui| {
+        ui.set_min_width(320.0);
+        for (o, d) in opts {
+            let d = d.replace('`', "");
+            let mut job = RichText::new(o.replace('_', " ")).strong().text().to_string();
+            if !d.is_empty() {
+                let short: String = d.chars().take(70).collect();
+                job = format!("{job}  —  {short}{}", if d.chars().count() > 70 { "…" } else { "" });
+            }
+            let resp = ui.selectable_label(cur == *o, job);
+            let resp = if d.is_empty() { resp } else { resp.on_hover_text(&d) };
+            if resp.clicked() {
+                cur = o.clone();
+            }
+        }
+    });
+    if !cur_desc.is_empty() {
+        r.response.on_hover_text(&cur_desc);
+    }
+    if cur != before {
+        *v = Value::String(cur);
+        return true;
+    }
+    false
+}
+
+/// date_calc format fields: free text plus common patterns, showing today's date in the pattern.
+fn date_pattern_field(ui: &mut egui::Ui, path: &str, v: &mut Value, input: bool) -> bool {
+    let mut s = v.as_str().unwrap_or("").to_string();
+    let mut changed = false;
+    ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            let hint = if input { "empty = recognise common formats" } else { "e.g. dd-MM-yyyy" };
+            changed |= ui.add_sized([150.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text(hint)).changed();
+            egui::ComboBox::from_id_salt(format!("{path}#pat")).selected_text("▾").width(24.0).show_ui(ui, |ui| {
+                ui.set_min_width(330.0);
+                if input && ui.selectable_label(s.is_empty(), tr("(recognise automatically: 31/01/2026, 2026-01-31…)")).clicked() {
+                    s.clear();
+                    changed = true;
+                }
+                for (pat, what) in DATE_PATTERNS {
+                    if ui.selectable_label(s == *pat, format!("{pat}   →  {}   ({what})", date_example(pat))).clicked() {
+                        s = pat.to_string();
+                        changed = true;
+                    }
+                }
+            });
+            // Today's date in this pattern, on the same row so it never overlaps the next field.
+            if !s.is_empty() && !s.contains("${") {
+                ui.label(RichText::new(format!("→ {}", date_example(&s))).color(ui.visuals().hyperlink_color)).on_hover_text(format!(
+                    "{} {}",
+                    tr("today looks like:"),
+                    date_example(&s)
+                ));
+            }
+        });
+    });
+    if changed {
+        *v = Value::String(s);
+    }
+    changed
 }
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ pub struct RecordOptions {
 }
 impl Default for RecordOptions {
     fn default() -> Self {
-        Self { min_wait_ms: 1500, ignore_window: "AutoFlowMate Studio".into() }
+        Self { min_wait_ms: 1500, ignore_window: "AutoFlowMate".into() }
     }
 }
 
@@ -140,8 +140,11 @@ impl<P: Probe> Converter<P> {
         }
     }
 
+    /// Clicks / keys that are not part of the task: AutoFlowMate's own windows (Studio, the
+    /// recording window) and the taskbar used to switch to the app.
     fn ignored(&self, title: &str) -> bool {
-        !self.opts.ignore_window.is_empty() && title.to_lowercase().contains(&self.opts.ignore_window.to_lowercase())
+        let t = title.trim().to_lowercase();
+        (!self.opts.ignore_window.is_empty() && t.contains(&self.opts.ignore_window.to_lowercase())) || t == "taskbar"
     }
 
     /// A `wait` for the pause since the last action, if long enough.
@@ -451,19 +454,162 @@ mod hooks {
         unsafe { CallNextHookEx(None, code, w, l) }
     }
 
-    /// Install the hooks on this thread and pump messages until `stop` is set.
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::Graphics::Gdi::{GetStockObject, DEFAULT_GUI_FONT};
+
+    /// Set by the Stop button of the recording window.
+    static STOP_CLICKED: AtomicBool = AtomicBool::new(false);
+    /// The step-count label of the recording window (as an integer handle).
+    pub static LABEL: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+    const STOP_ID: usize = 1001;
+
+    unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+        match msg {
+            WM_COMMAND if (w.0 & 0xFFFF) == STOP_ID => {
+                STOP_CLICKED.store(true, Ordering::Relaxed);
+                LRESULT(0)
+            }
+            WM_CLOSE => {
+                STOP_CLICKED.store(true, Ordering::Relaxed);
+                LRESULT(0)
+            }
+            _ => unsafe { DefWindowProcW(h, msg, w, l) },
+        }
+    }
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    /// Show the current number of recorded steps in the recording window.
+    pub fn set_label(text: &str) {
+        let h = LABEL.load(Ordering::Relaxed);
+        if h != 0 {
+            let t = wide(text);
+            unsafe {
+                let _ = SetWindowTextW(HWND(h as *mut _), PCWSTR(t.as_ptr()));
+            }
+        }
+    }
+
+    /// A small always-on-top window (top-right of the screen) with a Stop button.
+    unsafe fn stop_window(module: windows::Win32::Foundation::HMODULE) -> Option<HWND> {
+        unsafe {
+            let class = w!("AutoFlowMateRecorder");
+            let wc = WNDCLASSW {
+                lpfnWndProc: Some(wndproc),
+                hInstance: module.into(),
+                lpszClassName: class,
+                hCursor: LoadCursorW(None, IDC_ARROW).ok()?,
+                ..Default::default()
+            };
+            RegisterClassW(&wc);
+            let (sw, _) = (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN));
+            let (w, h) = (380, 118);
+            let win = CreateWindowExW(
+                WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+                class,
+                w!("AutoFlowMate recording"),
+                WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                sw - w - 24,
+                24,
+                w,
+                h,
+                None,
+                None,
+                Some(module.into()),
+                None,
+            )
+            .ok()?;
+            let mut rc = RECT::default();
+            let _ = GetClientRect(win, &mut rc);
+            let font = GetStockObject(DEFAULT_GUI_FONT);
+            let label = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                w!("STATIC"),
+                w!("● Recording: 0 steps     (Ctrl+Alt+R also stops)"),
+                WS_CHILD | WS_VISIBLE,
+                12,
+                10,
+                rc.right - 24,
+                20,
+                Some(win),
+                None,
+                Some(module.into()),
+                None,
+            )
+            .ok()?;
+            let button = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                w!("BUTTON"),
+                w!("■  Stop recording"),
+                WS_CHILD | WS_VISIBLE | WINDOW_STYLE(0x0000_0001), // BS_DEFPUSHBUTTON
+                12,
+                36,
+                rc.right - 24,
+                rc.bottom - 46,
+                Some(win),
+                Some(HMENU(STOP_ID as *mut _)),
+                Some(module.into()),
+                None,
+            )
+            .ok()?;
+            for c in [label, button] {
+                SendMessageW(c, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
+            }
+            LABEL.store(label.0 as isize, Ordering::Relaxed);
+            Some(win)
+        }
+    }
+
+    /// The mouse pointer is a cross while recording; `restore` puts the user's pointers back.
+    struct CrossCursor;
+    impl CrossCursor {
+        fn set() -> CrossCursor {
+            unsafe {
+                if let Ok(cross) = LoadCursorW(None, IDC_CROSS) {
+                    if let Ok(copy) = CopyIcon(HICON(cross.0)) {
+                        let _ = SetSystemCursor(HCURSOR(copy.0), OCR_NORMAL);
+                    }
+                }
+            }
+            CrossCursor
+        }
+    }
+    impl Drop for CrossCursor {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = SystemParametersInfoW(SPI_SETCURSORS, 0, None, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+            }
+        }
+    }
+
+    /// Install the hooks on this thread, show the recording window, and pump messages until
+    /// `stop` is set or the window's Stop button is clicked.
     pub fn run(stop: Arc<AtomicBool>) -> Result<()> {
+        STOP_CLICKED.store(false, Ordering::Relaxed);
         unsafe {
             let module = GetModuleHandleW(None).map_err(|e| anyhow!("{e}"))?;
             let kb = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard), Some(module.into()), 0).map_err(|e| anyhow!("cannot hook the keyboard: {e}"))?;
             let ms = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse), Some(module.into()), 0).map_err(|e| anyhow!("cannot hook the mouse: {e}"))?;
+            let win = stop_window(module);
+            let cursor = CrossCursor::set();
             let mut msg = MSG::default();
             while !stop.load(Ordering::Relaxed) {
                 while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
+                if STOP_CLICKED.load(Ordering::Relaxed) {
+                    stop.store(true, Ordering::Relaxed);
+                }
                 std::thread::sleep(Duration::from_millis(5));
+            }
+            drop(cursor);
+            LABEL.store(0, Ordering::Relaxed);
+            if let Some(w) = win {
+                let _ = DestroyWindow(w);
             }
             let _ = UnhookWindowsHookEx(kb);
             let _ = UnhookWindowsHookEx(ms);
@@ -555,6 +701,7 @@ pub fn record(opts: RecordOptions, stop: Arc<AtomicBool>, progress: &mut dyn FnM
                 progress(&summary(s));
             }
             shown = conv.steps.len();
+            hooks::set_label(&format!("● Recording: {shown} step(s)     (Ctrl+Alt+R also stops)"));
         }
     }
     stop.store(true, Ordering::Relaxed);

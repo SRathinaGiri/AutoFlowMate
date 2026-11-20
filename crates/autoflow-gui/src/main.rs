@@ -3,12 +3,16 @@
 
 mod flowchart;
 mod form;
+mod i18n;
 mod icons;
+mod look;
+mod schema_info;
 mod settings;
 mod smart;
 mod tree;
 mod variables;
 
+use crate::i18n::tr;
 use autoflow_core::{catalog, run_flow, validate_json, Action, ActionInfo, Debugger, Event, Flow, RunOptions, Severity, Step};
 use eframe::egui::{self, Color32, RichText};
 use serde_json::{Map, Value};
@@ -36,13 +40,34 @@ type RecordResult = Result<Vec<Step>, String>;
 type PickResult = Result<(i32, i32, Option<String>), String>;
 
 fn main() -> eframe::Result {
-    let path = std::env::args().nth(1).map(PathBuf::from);
-    let mut viewport = egui::ViewportBuilder::default().with_inner_size([1320.0, 820.0]).with_min_inner_size([900.0, 500.0]);
+    let args: Vec<String> = std::env::args().collect();
+    // autoflow-studio --language-template FILE: every text to translate, with empty values.
+    if args.get(1).map(String::as_str) == Some("--language-template") {
+        let out = PathBuf::from(args.get(2).cloned().unwrap_or_else(|| "template.json".into()));
+        match i18n::write_template(&out, &schema_info::SchemaInfo::load()) {
+            Ok(n) => println!("wrote {n} texts to {}", out.display()),
+            Err(e) => eprintln!("cannot write {}: {e}", out.display()),
+        }
+        return Ok(());
+    }
+    let path = args.get(1).map(PathBuf::from);
+    // Opens maximised (not full screen, so the title bar and taskbar stay usable).
+    let mut viewport = egui::ViewportBuilder::default().with_inner_size([1320.0, 820.0]).with_min_inner_size([900.0, 500.0]).with_maximized(true);
     if let Ok(icon) = eframe::icon_data::from_png_bytes(ICON_PNG) {
         viewport = viewport.with_icon(icon);
     }
     let options = eframe::NativeOptions { viewport, ..Default::default() };
-    eframe::run_native("AutoFlowMate Studio", options, Box::new(move |_cc| Ok(Box::new(Studio::new(path)))))
+    eframe::run_native(
+        "AutoFlowMate Studio",
+        options,
+        Box::new(move |cc| {
+            let prefs = look::UiPrefs::load();
+            let _ = i18n::set_language(&prefs.language);
+            look::apply_fonts(&cc.egui_ctx, &prefs);
+            look::apply_style(&cc.egui_ctx, &prefs);
+            Ok(Box::new(Studio::new(path)))
+        }),
+    )
 }
 
 enum LogKind {
@@ -80,6 +105,9 @@ enum Pending {
     Close,
 }
 
+/// What "Try it" produced: variable names and values, or the error.
+type TryOutcome = Result<Vec<(String, String)>, String>;
+
 struct Studio {
     flow: Flow,
     path: Option<PathBuf>,
@@ -114,6 +142,8 @@ struct Studio {
     vars_ui: variables::VarsUi,
     table_cache: HashMap<String, (Option<std::time::SystemTime>, form::TableInfo)>,
     preview: Option<(String, Result<Value, String>)>,
+    /// Result of "Try it" for a step: the step it belongs to and what it produced.
+    try_result: Option<(StepPath, TryOutcome)>,
     secret_dialog: Option<SecretDialog>,
     history: History,
     breakpoints: HashSet<String>,
@@ -127,6 +157,16 @@ struct Studio {
     cache: smart::Cache,
     /// The Settings window, when open.
     settings_ui: Option<settings::SettingsUi>,
+    /// "How recording works" is shown before recording starts.
+    record_prompt: bool,
+    /// Per-action field descriptions, allowed values and defaults from the schema.
+    schema: schema_info::SchemaInfo,
+    /// Font, text size and palette behaviour (View menu).
+    prefs: look::UiPrefs,
+    /// The palette category that is open when only one may be.
+    open_category: Option<String>,
+    /// One-frame request to open (true) or close (false) every palette category.
+    palette_all: Option<bool>,
 }
 
 #[derive(PartialEq, Clone, Copy)]
@@ -204,6 +244,7 @@ impl Studio {
             vars_ui: variables::VarsUi::default(),
             table_cache: HashMap::new(),
             preview: None,
+            try_result: None,
             secret_dialog: None,
             history: History::default(),
             breakpoints: HashSet::new(),
@@ -213,6 +254,11 @@ impl Studio {
             lists: smart::Lists::load(),
             cache: smart::Cache::default(),
             settings_ui: None,
+            record_prompt: false,
+            schema: schema_info::SchemaInfo::load(),
+            prefs: look::UiPrefs::load(),
+            open_category: Some("Flow".into()),
+            palette_all: None,
         };
         if let Some(p) = path {
             s.open_path(p);
@@ -312,17 +358,17 @@ impl Studio {
         let Some(p) = self.pending.clone() else { return };
         let name = self.path.as_ref().and_then(|p| p.file_name()).map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| "this flow".into());
         let mut answer: Option<u8> = None;
-        egui::Window::new("Unsaved changes").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+        egui::Window::new(tr("Unsaved changes")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
             ui.label(format!("Save the changes to {name} first?"));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("💾 Save").strong()).clicked() {
+                if ui.button(RichText::new(tr("💾 Save")).strong()).clicked() {
                     answer = Some(0);
                 }
-                if ui.button("Don't save").clicked() {
+                if ui.button(tr("Don't save")).clicked() {
                     answer = Some(1);
                 }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if ui.button(tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     answer = Some(2);
                 }
             });
@@ -377,8 +423,45 @@ impl Studio {
             repaint.request_repaint();
         });
         self.recording = Some((stop, rx));
-        self.info(LogKind::Info, "recording: use the app as usual, then press Ctrl+Alt+R to stop");
+        self.info(LogKind::Info, "recording: use the app as usual; stop with the ■ Stop recording window or Ctrl+Alt+R");
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    }
+
+    /// Explains recording, and how to stop it, before it starts.
+    fn record_prompt_window(&mut self, ctx: &egui::Context) {
+        if !self.record_prompt {
+            return;
+        }
+        let mut go = None;
+        egui::Window::new(tr("⏺ Record your actions")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            ui.set_max_width(460.0);
+            ui.label(tr("Recording starts when you press OK. Studio is minimised, and the steps are added at the selected place."));
+            ui.add_space(6.0);
+            ui.label(tr("•  Use the program you want to automate as usual: click, type, use shortcuts."));
+            ui.label(
+                RichText::new(tr("•  To stop: click  ■ Stop recording  in the small window at the top right of the screen, or press  Ctrl+Alt+R.")).strong(),
+            );
+            ui.label(tr("•  While recording, the mouse pointer is a cross."));
+            ui.label(tr("•  What you type into password boxes is never recorded; the flow will ask for it when it runs."));
+            ui.label(tr("•  Clicks on the taskbar and on AutoFlowMate's own windows are not recorded."));
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new(tr("OK, start recording")).strong()).clicked() {
+                    go = Some(true);
+                }
+                if ui.button(tr("Cancel")).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    go = Some(false);
+                }
+            });
+        });
+        match go {
+            Some(true) => {
+                self.record_prompt = false;
+                self.start_record(ctx);
+            }
+            Some(false) => self.record_prompt = false,
+            None => {}
+        }
     }
 
     fn poll_record(&mut self, ctx: &egui::Context) {
@@ -420,21 +503,21 @@ impl Studio {
         let Some((id, action, vars)) = self.running.as_ref().and_then(|r| r.paused.clone()) else { return };
         let mut act: Option<bool> = None;
         let mut stop = false;
-        egui::Window::new("⏸ Paused").default_pos([380.0, 120.0]).default_width(380.0).show(ctx, |ui| {
+        egui::Window::new(tr("⏸ Paused")).default_pos([380.0, 120.0]).default_width(380.0).show(ctx, |ui| {
             ui.label(RichText::new(format!("Before step {id}  ({} {action})", icons::action_icon(&action))).strong());
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("▶ Continue (F5)").color(Color32::from_rgb(80, 180, 90))).clicked() {
+                if ui.button(RichText::new(tr("▶ Continue (F5)")).color(crate::look::ok())).clicked() {
                     act = Some(false);
                 }
-                if ui.button("⏭ Step (F10)").on_hover_text("Run this step, then pause again").clicked() {
+                if ui.button(tr("⏭ Step (F10)")).on_hover_text(tr("Run this step, then pause again")).clicked() {
                     act = Some(true);
                 }
-                if ui.button(RichText::new("■ Stop").color(Color32::from_rgb(220, 80, 80))).clicked() {
+                if ui.button(RichText::new(tr("■ Stop")).color(crate::look::err())).clicked() {
                     stop = true;
                 }
             });
             ui.separator();
-            ui.weak("Variables now:");
+            ui.weak(tr("Variables now:"));
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 egui::Grid::new("paused_vars").striped(true).num_columns(2).show(ui, |ui| {
                     for (k, v) in &vars {
@@ -771,75 +854,106 @@ impl Studio {
 
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                if ui.button("New").clicked() {
-                    self.guard(Pending::New, &ctx);
-                    ui.close();
-                }
-                if ui.button("Open…  (Ctrl+O)").clicked() {
-                    self.guard(Pending::Open(None), &ctx);
-                    ui.close();
-                }
-                if ui.button("Save  (Ctrl+S)").clicked() {
-                    self.save(false);
-                    ui.close();
-                }
-                if ui.button("Save as…").clicked() {
-                    self.save(true);
-                    ui.close();
-                }
-                ui.separator();
-                if ui.button("⚙ Settings…").on_hover_text("AI and e-mail provider lists").clicked() {
-                    self.settings_ui = Some(settings::SettingsUi::new());
-                    ui.close();
-                }
-            });
-            ui.menu_button("Edit", |ui| {
-                if ui.add_enabled(!self.history.undo.is_empty(), egui::Button::new("Undo  (Ctrl+Z)")).clicked() {
-                    self.undo();
-                    ui.close();
-                }
-                if ui.add_enabled(!self.history.redo.is_empty(), egui::Button::new("Redo  (Ctrl+Y)")).clicked() {
-                    self.redo();
-                    ui.close();
-                }
-                ui.separator();
-                let sel_step = if let Selection::Step(p) = &self.sel { Some(p.clone()) } else { None };
-                if ui.add_enabled(sel_step.is_some(), egui::Button::new("Toggle breakpoint  (F9)")).clicked() {
-                    if let Some(p) = sel_step {
-                        self.toggle_breakpoint(&p);
+        // Wraps onto a second row when the window is narrow or the text is large.
+        ui.horizontal_wrapped(|ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+                ui.menu_button(tr("File"), |ui| {
+                    if ui.button(tr("New")).clicked() {
+                        self.guard(Pending::New, &ctx);
+                        ui.close();
                     }
-                    ui.close();
-                }
-                if ui.add_enabled(!self.breakpoints.is_empty(), egui::Button::new("Clear all breakpoints")).clicked() {
-                    self.breakpoints.clear();
-                    if let Some(r) = &self.running {
-                        r.debug.breakpoints.lock().unwrap().clear();
+                    if ui.button(tr("Open…  (Ctrl+O)")).clicked() {
+                        self.guard(Pending::Open(None), &ctx);
+                        ui.close();
                     }
-                    ui.close();
-                }
-            });
-            ui.menu_button("Help", |ui| {
-                if ui.button("About AutoFlowMate").clicked() {
-                    self.show_about = true;
-                    ui.close();
-                }
-                ui.hyperlink_to("Project on GitHub", GITHUB_URL);
-                ui.hyperlink_to("Action reference", format!("{GITHUB_URL}/blob/main/skills/autoflowmate/references/actions.md"));
+                    if ui.button(tr("Save  (Ctrl+S)")).clicked() {
+                        self.save(false);
+                        ui.close();
+                    }
+                    if ui.button(tr("Save as…")).clicked() {
+                        self.save(true);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(tr("⚙ Settings…")).on_hover_text(tr("AI and e-mail provider lists")).clicked() {
+                        self.settings_ui = Some(settings::SettingsUi::new());
+                        ui.close();
+                    }
+                });
+                ui.menu_button(tr("Edit"), |ui| {
+                    if ui.add_enabled(!self.history.undo.is_empty(), egui::Button::new(tr("Undo  (Ctrl+Z)"))).clicked() {
+                        self.undo();
+                        ui.close();
+                    }
+                    if ui.add_enabled(!self.history.redo.is_empty(), egui::Button::new(tr("Redo  (Ctrl+Y)"))).clicked() {
+                        self.redo();
+                        ui.close();
+                    }
+                    ui.separator();
+                    let sel_step = if let Selection::Step(p) = &self.sel { Some(p.clone()) } else { None };
+                    if ui.add_enabled(sel_step.is_some(), egui::Button::new(tr("Toggle breakpoint  (F9)"))).clicked() {
+                        if let Some(p) = sel_step {
+                            self.toggle_breakpoint(&p);
+                        }
+                        ui.close();
+                    }
+                    if ui.add_enabled(!self.breakpoints.is_empty(), egui::Button::new(tr("Clear all breakpoints"))).clicked() {
+                        self.breakpoints.clear();
+                        if let Some(r) = &self.running {
+                            r.debug.breakpoints.lock().unwrap().clear();
+                        }
+                        ui.close();
+                    }
+                });
+                ui.menu_button(tr("View"), |ui| {
+                    let before = self.prefs.clone();
+                    ui.label(RichText::new(tr("Text size")).strong());
+                    for (scale, label) in look::SCALES {
+                        ui.radio_value(&mut self.prefs.text_scale, scale, tr(label));
+                    }
+                    ui.separator();
+                    ui.checkbox(&mut self.prefs.system_font, tr("Windows font (Segoe UI)")).on_hover_text(tr("Off = egui's built-in font"));
+                    ui.checkbox(&mut self.prefs.one_category, tr("Palette: one category open at a time"));
+                    ui.separator();
+                    ui.label(RichText::new(tr("Language")).strong());
+                    for (code, name) in i18n::available() {
+                        ui.radio_value(&mut self.prefs.language, code, name);
+                    }
+                    ui.weak(tr("Language files are in the lang folder next to the program."));
+                    if self.prefs != before {
+                        if self.prefs.system_font != before.system_font {
+                            look::apply_fonts(&ctx, &self.prefs);
+                        }
+                        if self.prefs.language != before.language {
+                            if let Err(e) = i18n::set_language(&self.prefs.language) {
+                                self.info(LogKind::Error, e);
+                            }
+                        }
+                        look::apply_style(&ctx, &self.prefs);
+                        self.prefs.save();
+                    }
+                });
+                ui.menu_button(tr("Help"), |ui| {
+                    if ui.button(tr("About AutoFlowMate")).clicked() {
+                        self.show_about = true;
+                        ui.close();
+                    }
+                    ui.hyperlink_to(tr("Project on GitHub"), GITHUB_URL);
+                    ui.hyperlink_to(tr("Action reference"), format!("{GITHUB_URL}/blob/main/skills/autoflowmate/references/actions.md"));
+                });
             });
             ui.separator();
             let running = self.running.is_some();
             let paused = self.is_paused();
-            if ui.add_enabled(!self.history.undo.is_empty(), egui::Button::new("⟲")).on_hover_text("Undo (Ctrl+Z)").clicked() {
+            if ui.add_enabled(!self.history.undo.is_empty(), egui::Button::new("⟲")).on_hover_text(tr("Undo (Ctrl+Z)")).clicked() {
                 self.undo();
             }
-            if ui.add_enabled(!self.history.redo.is_empty(), egui::Button::new("⟳")).on_hover_text("Redo (Ctrl+Y)").clicked() {
+            if ui.add_enabled(!self.history.redo.is_empty(), egui::Button::new("⟳")).on_hover_text(tr("Redo (Ctrl+Y)")).clicked() {
                 self.redo();
             }
             ui.separator();
-            let run_label = if paused { "▶ Continue (F5)" } else { "▶ Run (F5)" };
-            if ui.add_enabled(!running || paused, egui::Button::new(RichText::new(run_label).color(Color32::from_rgb(80, 180, 90)))).clicked() {
+            let run_label = if paused { tr("▶ Continue (F5)") } else { tr("▶ Run (F5)") };
+            if ui.add_enabled(!running || paused, egui::Button::new(RichText::new(run_label).color(crate::look::ok()))).clicked() {
                 if paused {
                     self.resume(false, &ctx)
                 } else {
@@ -847,8 +961,8 @@ impl Studio {
                 }
             }
             if ui
-                .add_enabled(!running || paused, egui::Button::new("⏭ Step (F10)"))
-                .on_hover_text("Run one step at a time, pausing before each (shows the variables). Breakpoints: F9 on a step.")
+                .add_enabled(!running || paused, egui::Button::new(tr("⏭ Step (F10)")))
+                .on_hover_text(tr("Run one step at a time, pausing before each (shows the variables). Breakpoints: F9 on a step."))
                 .clicked()
             {
                 if paused {
@@ -857,35 +971,35 @@ impl Studio {
                     self.run(&ctx, true)
                 }
             }
-            if ui.add_enabled(running, egui::Button::new(RichText::new("■ Stop").color(Color32::from_rgb(220, 80, 80)))).clicked() {
+            if ui.add_enabled(running, egui::Button::new(RichText::new(tr("■ Stop")).color(crate::look::err()))).clicked() {
                 self.stop();
             }
             let recording = self.recording.is_some();
             if ui
                 .add_enabled(
                     !running && !recording,
-                    egui::Button::new(RichText::new(if recording { "⏺ Recording…" } else { "⏺ Record" }).color(Color32::from_rgb(220, 70, 70))),
+                    egui::Button::new(RichText::new(if recording { tr("⏺ Recording…") } else { tr("⏺ Record") }).color(crate::look::err())),
                 )
-                .on_hover_text(
+                .on_hover_text(tr(
                     "Record your clicks and typing as steps (inserted at the selection). Press Ctrl+Alt+R to stop. Typing in password boxes is never saved.",
-                )
+                ))
                 .clicked()
             {
-                self.start_record(&ctx);
+                self.record_prompt = true;
             }
-            ui.checkbox(&mut self.dry_run, "Dry run");
-            ui.checkbox(&mut self.minimize_on_run, "Minimize while running");
+            ui.checkbox(&mut self.dry_run, tr("Dry run"));
+            ui.checkbox(&mut self.minimize_on_run, tr("Minimize while running"));
             ui.separator();
             // Run-wide settings, saved in the flow (settings.*).
             let s = &mut self.flow.settings;
             let mut changed = false;
-            ui.label("Key delay").on_hover_text("settings.key_delay_ms: pause between keystrokes. Raise to 150-250 ms for slow apps such as Tally.");
+            ui.label(tr("Key delay")).on_hover_text(tr("settings.key_delay_ms: pause between keystrokes. Raise to 150-250 ms for slow apps such as Tally."));
             changed |= ui.add(egui::DragValue::new(&mut s.key_delay_ms).range(0..=2000).suffix(" ms").speed(5.0)).changed();
-            ui.label("Step delay")
-                .on_hover_text("settings.step_delay_ms: pause after every action step (if / loops / try add none themselves; their inner steps do).");
+            ui.label(tr("Step delay"))
+                .on_hover_text(tr("settings.step_delay_ms: pause after every action step (if / loops / try add none themselves; their inner steps do)."));
             changed |= ui.add(egui::DragValue::new(&mut s.step_delay_ms).range(0..=10000).suffix(" ms").speed(10.0)).changed();
             changed |= ui
-                .checkbox(&mut s.failsafe, "Fail-safe")
+                .checkbox(&mut s.failsafe, tr("Fail-safe"))
                 .on_hover_text(format!(
                     "Abort the run when the mouse touches a screen corner (PyAutoGUI FAILSAFE). The hotkey {} always aborts.",
                     if s.abort_hotkey.is_empty() { "(none)" } else { &s.abort_hotkey }
@@ -893,17 +1007,17 @@ impl Studio {
                 .changed();
             self.dirty |= changed;
             ui.separator();
-            if ui.button("⏰ Schedule…").on_hover_text("Run this flow automatically with Windows Task Scheduler").clicked() {
+            if ui.button(tr("⏰ Schedule…")).on_hover_text(tr("Run this flow automatically with Windows Task Scheduler")).clicked() {
                 self.open_schedule();
             }
-            if ui.button("✔ Validate").clicked() {
+            if ui.button(tr("✔ Validate")).clicked() {
                 self.log.clear();
                 self.validate();
             }
             let picking = self.pick_rx.is_some();
             if ui
-                .add_enabled(!picking, egui::Button::new(if picking { "⌖ Picking…" } else { "⌖ Pick element" }))
-                .on_hover_text("After 3 s, capture the UI element / position under the mouse. Fills the selected ui_* or mouse step, or adds a new step.")
+                .add_enabled(!picking, egui::Button::new(if picking { tr("⌖ Picking…") } else { tr("⌖ Pick element") }))
+                .on_hover_text(tr("After 3 s, capture the UI element / position under the mouse. Fills the selected ui_* or mouse step, or adds a new step."))
                 .clicked()
             {
                 self.start_pick(&ctx);
@@ -912,9 +1026,18 @@ impl Studio {
     }
 
     fn palette(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Actions");
-        ui.add(egui::TextEdit::singleline(&mut self.palette_filter).hint_text("filter…"));
-        ui.weak("Drag onto the flowchart, or click to insert at the selection");
+        ui.heading(tr("Actions"));
+        ui.add(egui::TextEdit::singleline(&mut self.palette_filter).hint_text(tr("filter…")));
+        ui.horizontal(|ui| {
+            if ui.small_button(tr("⊟ Collapse all")).clicked() {
+                self.palette_all = Some(false);
+                self.open_category = None;
+            }
+            if ui.small_button(tr("⊞ Expand all")).on_hover_text(tr("Turns off “one category at a time” until you open a category")).clicked() {
+                self.palette_all = Some(true);
+            }
+        });
+        ui.weak(tr("Drag onto the flowchart, or click to insert at the selection"));
         ui.separator();
         let mut add: Option<String> = None;
         let filter = self.palette_filter.to_lowercase();
@@ -934,8 +1057,20 @@ impl Studio {
                 if items.is_empty() {
                     continue;
                 }
-                egui::CollapsingHeader::new(RichText::new(format!("{}  {cat}", icons::category_icon(cat))).strong().color(cat_color(cat)))
-                    .default_open(true)
+                // Searching shows every match; otherwise one category at a time (View menu), or free.
+                let open = if !filter.is_empty() {
+                    Some(true)
+                } else if let Some(all) = self.palette_all {
+                    Some(all)
+                } else if self.prefs.one_category {
+                    Some(self.open_category.as_deref() == Some(cat))
+                } else {
+                    None
+                };
+                let resp = egui::CollapsingHeader::new(RichText::new(format!("{}  {}", icons::category_icon(cat), tr(cat))).strong())
+                    .id_salt(("palette_cat", cat))
+                    .default_open(cat == "Flow")
+                    .open(open)
                     .show(ui, |ui| {
                         let w = ui.available_width();
                         for a in items {
@@ -946,15 +1081,25 @@ impl Studio {
                                         .min_size(egui::vec2(w, 24.0))
                                         .sense(egui::Sense::click_and_drag()),
                                 )
-                                .on_hover_text(a.description);
+                                .on_hover_text(tr(a.description));
                             r.dnd_set_drag_payload(DragItem::New(a.name.to_string()));
                             if r.clicked() {
                                 add = Some(a.name.to_string());
                             }
                         }
                     });
+                if resp.header_response.clicked() && filter.is_empty() {
+                    let was_open = self.open_category.as_deref() == Some(cat);
+                    self.open_category = if was_open { None } else { Some(cat.to_string()) };
+                    // After "Expand all", clicking a header goes back to one-at-a-time.
+                    self.palette_all = None;
+                }
             }
         });
+        // "Collapse all" applies once; "Expand all" stays until a header is clicked.
+        if self.palette_all == Some(false) {
+            self.palette_all = None;
+        }
         if let Some(name) = add {
             if let Some(action) = Action::template(&name) {
                 self.add_step(Step::new(action));
@@ -963,26 +1108,27 @@ impl Studio {
     }
 
     fn steps_view(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.heading(if self.flow.name.is_empty() { "Untitled flow" } else { &self.flow.name });
-            if ui.small_button("flow settings").clicked() {
+        // Wraps onto a second row when the text is large, so nothing is pushed off screen.
+        ui.horizontal_wrapped(|ui| {
+            let title = if self.flow.name.is_empty() { tr("Untitled flow") } else { self.flow.name.clone() };
+            ui.heading(title);
+            if ui.small_button(tr("flow settings")).clicked() {
                 self.sel = Selection::None;
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.selectable_value(&mut self.view, View::Json, "JSON");
-                ui.selectable_value(&mut self.view, View::List, "List");
-                ui.selectable_value(&mut self.view, View::Flowchart, "Flowchart");
-                if self.view == View::Flowchart {
-                    ui.separator();
-                    if ui.small_button("+").clicked() {
-                        self.zoom = (self.zoom + 0.1).min(2.0);
-                    }
-                    ui.label(format!("{:.0}%", self.zoom * 100.0));
-                    if ui.small_button("−").clicked() {
-                        self.zoom = (self.zoom - 0.1).max(0.4);
-                    }
+            ui.separator();
+            ui.selectable_value(&mut self.view, View::Flowchart, tr("Flowchart"));
+            ui.selectable_value(&mut self.view, View::List, tr("List"));
+            ui.selectable_value(&mut self.view, View::Json, "JSON");
+            if self.view == View::Flowchart {
+                ui.separator();
+                if ui.small_button("−").on_hover_text(tr("Zoom out")).clicked() {
+                    self.zoom = (self.zoom - 0.1).max(0.4);
                 }
-            });
+                ui.label(format!("{:.0}%", self.zoom * 100.0));
+                if ui.small_button("+").on_hover_text(tr("Zoom in")).clicked() {
+                    self.zoom = (self.zoom + 0.1).min(2.0);
+                }
+            }
         });
         ui.separator();
         let current = self.running.as_ref().and_then(|r| r.current.clone());
@@ -1024,7 +1170,7 @@ impl Studio {
                 egui::ScrollArea::vertical().id_salt("steps").auto_shrink([false, false]).show(ui, |ui| {
                     if self.flow.steps.is_empty() {
                         ui.add_space(20.0);
-                        ui.weak("No steps yet. Pick an action on the left, or use ⌖ Pick element.");
+                        ui.weak(tr("No steps yet. Pick an action on the left, or use ⌖ Pick element."));
                     }
                     let ctx = RowCtx { sel: &self.sel, current: current.as_deref(), failed: &self.failed_steps, breakpoints: &self.breakpoints };
                     draw_list(ui, &self.flow.steps, &vec![], 0, &ctx, &mut ops);
@@ -1072,21 +1218,21 @@ impl Studio {
         }
         ui.horizontal(|ui| {
             let n_vars = self.flow.variables.len();
-            ui.selectable_value(&mut self.right_tab, RightTab::Step, RichText::new("⚙ Step").strong());
-            ui.selectable_value(&mut self.right_tab, RightTab::Variables, RichText::new(format!("𝑥 Variables ({n_vars})")).strong());
-            ui.selectable_value(&mut self.right_tab, RightTab::Flow, RichText::new("📄 Flow").strong());
+            ui.selectable_value(&mut self.right_tab, RightTab::Step, RichText::new(tr("⚙ Step")).strong());
+            ui.selectable_value(&mut self.right_tab, RightTab::Variables, RichText::new(format!("𝑥 {} ({n_vars})", tr("Variables"))).strong());
+            ui.selectable_value(&mut self.right_tab, RightTab::Flow, RichText::new(tr("📄 Flow")).strong());
         });
         ui.separator();
         egui::ScrollArea::vertical().id_salt("props").auto_shrink([false, false]).show(ui, |ui| match self.right_tab {
             RightTab::Step => match self.sel.clone() {
                 Selection::Step(p) => self.step_properties(ui, &p),
                 Selection::List(_) | Selection::Gap(..) => {
-                    ui.heading("Insertion point");
-                    ui.label("Click an action in the palette to insert it here, or drag one onto any connector.");
+                    ui.heading(tr("Insertion point"));
+                    ui.label(tr("Click an action in the palette to insert it here, or drag one onto any connector."));
                 }
                 Selection::None => {
                     ui.add_space(20.0);
-                    ui.weak("Select a step in the flowchart to edit it here.");
+                    ui.weak(tr("Select a step in the flowchart to edit it here."));
                 }
             },
             RightTab::Variables => {
@@ -1098,6 +1244,43 @@ impl Studio {
             }
             RightTab::Flow => self.flow_properties(ui),
         });
+    }
+
+    /// Run one step on its own with the flow's variables; returns its output variables.
+    fn try_step(&self, p: &StepPath) -> Result<Vec<(String, String)>, String> {
+        let step = tree::step_ref(&self.flow.steps, p).cloned().ok_or("step not found")?;
+        let v = serde_json::to_value(&step).unwrap_or_default();
+        let outputs: Vec<String> = v
+            .as_object()
+            .map(|o| {
+                o.iter()
+                    .filter(|(k, _)| k.ends_with("_var") || (matches!(step.action.name(), "set_variable" | "increment" | "list_append") && *k == "name"))
+                    .filter_map(|(_, x)| x.as_str().map(str::to_string))
+                    .filter(|n| !n.trim().is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let flow = Flow { variables: self.flow.variables.clone(), variable_types: self.flow.variable_types.clone(), steps: vec![step], ..Flow::default() };
+        let opts = RunOptions { flow_dir: self.flow_dir().unwrap_or_default(), failsafe: Some(false), ..RunOptions::default() };
+        let r = run_flow(&flow, Map::new(), &opts, &mut |_| {});
+        if !r.success {
+            let mut m = r.message;
+            if m.contains("unknown variable") {
+                m.push_str(" (it is set by an earlier step: give it a sample value in the Variables tab to try this step)");
+            }
+            return Err(m);
+        }
+        Ok(outputs
+            .into_iter()
+            .map(|n| {
+                let shown = match r.variables.get(&n) {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(other) => serde_json::to_string_pretty(other).unwrap_or_default(),
+                    None => "(not set)".into(),
+                };
+                (n, shown)
+            })
+            .collect())
     }
 
     fn flow_dir(&self) -> Option<PathBuf> {
@@ -1126,9 +1309,10 @@ impl Studio {
             return;
         };
         let name = step.action.name();
+        let category = step.action.category();
         let desc = self.catalog.iter().find(|a| a.name == name).map(|a| a.description).unwrap_or("");
-        ui.heading(RichText::new(format!("{}  {name}", icons::action_icon(name))).color(cat_color(step.action.category())));
-        ui.label(desc);
+        ui.heading(RichText::new(format!("{}  {name}", icons::action_icon(name))).strong());
+        ui.label(tr(desc));
         ui.separator();
 
         let mut v = serde_json::to_value(step).unwrap();
@@ -1174,10 +1358,11 @@ impl Studio {
             cache: &mut self.cache,
             ctx: Map::new(),
             open_settings: false,
+            fields: self.schema.fields(name),
         };
         let mut changed = form.object(ui, "a", &mut action_part);
         ui.add_space(8.0);
-        egui::CollapsingHeader::new("Step settings (id, errors, retries, delays)").default_open(false).show(ui, |ui| {
+        egui::CollapsingHeader::new(tr("Step settings (id, errors, retries, delays)")).default_open(false).show(ui, |ui| {
             changed |= form.object(ui, "c", &mut common_part);
         });
         // "➕ New variable…" chosen in a field: declare it now.
@@ -1209,26 +1394,62 @@ impl Studio {
             }
         }
         if let Some(e) = &self.step_error {
-            ui.colored_label(Color32::from_rgb(220, 80, 80), e);
+            ui.colored_label(crate::look::err(), e);
         }
         ui.add_space(10.0);
         ui.horizontal(|ui| {
-            if ui.button("⬆ Up").clicked() {
+            if ui.button(tr("⬆ Up")).clicked() {
                 self.apply(TreeOp::Move(p.clone(), -1));
             }
-            if ui.button("⬇ Down").clicked() {
+            if ui.button(tr("⬇ Down")).clicked() {
                 self.apply(TreeOp::Move(p.clone(), 1));
             }
-            if ui.button("⧉ Duplicate").clicked() {
+            if ui.button(tr("⧉ Duplicate")).clicked() {
                 self.apply(TreeOp::Duplicate(p.clone()));
             }
-            if ui.button(RichText::new("🗑 Delete").color(Color32::from_rgb(220, 80, 80))).clicked() {
+            if ui.button(RichText::new(tr("🗑 Delete")).color(crate::look::err())).clicked() {
                 self.apply(TreeOp::Delete(p.clone()));
             }
         });
+        if matches!(category, "Text" | "Date & Math") || matches!(name, "set_variable" | "increment" | "list_append") {
+            ui.add_space(6.0);
+            if ui
+                .button(RichText::new(tr("▶ Try it")).strong())
+                .on_hover_text(tr("Run just this step now, with the flow's variables, and show what it gives. Nothing else in the flow runs."))
+                .clicked()
+            {
+                let r = self.try_step(p);
+                self.try_result = Some((p.clone(), r));
+            }
+            if let Some((tp, r)) = &self.try_result {
+                if tp == p {
+                    match r {
+                        Ok(vals) if vals.is_empty() => {
+                            ui.colored_label(crate::look::ok(), tr("✔ ran (no output variable)"));
+                        }
+                        Ok(vals) => {
+                            egui::Frame::group(ui.style()).show(ui, |ui| {
+                                for (k, v) in vals {
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(RichText::new(format!("{k} =")).strong());
+                                        ui.label(RichText::new(v).monospace().color(crate::look::ok()));
+                                    });
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            ui.colored_label(crate::look::err(), format!("✖ {e}"));
+                        }
+                    }
+                }
+            }
+        }
         if matches!(name, "read_excel" | "read_csv" | "read_pdf") {
             ui.add_space(6.0);
-            if ui.button("👁 Preview data").on_hover_text("Read the file now with these settings and show the first rows (what the flow will get)").clicked()
+            if ui
+                .button(tr("👁 Preview data"))
+                .on_hover_text(tr("Read the file now with these settings and show the first rows (what the flow will get)"))
+                .clicked()
             {
                 self.preview_data(p);
             }
@@ -1239,7 +1460,7 @@ impl Studio {
             let busy = self.web_pick_rx.is_some();
             if ui
                 .add_enabled(!busy, egui::Button::new(if busy { "🎯 Waiting for Ctrl+click in the browser…" } else { "🎯 Pick on page" }))
-                .on_hover_text("Opens the flow's page (from its browser_open step). Hold Ctrl and click the element: its id (or a selector) is filled in here. No developer tools needed.")
+                .on_hover_text(tr("Opens the flow's page (from its browser_open step). Hold Ctrl and click the element: its id (or a selector) is filled in here. No developer tools needed."))
                 .clicked()
             {
                 let ctx = ui.ctx().clone();
@@ -1251,7 +1472,7 @@ impl Studio {
             let busy = self.snip_rx.is_some();
             if ui
                 .add_enabled(!busy, egui::Button::new(if busy { "📷 Snipping…" } else { "📷 Snip image" }))
-                .on_hover_text("Opens the Windows snipping tool; the snip is saved under images/ next to the flow and set as `image`.")
+                .on_hover_text(tr("Opens the Windows snipping tool; the snip is saved under images/ next to the flow and set as `image`."))
                 .clicked()
             {
                 let ctx = ui.ctx().clone();
@@ -1259,7 +1480,7 @@ impl Studio {
             }
         }
         ui.add_space(10.0);
-        egui::CollapsingHeader::new("Step JSON").default_open(false).show(ui, |ui| {
+        egui::CollapsingHeader::new(tr("Step JSON")).default_open(false).show(ui, |ui| {
             if let Some(s) = tree::step_ref(&self.flow.steps, p) {
                 let mut text = serde_json::to_string_pretty(s).unwrap_or_default();
                 ui.add(egui::TextEdit::multiline(&mut text).code_editor().desired_width(f32::INFINITY));
@@ -1268,13 +1489,13 @@ impl Studio {
     }
 
     fn flow_properties(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Flow settings");
+        ui.heading(tr("Flow settings"));
         ui.separator();
         egui::Grid::new("flowgrid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            ui.label("name");
+            ui.label(tr("name"));
             self.dirty |= ui.text_edit_singleline(&mut self.flow.name).changed();
             ui.end_row();
-            ui.label("description");
+            ui.label(tr("description"));
             self.dirty |= ui.add(egui::TextEdit::multiline(&mut self.flow.description).desired_rows(3)).changed();
             ui.end_row();
         });
@@ -1283,15 +1504,11 @@ impl Studio {
             self.right_tab = RightTab::Variables;
         }
         ui.add_space(10.0);
-        ui.label(RichText::new("Run settings").strong());
-        ui.weak("Timing and safety for every run of this flow (PyAutoGUI PAUSE / FAILSAFE).");
+        ui.label(RichText::new(tr("Run settings")).strong());
+        ui.weak(tr("Timing and safety for every run of this flow (PyAutoGUI PAUSE / FAILSAFE)."));
         let mut v = serde_json::to_value(&self.flow.settings).unwrap_or_default();
         if let Some(o) = v.as_object_mut() {
-            let help: HashMap<String, String> = autoflow_core::flow::json_schema()
-                .pointer("/$defs/Settings/properties")
-                .and_then(Value::as_object)
-                .map(|p| p.iter().filter_map(|(k, x)| x.get("description").and_then(Value::as_str).map(|d| (k.clone(), d.to_string()))).collect())
-                .unwrap_or_default();
+            let help = self.schema.help("Settings").clone();
             let mut f = form::Form {
                 help: &help,
                 json_buffers: &mut self.settings_buf,
@@ -1305,6 +1522,7 @@ impl Studio {
                 cache: &mut self.cache,
                 ctx: Map::new(),
                 open_settings: false,
+                fields: self.schema.fields("Settings"),
             };
             if f.object(ui, "settings", o) {
                 if let Ok(s) = serde_json::from_value(v) {
@@ -1322,16 +1540,8 @@ impl Studio {
     /// Triggers: new files in a folder or new e-mail start the flow while `autoflow watch` runs.
     fn triggers_ui(&mut self, ui: &mut egui::Ui) {
         use autoflow_core::watch::{EmailTrigger, FileTrigger, Trigger};
-        ui.label(RichText::new("Triggers").strong());
-        ui.weak("Start this flow automatically for each new file or e-mail. Run `autoflow watch flow.json`, or tick “Watch the flow's triggers” in ⏰ Schedule… (at log-on).");
-        let schema = autoflow_core::flow::json_schema();
-        let help_for = |def: &str| -> HashMap<String, String> {
-            schema
-                .pointer(&format!("/$defs/{def}/properties"))
-                .and_then(Value::as_object)
-                .map(|p| p.iter().filter_map(|(k, x)| x.get("description").and_then(Value::as_str).map(|d| (k.clone(), d.to_string()))).collect())
-                .unwrap_or_default()
-        };
+        ui.label(RichText::new(tr("Triggers")).strong());
+        ui.weak(tr("Start this flow automatically for each new file or e-mail. Run `autoflow watch flow.json`, or tick “Watch the flow's triggers” in ⏰ Schedule… (at log-on)."));
         let dir = self.flow_dir();
         let mut remove = None;
         let mut secret = None;
@@ -1340,7 +1550,7 @@ impl Studio {
                 Trigger::File(_) => ("📂 New file", "FileTrigger"),
                 Trigger::Email(_) => ("📨 New e-mail", "EmailTrigger"),
             };
-            let help = help_for(def);
+            let help = self.schema.help(def).clone();
             egui::CollapsingHeader::new(RichText::new(format!("{title} (trigger {})", i + 1)).strong()).id_salt(("trigger", i)).default_open(true).show(
                 ui,
                 |ui| {
@@ -1360,6 +1570,7 @@ impl Studio {
                         cache: &mut self.cache,
                         ctx: Map::new(),
                         open_settings: false,
+                        fields: self.schema.fields(def),
                     };
                     if f.object(ui, &format!("triggers.{i}"), o) {
                         o.insert("kind".into(), kind);
@@ -1371,7 +1582,7 @@ impl Studio {
                     if let Some(n) = f.secret_request.take() {
                         secret.get_or_insert(n);
                     }
-                    if ui.small_button("🗑 Remove trigger").clicked() {
+                    if ui.small_button(tr("🗑 Remove trigger")).clicked() {
                         remove = Some(i);
                     }
                 },
@@ -1386,11 +1597,11 @@ impl Studio {
             self.secret_dialog = Some(SecretDialog { name, first: String::new(), second: String::new(), error: None });
         }
         ui.horizontal(|ui| {
-            if ui.button("➕ File trigger").clicked() {
+            if ui.button(tr("➕ File trigger")).clicked() {
                 self.flow.triggers.push(Trigger::File(FileTrigger { folder: "inbox".into(), ..FileTrigger::default() }));
                 self.dirty = true;
             }
-            if ui.button("➕ E-mail trigger").clicked() {
+            if ui.button(tr("➕ E-mail trigger")).clicked() {
                 self.flow.triggers.push(Trigger::Email(EmailTrigger::default()));
                 self.dirty = true;
             }
@@ -1420,8 +1631,8 @@ impl Studio {
             ui.add_space(8.0);
             ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).weak());
             ui.add_space(6.0);
-            ui.label("Windows desktop & web automation (RPA) — flows as JSON");
-            ui.label(RichText::new("Visual flowchart · CLI · AI-agent skill · scheduling").weak());
+            ui.label(tr("Windows desktop & web automation (RPA) — flows as JSON"));
+            ui.label(RichText::new(tr("Visual flowchart · CLI · AI-agent skill · scheduling")).weak());
             ui.add_space(8.0);
             ui.hyperlink_to(RichText::new(GITHUB_URL).size(14.0), GITHUB_URL);
         });
@@ -1459,7 +1670,7 @@ impl Studio {
                 ui.set_width(720.0);
                 Self::brand(ui, &tex, 720.0);
                 ui.add_space(10.0);
-                ui.vertical_centered(|ui| ui.label(RichText::new("click anywhere to start").small().weak()));
+                ui.vertical_centered(|ui| ui.label(RichText::new(tr("click anywhere to start")).small().weak()));
             });
         });
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -1471,21 +1682,21 @@ impl Studio {
         }
         let tex = self.banner(ctx);
         let mut open = true;
-        egui::Window::new("About AutoFlowMate").open(&mut open).resizable(false).collapsible(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
+        egui::Window::new(tr("About AutoFlowMate")).open(&mut open).resizable(false).collapsible(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
             ctx,
             |ui| {
                 ui.set_width(480.0);
                 Self::brand(ui, &tex, 480.0);
                 ui.separator();
-                ui.label(RichText::new("Shortcuts").strong());
-                ui.label("F5 run / continue · F10 step · F9 breakpoint · Ctrl+Z / Ctrl+Y undo / redo");
-                ui.label("Ctrl+S save · Ctrl+O open · Ctrl+wheel zoom flowchart");
-                ui.label("Abort a run: move the mouse into a screen corner, or press the abort hotkey (default Ctrl+Alt+Q)");
+                ui.label(RichText::new(tr("Shortcuts")).strong());
+                ui.label(tr("F5 run / continue · F10 step · F9 breakpoint · Ctrl+Z / Ctrl+Y undo / redo"));
+                ui.label(tr("Ctrl+S save · Ctrl+O open · Ctrl+wheel zoom flowchart"));
+                ui.label(tr("Abort a run: move the mouse into a screen corner, or press the abort hotkey (default Ctrl+Alt+Q)"));
                 ui.add_space(6.0);
-                ui.label(RichText::new("Built with").strong());
-                ui.label(RichText::new("Rust · egui/eframe · enigo · uiautomation · headless_chrome · xcap · calamine · rust_xlsxwriter · lettre · imap · ureq · rusqlite · odbc-api · Windows OCR").weak());
+                ui.label(RichText::new(tr("Built with")).strong());
+                ui.label(RichText::new(tr("Rust · egui/eframe · enigo · uiautomation · headless_chrome · xcap · calamine · rust_xlsxwriter · lettre · imap · ureq · rusqlite · odbc-api · Windows OCR")).weak());
                 ui.add_space(6.0);
-                ui.label(RichText::new("MIT licence: free to use, change and share, without warranty.").weak());
+                ui.label(RichText::new(tr("MIT licence: free to use, change and share, without warranty.")).weak());
             },
         );
         self.show_about = open;
@@ -1525,14 +1736,14 @@ impl Studio {
         let Some(path) = self.path.clone() else { return };
         let Some(mut s) = self.sched.take() else { return };
         let mut open = true;
-        egui::Window::new("⏰ Schedule this flow").open(&mut open).resizable(false).collapsible(false).show(ctx, |ui| {
+        egui::Window::new(tr("⏰ Schedule this flow")).open(&mut open).resizable(false).collapsible(false).show(ctx, |ui| {
             ui.label(RichText::new(path.display().to_string()).weak());
             ui.add_space(4.0);
             egui::Grid::new("schedgrid").num_columns(2).spacing([10.0, 8.0]).show(ui, |ui| {
-                ui.label("Task name");
+                ui.label(tr("Task name"));
                 ui.text_edit_singleline(&mut s.name);
                 ui.end_row();
-                ui.label("Run");
+                ui.label(tr("Run"));
                 egui::ComboBox::from_id_salt("schedkind").selected_text(SCHED_KINDS[s.kind]).show_ui(ui, |ui| {
                     for (i, k) in SCHED_KINDS.iter().enumerate() {
                         ui.selectable_value(&mut s.kind, i, *k);
@@ -1541,7 +1752,7 @@ impl Studio {
                 ui.end_row();
                 match s.kind {
                     2 => {
-                        ui.label("Days");
+                        ui.label(tr("Days"));
                         ui.horizontal(|ui| {
                             for (i, d) in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].iter().enumerate() {
                                 ui.checkbox(&mut s.days[i], *d);
@@ -1550,50 +1761,50 @@ impl Studio {
                         ui.end_row();
                     }
                     3 => {
-                        ui.label("Day of month");
+                        ui.label(tr("Day of month"));
                         ui.add(egui::DragValue::new(&mut s.day_of_month).range(1..=31));
                         ui.end_row();
                     }
                     4 => {
-                        ui.label("Date");
-                        ui.add(egui::TextEdit::singleline(&mut s.date).hint_text("YYYY-MM-DD").desired_width(110.0));
+                        ui.label(tr("Date"));
+                        ui.add(egui::TextEdit::singleline(&mut s.date).hint_text(tr("YYYY-MM-DD")).desired_width(110.0));
                         ui.end_row();
                     }
                     5 => {
-                        ui.label("Every");
+                        ui.label(tr("Every"));
                         ui.add(egui::DragValue::new(&mut s.minutes).range(1..=1440).suffix(" min"));
                         ui.end_row();
                     }
                     _ => {}
                 }
                 if s.kind != 5 && s.kind != 6 {
-                    ui.label("Time");
-                    ui.add(egui::TextEdit::singleline(&mut s.time).hint_text("HH:MM (24 h)").desired_width(70.0));
+                    ui.label(tr("Time"));
+                    ui.add(egui::TextEdit::singleline(&mut s.time).hint_text(tr("HH:MM (24 h)")).desired_width(70.0));
                     ui.end_row();
                 }
             });
             ui.add_space(6.0);
             ui.label(
-                RichText::new(
+                RichText::new(tr(
                     "Desktop flows run only while you are logged on with the screen unlocked. Each run is logged to logs\\<flow>.log next to the flow.",
-                )
+                ))
                 .small()
                 .weak(),
             );
             if s.has_triggers {
-                ui.checkbox(&mut s.watch, "Watch the flow's triggers (new files / e-mail)")
-                    .on_hover_text("Runs `autoflow watch`: at log-on it keeps watching all day; on other schedules it checks once each time.");
+                ui.checkbox(&mut s.watch, tr("Watch the flow's triggers (new files / e-mail)"))
+                    .on_hover_text(tr("Runs `autoflow watch`: at log-on it keeps watching all day; on other schedules it checks once each time."));
             }
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                if ui.button(RichText::new("Create / replace task").strong()).clicked() {
+                if ui.button(RichText::new(tr("Create / replace task")).strong()).clicked() {
                     s.message = Some(create_task(&s, &path));
                     refresh_tasks(&mut s, &path);
                 }
-                if ui.button("Refresh").clicked() {
+                if ui.button(tr("Refresh")).clicked() {
                     refresh_tasks(&mut s, &path);
                 }
-                if ui.button("Open log").clicked() {
+                if ui.button(tr("Open log")).clicked() {
                     let log = autoflow_core::schedule::log_path(&path);
                     if log.exists() {
                         let _ = std::process::Command::new("notepad").arg(&log).spawn();
@@ -1603,12 +1814,12 @@ impl Studio {
                 }
             });
             if let Some((ok, m)) = &s.message {
-                ui.colored_label(if *ok { Color32::from_rgb(90, 180, 100) } else { Color32::from_rgb(220, 90, 90) }, m);
+                ui.colored_label(if *ok { crate::look::ok() } else { crate::look::err() }, m);
             }
             ui.separator();
-            ui.label(RichText::new("Tasks for this flow").strong());
+            ui.label(RichText::new(tr("Tasks for this flow")).strong());
             if s.tasks.is_empty() {
-                ui.weak("none");
+                ui.weak(tr("none"));
             }
             let mut action: Option<(bool, String)> = None;
             for t in &s.tasks {
@@ -1621,10 +1832,10 @@ impl Studio {
                     t.last_result_text()
                 ));
                 ui.horizontal(|ui| {
-                    if ui.button("Run now").clicked() {
+                    if ui.button(tr("Run now")).clicked() {
                         action = Some((true, t.name.clone()));
                     }
-                    if ui.button("Delete").clicked() {
+                    if ui.button(tr("Delete")).clicked() {
                         action = Some((false, t.name.clone()));
                     }
                 });
@@ -1652,7 +1863,7 @@ impl Studio {
             let (x, y) = autoflow_core::failsafe::cursor().unwrap_or((0, 0));
             ui.monospace(format!("Mouse X {x:>5}  Y {y:>5}"));
             if autoflow_core::failsafe::corner_hit(x, y) {
-                ui.colored_label(Color32::from_rgb(230, 90, 90), "fail-safe corner");
+                ui.colored_label(crate::look::err(), tr("fail-safe corner"));
             }
             ui.separator();
             let s = &self.flow.settings;
@@ -1791,26 +2002,26 @@ impl Studio {
         let Some(d) = self.secret_dialog.as_mut() else { return };
         let mut open = true;
         let mut done: Option<String> = None;
-        egui::Window::new("🔑 Store password").open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
+        egui::Window::new(tr("🔑 Store password")).open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(
             ctx,
             |ui| {
                 ui.label(format!("Password for `{}`", d.name));
-                ui.weak("Saved in Windows Credential Manager (AutoFlowMate). It is never written to the flow file or the log.");
-                ui.weak("Gmail: create an App Password (Google Account → Security → 2-Step Verification → App passwords).");
+                ui.weak(tr("Saved in Windows Credential Manager (AutoFlowMate). It is never written to the flow file or the log."));
+                ui.weak(tr("Gmail: create an App Password (Google Account → Security → 2-Step Verification → App passwords)."));
                 ui.add_space(6.0);
                 egui::Grid::new("secret_grid").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    ui.label("Password");
+                    ui.label(tr("Password"));
                     ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.first).password(true));
                     ui.end_row();
-                    ui.label("Again");
+                    ui.label(tr("Again"));
                     ui.add_sized([240.0, 22.0], egui::TextEdit::singleline(&mut d.second).password(true));
                     ui.end_row();
                 });
                 if let Some(e) = &d.error {
-                    ui.colored_label(Color32::from_rgb(220, 80, 80), e);
+                    ui.colored_label(crate::look::err(), e);
                 }
                 ui.horizontal(|ui| {
-                    if ui.button(RichText::new("Store").strong()).clicked() {
+                    if ui.button(RichText::new(tr("Store")).strong()).clicked() {
                         if d.first.is_empty() {
                             d.error = Some("enter the password".into());
                         } else if d.first != d.second {
@@ -1822,7 +2033,7 @@ impl Studio {
                             }
                         }
                     }
-                    if autoflow_core::mail::secrets::exists(&d.name) && ui.button("Delete stored password").clicked() {
+                    if autoflow_core::mail::secrets::exists(&d.name) && ui.button(tr("Delete stored password")).clicked() {
                         match autoflow_core::mail::secrets::delete(&d.name) {
                             Ok(()) => done = Some(format!("{} (deleted)", d.name)),
                             Err(e) => d.error = Some(e.to_string()),
@@ -1842,12 +2053,12 @@ impl Studio {
     fn preview_window(&mut self, ctx: &egui::Context) {
         let Some((title, res)) = &self.preview else { return };
         let mut open = true;
-        egui::Window::new("👁 Data preview").open(&mut open).default_size([760.0, 420.0]).resizable(true).show(ctx, |ui| {
+        egui::Window::new(tr("👁 Data preview")).open(&mut open).default_size([760.0, 420.0]).resizable(true).show(ctx, |ui| {
             ui.label(RichText::new(title).weak());
             ui.separator();
             match res {
                 Err(e) => {
-                    ui.colored_label(Color32::from_rgb(220, 80, 80), e);
+                    ui.colored_label(crate::look::err(), e);
                 }
                 Ok(Value::String(text)) => {
                     ui.label(format!("{} characters", text.chars().count()));
@@ -1899,7 +2110,7 @@ impl Studio {
                 }
             }
             ui.add_space(6.0);
-            ui.weak("Records are used in loops as ${row.Header}; a single column gives a plain list for for_each.");
+            ui.weak(tr("Records are used in loops as ${row.Header}; a single column gives a plain list for for_each."));
         });
         if !open {
             self.preview = None;
@@ -2004,8 +2215,8 @@ impl Studio {
 
     fn log_view(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.strong("Run log");
-            if ui.small_button("clear").clicked() {
+            ui.strong(tr("Run log"));
+            if ui.small_button(tr("clear")).clicked() {
                 self.log.clear();
             }
         });
@@ -2013,9 +2224,9 @@ impl Studio {
             for (k, m) in &self.log {
                 let c = match k {
                     LogKind::Info => ui.visuals().text_color(),
-                    LogKind::Warn => Color32::from_rgb(220, 170, 50),
-                    LogKind::Error => Color32::from_rgb(230, 90, 90),
-                    LogKind::Ok => Color32::from_rgb(90, 190, 100),
+                    LogKind::Warn => crate::look::warn(),
+                    LogKind::Error => crate::look::err(),
+                    LogKind::Ok => crate::look::ok(),
                 };
                 ui.label(RichText::new(m).monospace().color(c));
             }
@@ -2026,6 +2237,7 @@ impl Studio {
 impl eframe::App for Studio {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        look::set_dark(ui.visuals().dark_mode);
         self.poll_run(&ctx);
         self.poll_record(&ctx);
         self.poll_pick();
@@ -2102,6 +2314,7 @@ impl eframe::App for Studio {
         self.preview_window(&ctx);
         self.secret_window(&ctx);
         self.paused_window(&ctx);
+        self.record_prompt_window(&ctx);
         if settings::show(&ctx, &mut self.settings_ui) {
             self.lists.presets = autoflow_core::presets::Presets::load();
         }
@@ -2158,12 +2371,12 @@ fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize
         ui.horizontal(|ui| {
             let bp = !step.id.is_empty() && cx.breakpoints.contains(&step.id);
             let dot = RichText::new("●").color(if bp { Color32::from_rgb(220, 60, 60) } else { Color32::from_gray(90).gamma_multiply(0.35) });
-            if ui.add(egui::Label::new(dot).sense(egui::Sense::click())).on_hover_text("Breakpoint: pause before this step (F9)").clicked() {
+            if ui.add(egui::Label::new(dot).sense(egui::Sense::click())).on_hover_text(tr("Breakpoint: pause before this step (F9)")).clicked() {
                 ops.push(TreeOp::Breakpoint(path.clone()));
             }
             ui.add_space(depth as f32 * 22.0);
             let mut en = step.enabled;
-            if ui.checkbox(&mut en, "").on_hover_text("enabled").changed() {
+            if ui.checkbox(&mut en, "").on_hover_text(tr("enabled")).changed() {
                 ops.push(TreeOp::Toggle(path.clone()));
             }
             let marker = if running {
@@ -2173,9 +2386,7 @@ fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize
             } else {
                 ""
             };
-            let mut label = RichText::new(format!("{marker}{} {}", icons::action_icon(step.action.name()), step.action.name()))
-                .strong()
-                .color(cat_color(step.action.category()));
+            let mut label = RichText::new(format!("{marker}{} {}", icons::action_icon(step.action.name()), step.action.name())).strong();
             if !step.enabled {
                 label = label.strikethrough().weak();
             }
@@ -2202,7 +2413,7 @@ fn draw_list(ui: &mut egui::Ui, steps: &[Step], parents: &ListPath, depth: usize
                 ui.add_space(depth as f32 * 22.0 + 26.0);
                 if ui
                     .selectable_label(sel, RichText::new(format!("{}:  ({} steps)", labels[l], children.len())).italics())
-                    .on_hover_text("Select, then click an action to add it here")
+                    .on_hover_text(tr("Select, then click an action to add it here"))
                     .clicked()
                 {
                     ops.push(TreeOp::Select(Selection::List(lp.clone())));

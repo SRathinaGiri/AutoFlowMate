@@ -624,6 +624,7 @@ dependencies = [
  "egui_extras",
  "jiff",
  "rfd",
+ "serde",
  "serde_json",
  "winresource",
 ]

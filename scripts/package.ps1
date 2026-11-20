@@ -21,7 +21,7 @@ Copy-Item assets\autoflowmate.png $stage
 # Logo images the README shows.
 New-Item -ItemType Directory -Force (Join-Path $stage 'assets') | Out-Null
 Copy-Item assets\wordmark.png, assets\wordmark-dark.png (Join-Path $stage 'assets')
-foreach ($dir in 'skills', 'schema', 'docs') { Copy-Item $dir (Join-Path $stage $dir) -Recurse }
+foreach ($dir in 'skills', 'schema', 'docs', 'lang') { Copy-Item $dir (Join-Path $stage $dir) -Recurse }
 
 # Examples without run output or logs.
 $ex = Join-Path $stage 'examples'

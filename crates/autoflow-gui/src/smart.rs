@@ -1,8 +1,9 @@
 //! Field editors that know about the PC and the user's settings: provider pickers fed by the
 //! presets (File > Settings), AI model lists, ODBC data sources, and example hints.
 
+use crate::i18n::tr;
 use autoflow_core::presets::Presets;
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use serde_json::{Map, Value};
 use std::collections::HashMap;
 
@@ -39,7 +40,7 @@ pub fn text_with_list(ui: &mut egui::Ui, path: &str, v: &mut Value, items: &[(St
     let mut changed = ui.add_sized([width, 22.0], egui::TextEdit::singleline(&mut s).hint_text(hint)).changed();
     egui::ComboBox::from_id_salt(format!("{path}#list")).selected_text("▾").width(24.0).show_ui(ui, |ui| {
         if items.is_empty() {
-            ui.weak("(nothing to choose)");
+            ui.weak(tr("(nothing to choose)"));
         }
         for (value, label) in items {
             if ui.selectable_label(s == *value, label).clicked() {
@@ -147,10 +148,10 @@ pub fn model_field(ui: &mut egui::Ui, path: &str, v: &mut Value, lists: &Lists, 
         }
         match cache.models.get(path) {
             Some(Err(e)) => {
-                ui.colored_label(Color32::from_rgb(220, 120, 60), "server not reachable").on_hover_text(e);
+                ui.colored_label(crate::look::warn(), tr("server not reachable")).on_hover_text(e);
             }
             Some(Ok(list)) if list.is_empty() => {
-                ui.weak("no models loaded");
+                ui.weak(tr("no models loaded"));
             }
             _ => {}
         }
@@ -164,10 +165,10 @@ pub fn connection_field(ui: &mut egui::Ui, path: &str, v: &mut Value, lists: &Li
     ui.vertical(|ui| {
         let mut s = v.as_str().unwrap_or("").to_string();
         ui.horizontal(|ui| {
-            changed |= ui.add_sized([210.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text("sqlite:data/app.db  or  DSN=…")).changed();
+            changed |= ui.add_sized([210.0, 22.0], egui::TextEdit::singleline(&mut s).hint_text(tr("sqlite:data/app.db  or  DSN=…"))).changed();
             ui.menu_button("▾", |ui| {
                 ui.set_min_width(300.0);
-                if ui.button("📄 SQLite database file…").clicked() {
+                if ui.button(tr("📄 SQLite database file…")).clicked() {
                     let mut d = rfd::FileDialog::new().add_filter("SQLite", &["db", "sqlite", "sqlite3"]);
                     if let Some(dir) = flow_dir {
                         d = d.set_directory(dir);
@@ -183,9 +184,9 @@ pub fn connection_field(ui: &mut egui::Ui, path: &str, v: &mut Value, lists: &Li
                     ui.close();
                 }
                 ui.separator();
-                ui.label(RichText::new("Data sources (ODBC DSNs) on this PC").strong());
+                ui.label(RichText::new(tr("Data sources (ODBC DSNs) on this PC")).strong());
                 if lists.dsns.is_empty() {
-                    ui.weak("none set up (Windows: ODBC Data Sources 64-bit)");
+                    ui.weak(tr("none set up (Windows: ODBC Data Sources 64-bit)"));
                 }
                 for (name, driver) in &lists.dsns {
                     if ui.button(format!("{name}   ({driver})")).clicked() {
@@ -195,7 +196,7 @@ pub fn connection_field(ui: &mut egui::Ui, path: &str, v: &mut Value, lists: &Li
                     }
                 }
                 ui.separator();
-                ui.label(RichText::new("Drivers: start a connection string").strong());
+                ui.label(RichText::new(tr("Drivers: start a connection string")).strong());
                 for d in &lists.drivers {
                     if ui.button(d).on_hover_text(autoflow_core::db::connection_template(d)).clicked() {
                         s = autoflow_core::db::connection_template(d);
@@ -204,7 +205,7 @@ pub fn connection_field(ui: &mut egui::Ui, path: &str, v: &mut Value, lists: &Li
                     }
                 }
             });
-            if ui.small_button("🔌 Test").on_hover_text("Open the connection once (needs no password field filled for SQLite)").clicked() {
+            if ui.small_button(tr("🔌 Test")).on_hover_text(tr("Open the connection once (needs no password field filled for SQLite)")).clicked() {
                 let dir = flow_dir.map(|d| d.to_path_buf()).unwrap_or_default();
                 let r = if s.contains("${") || s.contains("{password}") {
                     Err("uses a variable or {password}: test it by running the flow".to_string())
@@ -216,8 +217,8 @@ pub fn connection_field(ui: &mut egui::Ui, path: &str, v: &mut Value, lists: &Li
         });
         if let Some(r) = cache.tests.get(path) {
             match r {
-                Ok(m) => ui.colored_label(Color32::from_rgb(70, 170, 90), format!("✔ {m}")),
-                Err(e) => ui.colored_label(Color32::from_rgb(220, 90, 90), format!("✖ {e}")),
+                Ok(m) => ui.colored_label(crate::look::ok(), format!("✔ {m}")),
+                Err(e) => ui.colored_label(crate::look::err(), format!("✖ {e}")),
             };
         }
         if changed {

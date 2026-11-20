@@ -431,7 +431,7 @@ fn real_main(cli: Cli) -> Result<ExitCode> {
                 eprintln!("recording starts in {s}...");
                 std::thread::sleep(std::time::Duration::from_secs(1));
             }
-            eprintln!("recording: use the app as usual; press Ctrl+Alt+R to stop");
+            eprintln!("recording: use the app as usual; stop with the ■ Stop recording window (top right) or Ctrl+Alt+R");
             let opts = autoflow_core::recorder::RecordOptions { min_wait_ms: if no_waits { 0 } else { 1500 }, ..Default::default() };
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let steps = autoflow_core::recorder::record(opts, stop, &mut |s| eprintln!("  + {s}"))?;

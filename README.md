@@ -192,6 +192,23 @@ after 3 seconds and fills the selected `ui_*` or mouse step, or adds a new `ui_c
 `image_*` steps, **📷 Snip image** opens the Windows snipping tool and saves the picture next to the
 flow. F5 runs, Ctrl+S saves, Ctrl+Z / Ctrl+Y undo and redo.
 
+**View** menu: text size (90–160%), the Windows font (Segoe UI) or egui's own, and whether the
+palette keeps only one category open (Collapse all / Expand all are above the palette). These
+choices are remembered. Studio opens maximised, and the toolbar wraps onto a second row at large
+text sizes so no button is hidden.
+
+**Help while editing:** fields marked **(?)** explain what they expect, the values allowed and an
+example when you hover over them. Fields with fixed choices are drop-downs, each choice described;
+fields that don't apply to the current choices are hidden and listed underneath. Date patterns
+show today's date in that pattern (`dddd` → Friday). **▶ Try it** runs a text, date, maths or
+variable step on its own and shows the result without running the flow.
+
+**Language:** **View > Language** switches Studio's language. Language files are JSON in the `lang`
+folder next to the program (or `%APPDATA%\AutoFlowMate\lang` for your own), mapping each English
+text to its translation; anything missing stays in English. `lang\ta.json` (Tamil) is included.
+`autoflow-studio --language-template my.json` writes every text Studio shows with empty
+translations to start a new language from (`lang\template.json` is a copy).
+
 **Debugging:** press **F9** on a step (or click the dot in the List view, or right-click a node)
 to set a breakpoint. **▶ Run** stops before that step; **⏭ Step (F10)** runs one step at a time
 from the start. While paused, a window shows every variable's current value (typed passwords are
@@ -316,8 +333,12 @@ Handled files are moved to a `done` or `failed` folder. To watch all day from lo
 `autoflow record new.json`, or **⏺ Record** in Studio, turns your clicks and typing into steps.
 A click on a button or menu that Windows can identify becomes a `ui_click` on that control, so the
 recording still works when the window moves; other clicks keep their screen position. Typing in
-a password box is never recorded: the flow asks for the password when it runs. Press
-**Ctrl+Alt+R** to stop.
+a password box is never recorded: the flow asks for the password when it runs.
+
+Studio first explains how to stop, and recording starts only when you click **OK**. While
+recording, the mouse pointer is a crosshair and a small always-on-top window at the top right
+shows the number of steps recorded. Click its **■ Stop recording** button (the click isn't
+recorded) or press **Ctrl+Alt+R** to stop.
 
 ## Sending and reading e-mail
 

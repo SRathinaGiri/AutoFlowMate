@@ -11,6 +11,7 @@ use autoflow_core::{Action, Step};
 use eframe::egui::{self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Vec2};
 use std::collections::HashSet;
 
+use crate::i18n::tr;
 use crate::tree::{DragItem, ListPath, Selection, StepPath};
 
 const NODE_W: f32 = 240.0;
@@ -59,10 +60,10 @@ impl Chart<'_> {
         let mut y = rect.top() + MARGIN * z;
 
         let p = Painter { ui, painter: &painter, chart: self, z };
-        p.terminal(Pos2::new(cx, y + TERM_H * z / 2.0), "Start");
+        p.terminal(Pos2::new(cx, y + TERM_H * z / 2.0), &tr("Start"));
         y += TERM_H * z;
         let end = p.list(steps, &vec![], cx, y, ops);
-        p.terminal(Pos2::new(cx, end + TERM_H * z / 2.0), "End");
+        p.terminal(Pos2::new(cx, end + TERM_H * z / 2.0), &tr("End"));
     }
 }
 
@@ -198,7 +199,7 @@ impl Painter<'_, '_> {
         if resp.clicked() {
             ops.push(ChartOp::Select(Selection::Gap(lp.clone(), idx)));
         }
-        resp.on_hover_text("Click to insert here from the palette, or drop an action / step here");
+        resp.on_hover_text(tr("Click to insert here from the palette, or drop an action / step here"));
     }
 
     fn step(&self, s: &Step, path: &StepPath, cx: f32, top: f32, ops: &mut Vec<ChartOp>) {
@@ -218,8 +219,8 @@ impl Painter<'_, '_> {
                 self.vline(ct, ym, yb);
                 self.vline(ce, ym, yb);
                 let f = FontId::proportional(11.0 * z);
-                self.painter.text(Pos2::new(ct + 4.0, ym + 2.0), Align2::LEFT_TOP, "yes", f.clone(), Color32::from_rgb(90, 180, 100));
-                self.painter.text(Pos2::new(ce + 4.0, ym + 2.0), Align2::LEFT_TOP, "no", f, Color32::from_rgb(220, 100, 100));
+                self.painter.text(Pos2::new(ct + 4.0, ym + 2.0), Align2::LEFT_TOP, "yes", f.clone(), crate::look::ok());
+                self.painter.text(Pos2::new(ce + 4.0, ym + 2.0), Align2::LEFT_TOP, "no", f, crate::look::err());
                 let mut lp_then = path.parents.clone();
                 lp_then.push((path.index, 0));
                 let mut lp_else = path.parents.clone();
@@ -246,7 +247,7 @@ impl Painter<'_, '_> {
                 let mut y = node.bottom();
                 let sections: [(&[Step], &str, Color32); 3] = [
                     (&a.steps, "", Color32::TRANSPARENT),
-                    (&a.catch, "on error", Color32::from_rgb(220, 100, 100)),
+                    (&a.catch, "on error", crate::look::err()),
                     (&a.finally, "finally (always)", Color32::from_rgb(120, 150, 220)),
                 ];
                 for (i, (steps, label, color)) in sections.into_iter().enumerate() {
@@ -317,11 +318,11 @@ impl Painter<'_, '_> {
 
         let fill = if resp.hovered() { v.widgets.hovered.bg_fill } else { v.widgets.inactive.bg_fill };
         let border = if paused {
-            Stroke::new(3.0 * z, Color32::from_rgb(235, 170, 40))
+            Stroke::new(3.0 * z, crate::look::warn())
         } else if running {
             Stroke::new(3.0 * z, Color32::from_rgb(80, 150, 240))
         } else if failed {
-            Stroke::new(2.5 * z, Color32::from_rgb(225, 80, 80))
+            Stroke::new(2.5 * z, crate::look::err())
         } else if selected {
             Stroke::new(2.5 * z, v.selection.stroke.color)
         } else {
@@ -366,8 +367,8 @@ impl Painter<'_, '_> {
             Pos2::new(r.left() + pad, r.top() + 7.0 * z),
             Align2::LEFT_TOP,
             title_text,
-            FontId::proportional(13.5 * z),
-            cat_col.gamma_multiply(dim),
+            FontId::proportional(14.5 * z),
+            v.strong_text_color().gamma_multiply(dim),
         );
         if !s.id.is_empty() {
             self.painter.text(Pos2::new(r.right() - pad * 0.8, r.top() + 7.0 * z), Align2::RIGHT_TOP, &s.id, FontId::monospace(10.0 * z), v.weak_text_color());
@@ -411,7 +412,7 @@ impl Painter<'_, '_> {
                 ops.push(ChartOp::Toggle(path.clone()));
                 ui.close();
             }
-            if ui.button("Duplicate").clicked() {
+            if ui.button(tr("Duplicate")).clicked() {
                 ops.push(ChartOp::Duplicate(path.clone()));
                 ui.close();
             }
@@ -419,7 +420,7 @@ impl Painter<'_, '_> {
                 ops.push(ChartOp::Breakpoint(path.clone()));
                 ui.close();
             }
-            if ui.button("Delete").clicked() {
+            if ui.button(tr("Delete")).clicked() {
                 ops.push(ChartOp::Delete(path.clone()));
                 ui.close();
             }

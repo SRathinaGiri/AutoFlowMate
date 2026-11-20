@@ -1,5 +1,6 @@
 //! The Variables tab: declare flow variables with a type and a type-specific editor.
 
+use crate::i18n::tr;
 use autoflow_core::flow::VarType;
 use autoflow_core::Flow;
 use eframe::egui::{self, Color32, RichText};
@@ -56,10 +57,10 @@ fn rename(flow: &mut Flow, old: &str, new: &str) -> bool {
 /// Draw the tab. Returns true when the flow changed.
 pub fn show(ui: &mut egui::Ui, flow: &mut Flow, state: &mut VarsUi, flow_dir: Option<&Path>) -> bool {
     let mut changed = false;
-    ui.label(RichText::new("Flow variables").strong());
-    ui.weak(
+    ui.label(RichText::new(tr("Flow variables")).strong());
+    ui.weak(tr(
         "Values every run starts with. Use them in any field as ${name}, or pick them in a field's Variable mode. Override at run time with --var name=value.",
-    );
+    ));
     ui.add_space(6.0);
 
     let names: Vec<String> = flow.variables.keys().cloned().collect();
@@ -67,9 +68,9 @@ pub fn show(ui: &mut egui::Ui, flow: &mut Flow, state: &mut VarsUi, flow_dir: Op
     let mut renames: Vec<(String, String)> = vec![];
 
     egui::Grid::new("vars_grid").num_columns(4).spacing([8.0, 6.0]).striped(true).show(ui, |ui| {
-        ui.strong("Name");
-        ui.strong("Type");
-        ui.strong("Value");
+        ui.strong(tr("Name"));
+        ui.strong(tr("Type"));
+        ui.strong(tr("Value"));
         ui.label("");
         ui.end_row();
         for (i, name) in names.iter().enumerate() {
@@ -81,12 +82,12 @@ pub fn show(ui: &mut egui::Ui, flow: &mut Flow, state: &mut VarsUi, flow_dir: Op
             let ok = valid_name(buf);
             let mut edit = egui::TextEdit::singleline(buf).id(egui::Id::NULL.with(("var_name", i))).desired_width(120.0);
             if !ok {
-                edit = edit.text_color(Color32::from_rgb(220, 80, 80));
+                edit = edit.text_color(crate::look::err());
             }
             if state.highlight.as_deref() == Some(name.as_str()) {
                 edit = edit.background_color(Color32::from_rgba_unmultiplied(80, 150, 240, 50));
             }
-            let r = ui.add_sized([130.0, 22.0], edit).on_hover_text("Letters, digits and _ only");
+            let r = ui.add_sized([130.0, 22.0], edit).on_hover_text(tr("Letters, digits and _ only"));
             if r.lost_focus() && *buf != *name {
                 renames.push((name.clone(), buf.clone()));
             }
@@ -121,8 +122,8 @@ pub fn show(ui: &mut egui::Ui, flow: &mut Flow, state: &mut VarsUi, flow_dir: Op
             }
             if let Some(v) = flow.variables.get(name) {
                 if let Some(msg) = ty.check(v) {
-                    ui.colored_label(Color32::from_rgb(220, 140, 40), "⚠").on_hover_text(msg);
-                } else if ui.small_button("🗑").on_hover_text("Delete variable").clicked() {
+                    ui.colored_label(crate::look::warn(), "⚠").on_hover_text(msg);
+                } else if ui.small_button("🗑").on_hover_text(tr("Delete variable")).clicked() {
                     delete = Some(name.clone());
                 }
             }
@@ -145,7 +146,7 @@ pub fn show(ui: &mut egui::Ui, flow: &mut Flow, state: &mut VarsUi, flow_dir: Op
 
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        ui.menu_button("➕ Add variable", |ui| {
+        ui.menu_button(tr("➕ Add variable"), |ui| {
             for t in VarType::ALL {
                 if ui.button(t.label()).clicked() {
                     let mut n = 1;
@@ -169,13 +170,13 @@ pub fn show(ui: &mut egui::Ui, flow: &mut Flow, state: &mut VarsUi, flow_dir: Op
     ui.add_space(10.0);
     egui::CollapsingHeader::new(format!("Created by steps ({})", produced.len())).default_open(!produced.is_empty()).show(ui, |ui| {
         if produced.is_empty() {
-            ui.weak("none - steps with an output variable (file_read, dir_list, ui_get_text…) add theirs here");
+            ui.weak(tr("none - steps with an output variable (file_read, dir_list, ui_get_text…) add theirs here"));
         }
         for n in produced {
             ui.monospace(format!("${{{n}}}"));
         }
     });
-    egui::CollapsingHeader::new("Built-in").default_open(false).show(ui, |ui| {
+    egui::CollapsingHeader::new(tr("Built-in")).default_open(false).show(ui, |ui| {
         for (n, d) in [
             ("now", "2026-01-31 14:05:09"),
             ("date / time", "2026-01-31 / 14:05:09"),
@@ -234,7 +235,7 @@ fn value_editor(ui: &mut egui::Ui, name: &str, ty: VarType, v: &mut Value, other
             ui.add(egui_extras::DatePickerButton::new(&mut date).id_salt(&format!("date_{name}")).calendar_week(false));
             let mut time = rest.clone();
             if ty == VarType::Datetime {
-                ui.add_sized([60.0, 22.0], egui::TextEdit::singleline(&mut time).hint_text("HH:MM"));
+                ui.add_sized([60.0, 22.0], egui::TextEdit::singleline(&mut time).hint_text(tr("HH:MM")));
             }
             if date != before || time != rest || !text.starts_with(&date.to_string()) {
                 let s = if ty == VarType::Datetime { format!("{date} {time}") } else { date.to_string() };
@@ -247,7 +248,7 @@ fn value_editor(ui: &mut egui::Ui, name: &str, ty: VarType, v: &mut Value, other
         VarType::List => {
             let buf = state.lists.entry(name.to_string()).or_insert_with(|| serde_json::to_string(v).unwrap_or_else(|_| "[]".into()));
             ui.vertical(|ui| {
-                let r = ui.add_sized([220.0, 22.0], egui::TextEdit::singleline(buf).hint_text("[\"a\", \"b\"]"));
+                let r = ui.add_sized([220.0, 22.0], egui::TextEdit::singleline(buf).hint_text(tr("[\"a\", \"b\"]")));
                 match serde_json::from_str::<Value>(buf) {
                     Ok(p @ Value::Array(_)) => {
                         if r.changed() && p != *v {
@@ -256,7 +257,7 @@ fn value_editor(ui: &mut egui::Ui, name: &str, ty: VarType, v: &mut Value, other
                         }
                     }
                     _ => {
-                        ui.colored_label(Color32::from_rgb(220, 80, 80), "a JSON list, e.g. [\"a\", \"b\"]");
+                        ui.colored_label(crate::look::err(), tr("a JSON list, e.g. [\"a\", \"b\"]"));
                     }
                 }
             });
@@ -284,9 +285,9 @@ fn value_editor(ui: &mut egui::Ui, name: &str, ty: VarType, v: &mut Value, other
                     d = d.set_directory(dir);
                 }
                 let picked = if ty == VarType::File {
-                    ui.button("📄").on_hover_text("Choose a file…").clicked().then(|| d.pick_file()).flatten()
+                    ui.button("📄").on_hover_text(tr("Choose a file…")).clicked().then(|| d.pick_file()).flatten()
                 } else {
-                    ui.button("📁").on_hover_text("Choose a folder…").clicked().then(|| d.pick_folder()).flatten()
+                    ui.button("📁").on_hover_text(tr("Choose a folder…")).clicked().then(|| d.pick_folder()).flatten()
                 };
                 if let Some(p) = picked {
                     s = p.display().to_string();
@@ -295,7 +296,7 @@ fn value_editor(ui: &mut egui::Ui, name: &str, ty: VarType, v: &mut Value, other
             }
             if !others.is_empty() {
                 ui.menu_button("𝑥", |ui| {
-                    ui.label(RichText::new("Insert variable").strong());
+                    ui.label(RichText::new(tr("Insert variable")).strong());
                     for o in others {
                         if ui.button(format!("${{{o}}}")).clicked() {
                             s.push_str(&format!("${{{o}}}"));
