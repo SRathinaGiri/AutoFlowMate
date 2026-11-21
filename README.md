@@ -266,8 +266,16 @@ the [full guide](docs/GUIDE.md).
 <details>
 <summary><b>AI agent skill</b></summary>
 
-[skills/autoflowmate/SKILL.md](skills/autoflowmate/SKILL.md) teaches agents such as Claude Code to
-write, validate and run flows. Copy `skills\autoflowmate` into the agent's skills folder.
+[skills/autoflowmate/SKILL.md](skills/autoflowmate/SKILL.md) teaches AI assistants to write,
+explain, fix, validate and run flows. Without AutoFlowMate installed they still write the flow and
+say it hasn't been validated.
+
+- **Claude Code:** `/plugin marketplace add SRathinaGiri/AutoFlowMate`, then
+  `/plugin install autoflowmate@autoflowmate`.
+- **Gemini CLI:** `gemini extensions install https://github.com/SRathinaGiri/AutoFlowMate`.
+- **ChatGPT / Codex:** each release has an `autoflowmate-plugin-vX.Y.Z.zip` (portable Agent
+  Plugins format; build it with `scripts\package-plugin.ps1`).
+- **Other agents:** copy `skills\autoflowmate` into the agent's skills folder.
 
 </details>
 
@@ -291,10 +299,14 @@ Security problems: please report them privately as described in [SECURITY.md](SE
 <details>
 <summary><b>Releasing (maintainer)</b></summary>
 
-1. Bump `version` in the workspace `Cargo.toml` and add `.github/release-notes/vX.Y.Z.md`.
+1. Bump `version` in the workspace `Cargo.toml` and in `gemini-extension.json` (the release
+   workflow checks they match), and add `.github/release-notes/vX.Y.Z.md`.
 2. Commit, then tag and push the tag (`git tag vX.Y.Z`, `git push origin vX.Y.Z`).
 3. The **Release** workflow checks the tag matches `Cargo.toml`, runs the tests, builds the
-   portable zip and publishes the GitHub release with its SHA-256 checksum.
+   portable zip and the agent plugin zip, attests their build provenance and publishes the
+   GitHub release with SHA-256 checksums.
+4. winget: `scripts\winget-manifests.ps1 -Version X.Y.Z` writes and validates the manifests for a
+   pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).
 
 </details>
 

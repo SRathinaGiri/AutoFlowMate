@@ -53,6 +53,8 @@ jobs:
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne $tag) {
             throw "Tag $env:GITHUB_REF_NAME does not match Cargo.toml version $v (expected $tag)"
           }
+          $gemini = (Get-Content gemini-extension.json -Raw | ConvertFrom-Json).version
+          if ($gemini -ne $v) { throw "gemini-extension.json version $gemini does not match Cargo.toml version $v" }
           "version=$v" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "Version $v, tag $tag"
