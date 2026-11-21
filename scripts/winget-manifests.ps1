@@ -31,16 +31,16 @@ function Write-Manifest($name, $text) {
 }
 
 Write-Manifest "$id.yaml" @"
-# yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.6.0.schema.json
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.version.1.28.0.schema.json
 PackageIdentifier: $id
 PackageVersion: $Version
 DefaultLocale: en-US
 ManifestType: version
-ManifestVersion: 1.6.0
+ManifestVersion: 1.28.0
 "@
 
 Write-Manifest "$id.installer.yaml" @"
-# yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.installer.1.28.0.schema.json
 PackageIdentifier: $id
 PackageVersion: $Version
 MinimumOSVersion: 10.0.17763.0
@@ -56,11 +56,11 @@ Installers:
   InstallerUrl: $url
   InstallerSha256: $sha
 ManifestType: installer
-ManifestVersion: 1.6.0
+ManifestVersion: 1.28.0
 "@
 
 Write-Manifest "$id.locale.en-US.yaml" @"
-# yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+# yaml-language-server: `$schema=https://aka.ms/winget-manifest.defaultLocale.1.28.0.schema.json
 PackageIdentifier: $id
 PackageVersion: $Version
 PackageLocale: en-US
@@ -93,7 +93,7 @@ Tags:
 - redaction
 ReleaseNotesUrl: $repo/releases/tag/v$Version
 ManifestType: defaultLocale
-ManifestVersion: 1.6.0
+ManifestVersion: 1.28.0
 "@
 
 Write-Host "Manifests in $out (SHA256 $sha)"
