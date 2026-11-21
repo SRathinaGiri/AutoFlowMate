@@ -57,6 +57,8 @@ jobs:
           if ($gemini -ne $v) { throw "gemini-extension.json version $gemini does not match Cargo.toml version $v" }
           $claude = (Get-Content skills/autoflowmate/.claude-plugin/plugin.json -Raw | ConvertFrom-Json).version
           if ($claude -ne $v) { throw "skills/autoflowmate/.claude-plugin/plugin.json version $claude does not match Cargo.toml version $v" }
+          $agy = (Get-Content .antigravity-plugin/plugin.json -Raw | ConvertFrom-Json).version
+          if ($agy -ne $v) { throw ".antigravity-plugin/plugin.json version $agy does not match Cargo.toml version $v" }
           "version=$v" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "Version $v, tag $tag"

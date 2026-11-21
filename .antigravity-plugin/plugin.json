@@ -1,0 +1,17 @@
+{
+  "name": "autoflowmate",
+  "displayName": "AutoFlowMate",
+  "version": "0.4.2",
+  "description": "Build safe, reviewable Windows automation (RPA) flows for AutoFlowMate: desktop apps, Tally, Excel, PDFs, Word, e-mail, web pages, OCR, schedules, offline redaction and pseudonymisation. Writes plain JSON flows; validates, dry-runs and runs them when AutoFlowMate is installed.",
+  "logo": "./assets/plugin-icon.png",
+  "suggestedPrompts": [
+    "Make an AutoFlowMate flow that sorts my Downloads folder by file type",
+    "Redact PAN and Aadhaar numbers in a folder of PDFs",
+    "Export the Tally balance sheet every evening and e-mail it"
+  ],
+  "author": { "name": "SRathinaGiri", "url": "https://github.com/SRathinaGiri" },
+  "homepage": "https://github.com/SRathinaGiri/AutoFlowMate",
+  "repository": "https://github.com/SRathinaGiri/AutoFlowMate",
+  "license": "MIT",
+  "keywords": ["rpa", "windows", "automation", "tally", "excel", "pdf", "ocr", "redaction"]
+}

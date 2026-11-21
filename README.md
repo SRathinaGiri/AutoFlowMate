@@ -272,6 +272,7 @@ say it hasn't been validated.
 
 - **Claude Code:** `/plugin marketplace add SRathinaGiri/AutoFlowMate`, then
   `/plugin install autoflowmate@autoflowmate`.
+- **Antigravity CLI:** `agy plugin install https://github.com/SRathinaGiri/AutoFlowMate`.
 - **Gemini CLI:** `gemini extensions install https://github.com/SRathinaGiri/AutoFlowMate`.
 - **ChatGPT / Codex:** each release has an `autoflowmate-plugin-vX.Y.Z.zip` (portable Agent
   Plugins format; build it with `scripts\package-plugin.ps1`).
@@ -299,9 +300,9 @@ Security problems: please report them privately as described in [SECURITY.md](SE
 <details>
 <summary><b>Releasing (maintainer)</b></summary>
 
-1. Bump `version` in the workspace `Cargo.toml`, `gemini-extension.json` and
-   `skills/autoflowmate/.claude-plugin/plugin.json` (the release
-   workflow checks they match), and add `.github/release-notes/vX.Y.Z.md`.
+1. Bump `version` in the workspace `Cargo.toml`, `gemini-extension.json`,
+   `skills/autoflowmate/.claude-plugin/plugin.json` and `.antigravity-plugin/plugin.json` (the
+   release workflow checks they match), and add `.github/release-notes/vX.Y.Z.md`.
 2. Commit, then tag and push the tag (`git tag vX.Y.Z`, `git push origin vX.Y.Z`).
 3. The **Release** workflow checks the tag matches `Cargo.toml`, runs the tests, builds the
    portable zip and the agent plugin zip, attests their build provenance and publishes the
