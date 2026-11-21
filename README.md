@@ -141,9 +141,10 @@ each pause. Steps that failed are marked red in the flowchart.
 
 ### ⚙ Your settings, your language
 Keep your AI services and mail servers in **File > Settings** once, and pick them from a list in
-any flow. Choose the **text size** and **font** under **View**. The whole app can be
-**translated**: Tamil is included, and adding a language is just one text file
-(**View > Language**).
+any flow. Choose the **text size** and **font** under **View**. Studio speaks **17 languages**
+(**View > Language**): English, Tamil, Hindi, Telugu, Kannada, Malayalam, Marathi, Bengali,
+Gujarati, Spanish, French, German, Portuguese, Russian, Indonesian, Chinese and Japanese. Adding
+another is just one text file, and corrections from native speakers are welcome.
 
 <p align="center"><img src="assets/screenshots/tamil.png" alt="Studio in Tamil" width="900"></p>
 

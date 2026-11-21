@@ -206,7 +206,11 @@ variable step on its own and shows the result without running the flow.
 
 **Language:** **View > Language** switches Studio's language. Language files are JSON in the `lang`
 folder next to the program (or `%APPDATA%\AutoFlowMate\lang` for your own), mapping each English
-text to its translation; anything missing stays in English. `lang\ta.json` (Tamil) is included.
+text to its translation; anything missing stays in English. Included: Tamil, Hindi, Telugu,
+Kannada, Malayalam, Marathi, Bengali, Gujarati, Spanish, French, German, Portuguese, Russian,
+Indonesian, Chinese (Simplified) and Japanese, covering the menus, toolbar, panels, categories,
+common fields and dialogs. Right-to-left scripts (Arabic, Urdu, Hebrew) don't display correctly
+yet.
 `autoflow-studio --language-template my.json` writes every text Studio shows with empty
 translations to start a new language from (`lang\template.json` is a copy).
 
