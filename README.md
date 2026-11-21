@@ -335,8 +335,9 @@ Security problems: please report them privately as described in [SECURITY.md](SE
 
 ## Code signing policy
 
-Signed Windows releases are being set up through SignPath's free code signing for open-source
-projects. Until then, the programs are not code-signed (see *Get started* for the Windows warning
+Signed Windows releases are being set up: free code signing provided by
+[SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+Until then, the programs are not code-signed (see *Get started* for the Windows warning
 this causes), and every download can be checked with its SHA-256 file and GitHub build attestation.
 
 - **Builds:** every release is built from the source in this repository by the
