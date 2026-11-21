@@ -182,6 +182,11 @@ AutoFlowMate.
 1. Download the zip from the [Releases page](https://github.com/SRathinaGiri/AutoFlowMate/releases/latest)
    and unzip it anywhere (no installation needed).
 2. Run **`autoflow-studio.exe`**.
+   If Windows shows **"Windows protected your PC"**, click **More info → Run anyway**. Windows
+   shows this for new programs that aren't code-signed yet (signing is being set up). AutoFlowMate
+   is open source, and you can check that your download is exactly what was built from this
+   repository: compare it with the `.sha256` file on the release page, or run
+   `gh attestation verify <zip> --repo SRathinaGiri/AutoFlowMate`.
 3. Open `examples\file_organizer.json` and press **▶ Run (F5)**.
 4. Make your own: **File > New**, drag in actions, save, run. Or press **⏺ Record**.
 
@@ -312,6 +317,23 @@ Security problems: please report them privately as described in [SECURITY.md](SE
    pull request to [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs).
 
 </details>
+
+## Code signing policy
+
+Signed Windows releases are being set up through SignPath's free code signing for open-source
+projects. Until then, the programs are not code-signed (see *Get started* for the Windows warning
+this causes), and every download can be checked with its SHA-256 file and GitHub build attestation.
+
+- **Builds:** every release is built from the source in this repository by the
+  [Release workflow](.github/workflows/release.yml) on GitHub-hosted machines, from a tagged
+  commit, with a signed build-provenance attestation. Nothing is built or uploaded by hand.
+- **Team and roles:** committer, reviewer and approver: [SRathinaGiri](https://github.com/SRathinaGiri)
+  (maintainer). Changes from other contributors are reviewed by the maintainer before they are
+  merged (the `main` branch is protected), and every signed release is approved by the maintainer.
+- **Accounts:** team members use multi-factor authentication for GitHub (and for SignPath).
+- **Privacy:** AutoFlowMate does not transfer any information to other networked systems unless
+  specifically requested by the user or the person installing or operating it, for example a flow
+  step that sends an e-mail or calls a web service. See the [privacy policy](PRIVACY.md).
 
 ## Licence
 
