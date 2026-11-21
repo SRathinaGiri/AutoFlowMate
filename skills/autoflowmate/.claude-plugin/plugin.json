@@ -8,6 +8,10 @@
   },
   "homepage": "https://github.com/SRathinaGiri/AutoFlowMate",
   "repository": "https://github.com/SRathinaGiri/AutoFlowMate",
+  "documentationUrl": "https://github.com/SRathinaGiri/AutoFlowMate/blob/main/docs/GUIDE.md",
+  "supportUrl": "https://github.com/SRathinaGiri/AutoFlowMate/issues",
+  "privacyPolicyUrl": "https://github.com/SRathinaGiri/AutoFlowMate/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/SRathinaGiri/AutoFlowMate/blob/main/LICENSE",
   "license": "MIT",
   "keywords": [
     "rpa",
