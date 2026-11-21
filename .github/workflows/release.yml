@@ -64,6 +64,10 @@ jobs:
         shell: pwsh
         run: ./scripts/package.ps1
 
+      - name: Agent plugin package (ChatGPT / Codex)
+        shell: pwsh
+        run: ./scripts/package-plugin.ps1
+
       - name: Attest build provenance
         if: github.ref_type == 'tag' || inputs.publish
         uses: actions/attest-build-provenance@v2

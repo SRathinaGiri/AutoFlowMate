@@ -1,6 +1,6 @@
 ---
 name: autoflowmate
-description: Automate Windows desktop and web tasks (files, programs, windows, mouse, keyboard, UI elements, web pages by element id, image recognition, on-screen text via OCR, dialogs, clipboard, screenshots), data work (Excel/CSV/PDF and PDF tables in, CSV/Excel/Word out, Word templates, zip, SQLite and ODBC databases, text/date/maths helpers), e-mail (send, read and save attachments), web APIs and AI models (LM Studio, Ollama, OpenAI, Gemini, Claude — e.g. classify comments) by writing AutoFlowMate flow JSON (or recording it with `autoflow record`) and running it with the `autoflow` CLI, on a schedule or whenever a file or e-mail arrives, — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image or text on screen, process files, mail or database rows in bulk, or edit/debug an existing AutoFlowMate `.json` flow.
+description: Automate Windows desktop and web tasks (files, programs, windows, mouse, keyboard, UI elements, web pages by element id, image recognition, on-screen text via OCR, dialogs, clipboard, screenshots), data work (Excel/CSV/PDF and PDF tables in, CSV/Excel/Word out, Word templates, zip, SQLite and ODBC databases, text/date/maths helpers), e-mail (send, read and save attachments), web APIs and AI models (LM Studio, Ollama, OpenAI, Gemini, Claude — e.g. classify comments), offline redaction of personal data in folders of documents (PAN, Aadhaar, mobile, names...) and reversible pseudonymisation of IDs, by writing AutoFlowMate flow JSON (or recording it with `autoflow record`) and running it with the `autoflow` CLI, on a schedule or whenever a file or e-mail arrives, — a PyAutoGUI-like toolkit with a fail-safe. Use when the user asks to automate a repetitive Windows task (including slow apps such as Tally), build an RPA flow or bot, click or type into a desktop app, find/click an image or text on screen, process files, mail or database rows in bulk, redact or pseudonymise personal data, or create, explain, edit or debug an AutoFlowMate `.json` flow (also when AutoFlowMate is not installed yet: then write the flow and say it is unvalidated).
 ---
 
 # AutoFlowMate (Windows RPA)
@@ -30,10 +30,26 @@ AutoFlowMate runs **flows**: JSON files listing steps such as `file_copy`, `wind
 | `autoflow schedule list` / `run NAME` / `remove NAME` | See next/last run and result, start now, delete |
 | `autoflow run flow.json --log run.log` | Also append a timestamped log of the run |
 | `autoflow schema` | JSON Schema for flow files |
-| `autoflow new flow.json` | Empty flow |
+| `autoflow new flow.json` / `autoflow new flow.json --template NAME` | Empty flow, or a copy of a template |
+| `autoflow templates` | Ready-made flows to start from (redaction, pseudonymisation, mail merge, invoices to Excel...) |
+| `autoflow secret new-key NAME` / `show NAME` | Make / back up a pseudonymisation key |
 
-If `autoflow` is not on PATH, use `target\release\autoflow.exe` (or `target\debug\autoflow.exe`) in the
-AutoFlowMate repo; build with `cargo build --release`.
+## Before you start: is AutoFlowMate installed?
+
+AutoFlowMate runs only on **Windows 10/11**. Check once per conversation:
+
+1. Run `autoflow --version`. If it prints a version, you can validate, dry-run and run flows.
+2. If the command is not found (or you are not on the user's Windows PC, e.g. in a web chat), you
+   can still **write** flows, from the references in this skill, but you can't check or run
+   them. Say so plainly: "This flow has not been validated or run." Never claim a flow was
+   validated, tested or run when it wasn't.
+3. To install: download the zip from https://github.com/SRathinaGiri/AutoFlowMate/releases/latest
+   and unzip it anywhere (no installer, no admin rights); add that folder to PATH or call
+   `autoflow.exe` by its full path. The same folder has `autoflow-studio.exe`, the visual editor.
+
+On the first request, find out (ask only what you can't see): what they want to automate, which
+programs or files are involved, whether they want a new flow, a fix to an existing one, or an
+explanation; and whether they only want the JSON or want you to validate and run it here.
 
 Full action/field reference: [references/actions.md](references/actions.md). Read it before using an
 action for the first time. The authoritative list is `autoflow actions --json` and
@@ -263,6 +279,23 @@ polling loop. Desktop flows need the PC logged in and unlocked; scheduled flows 
   carefully. `read_email` with `move_to` / `mark_read` changes the mailbox.
 - Keyboard/mouse steps act on whatever has focus; tell the user not to use the PC while a
   desktop flow runs.
+
+### Never, even when asked
+
+- **Never claim** a flow was validated, dry-run or run unless you ran it and saw the result.
+- **Never put a password, API key or token into a flow** (or a `--var`), even if the user pastes
+  one. Tell them to store it with `autoflow secret set NAME` and use the name.
+- **Never solve, bypass or automate CAPTCHAs** or other bot checks. Show the CAPTCHA to the user
+  (`input_box` with an `image`) and let them type it.
+- **Never write a broad delete** (a drive or user folder, `*` at the top of a tree, `dir_delete`
+  on a folder the flow didn't create) without showing the user the exact path and getting a yes.
+- **Never send customer or personal data to a cloud AI or web API** without the user's explicit
+  agreement for that data.
+- **Never present redacted output as safe** when `redact_files` reported `failed` or `unverified`
+  files, and never set `continue_on_problems` on your own. Redaction results need a human
+  spot-check.
+- **Never close windows or kill programs the flow didn't start**, unless the user asks for that
+  program by name.
 
 ## Troubleshooting
 

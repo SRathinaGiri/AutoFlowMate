@@ -24,8 +24,8 @@ pub fn user_dir() -> Option<PathBuf> {
 /// then your own.
 pub fn dirs() -> Vec<(PathBuf, bool)> {
     let mut v = vec![];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(d) = exe.parent() {
+    for d in crate::program_dirs() {
+        {
             v.push((d.join("templates"), false));
             v.push((d.join("..").join("..").join("templates"), false));
         }

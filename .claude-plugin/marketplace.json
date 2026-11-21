@@ -1,0 +1,12 @@
+{
+  "name": "autoflowmate",
+  "description": "AutoFlowMate: free, open-source Windows automation (RPA) with plain JSON flows.",
+  "owner": { "name": "SRathinaGiri" },
+  "plugins": [
+    {
+      "name": "autoflowmate",
+      "source": "./",
+      "description": "Build safe, reviewable Windows RPA flows for AutoFlowMate (desktop apps, Tally, Excel, PDFs, e-mail, OCR, redaction)."
+    }
+  ]
+}

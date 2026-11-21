@@ -1,0 +1,36 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "autoflowmate",
+  "version": "0.0.0",
+  "description": "Build safe, reviewable Windows automation (RPA) flows for AutoFlowMate: desktop apps, Tally, Excel, PDFs, Word, e-mail, web pages, OCR, schedules, offline redaction and pseudonymisation. Writes plain JSON flows; validates, dry-runs and runs them when AutoFlowMate is installed on the user's Windows PC.",
+  "author": { "name": "SRathinaGiri", "url": "https://github.com/SRathinaGiri" },
+  "homepage": "https://github.com/SRathinaGiri/AutoFlowMate",
+  "repository": "https://github.com/SRathinaGiri/AutoFlowMate",
+  "license": "MIT",
+  "keywords": ["rpa", "windows", "automation", "tally", "excel", "pdf", "ocr", "redaction"],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "AutoFlowMate",
+        "shortDescription": "Build Windows RPA flows",
+        "longDescription": "Create, explain and repair reviewable JSON automations for Windows applications, Tally, Excel, PDFs, Word, e-mail and repetitive back-office work, including offline redaction of personal data (PAN, Aadhaar, mobile numbers, names) and reversible pseudonymisation. Flows are plain JSON you can read and edit. With AutoFlowMate installed on a Windows PC they can be validated, dry-run and run locally; elsewhere the flow is written for you to run later. AutoFlowMate is free and open source (MIT).",
+        "developerName": "SRathinaGiri",
+        "websiteURL": "https://github.com/SRathinaGiri/AutoFlowMate",
+        "supportURL": "https://github.com/SRathinaGiri/AutoFlowMate/issues",
+        "privacyPolicyURL": "https://github.com/SRathinaGiri/AutoFlowMate/blob/main/PRIVACY.md",
+        "termsOfServiceURL": "https://github.com/SRathinaGiri/AutoFlowMate/blob/main/LICENSE",
+        "defaultPrompt": [
+          "Make a flow that sorts my Downloads folder by file type",
+          "Redact PAN and Aadhaar numbers in a folder of PDFs",
+          "Export the Tally balance sheet every evening and e-mail it"
+        ],
+        "brandColor": "#1F6FEB",
+        "brandColorDark": "#58A6FF",
+        "composerIcon": "./assets/icon.png",
+        "composerIconDark": "./assets/icon.png",
+        "logo": "./assets/logo.png",
+        "logoDark": "./assets/logo.png"
+      }
+    }
+  }
+}

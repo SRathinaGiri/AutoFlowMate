@@ -27,8 +27,8 @@ pub fn tr(english: &str) -> String {
 /// Folders searched for language files.
 pub fn folders() -> Vec<PathBuf> {
     let mut v = vec![];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(d) = exe.parent() {
+    for d in autoflow_core::program_dirs() {
+        {
             v.push(d.join("lang"));
             // Running from target\release in the source tree: use the repository's lang folder.
             v.push(d.join("..").join("..").join("lang"));

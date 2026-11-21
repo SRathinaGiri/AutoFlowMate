@@ -1,15 +1,27 @@
-# Weekly pull requests to update dependencies. CI tests each one before it can be merged.
+# Dependency updates, tested by CI before they can be merged. Kept quiet on purpose:
+# one grouped pull request a month for Rust crates and one for GitHub Actions. Major versions
+# change how a library works and need code changes, so they are done by hand when wanted.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
+      interval: monthly
+    open-pull-requests-limit: 2
     groups:
-      minor-and-patch:
-        update-types: [minor, patch]
+      rust-crates:
+        patterns: ["*"]
+        update-types: [patch]
+    # For Rust's 0.x crates a "minor" bump (0.22 -> 0.23) is a breaking one, so only patch
+    # updates come automatically; larger ones are done deliberately (cargo update + tests).
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
