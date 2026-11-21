@@ -21,6 +21,8 @@ $manifest.version = $version
 Copy-Item plugin\README.md, LICENSE $stage
 New-Item -ItemType Directory -Force (Join-Path $stage 'skills') | Out-Null
 Copy-Item skills\autoflowmate (Join-Path $stage 'skills\autoflowmate') -Recurse
+# The skill folder is also the Claude Code plugin; its manifest doesn't belong in this package.
+Remove-Item (Join-Path $stage 'skills\autoflowmate\.claude-plugin') -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force (Join-Path $stage 'assets') | Out-Null
 Copy-Item assets\autoflowmate.png (Join-Path $stage 'assets\icon.png')
 Copy-Item assets\autoflowmate.png (Join-Path $stage 'assets\logo.png')

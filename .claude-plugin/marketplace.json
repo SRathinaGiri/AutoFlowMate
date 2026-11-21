@@ -5,7 +5,7 @@
   "plugins": [
     {
       "name": "autoflowmate",
-      "source": "./",
+      "source": "./skills/autoflowmate",
       "description": "Build safe, reviewable Windows RPA flows for AutoFlowMate (desktop apps, Tally, Excel, PDFs, e-mail, OCR, redaction)."
     }
   ]
