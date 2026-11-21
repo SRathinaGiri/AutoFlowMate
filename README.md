@@ -7,6 +7,21 @@
 <p align="center"><b>RPA for a more productive you.</b> Automate your flow, with a friendly mate.</p>
 
 <p align="center">
+  <a href="https://github.com/SRathinaGiri/AutoFlowMate/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/SRathinaGiri/AutoFlowMate?label=release&color=1f6feb"></a>
+  <a href="https://github.com/SRathinaGiri/AutoFlowMate/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/SRathinaGiri/AutoFlowMate/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/SRathinaGiri/AutoFlowMate/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/SRathinaGiri/AutoFlowMate/total?color=0ea5a4"></a>
+  <a href="LICENSE"><img alt="Licence: MIT" src="https://img.shields.io/badge/licence-MIT-green"></a>
+  <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6">
+  <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-b7410e">
+  <br>
+  <img alt="17 languages" src="https://img.shields.io/badge/languages-17-8b5cf6">
+  <img alt="Offline, no account" src="https://img.shields.io/badge/offline-no%20account%2C%20no%20cloud-555">
+  <a href="#for-developers"><img alt="AI assistant plugins: Claude Code, Gemini, Antigravity" src="https://img.shields.io/badge/AI%20plugins-Claude%20%7C%20Gemini%20%7C%20Antigravity-d97706"></a>
+  <a href="https://srathinagiri.github.io/AutoFlowMate/"><img alt="Website" src="https://img.shields.io/badge/website-srathinagiri.github.io%2FAutoFlowMate-1f6feb"></a>
+</p>
+
+<p align="center">
+  <a href="https://srathinagiri.github.io/AutoFlowMate/"><b>🌐 Website</b></a> ·
   <a href="https://github.com/SRathinaGiri/AutoFlowMate/releases/latest"><b>⬇ Download for Windows</b></a> ·
   <a href="#examples-to-start-from">Examples</a> ·
   <a href="docs/GUIDE.md">Full guide</a> ·
