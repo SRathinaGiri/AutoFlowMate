@@ -76,7 +76,7 @@ jobs:
 
       - name: Attest build provenance
         if: github.ref_type == 'tag' || inputs.publish
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: 'dist/*.zip'
 
