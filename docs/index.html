@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoFlowMate – free Windows automation (RPA)</title>
+<meta name="description" content="AutoFlowMate is a free, open-source Windows desktop automation (RPA) tool: build flows in a visual flowchart editor or record them like a macro, then run them on demand, on a schedule or when a file or e-mail arrives. Offline, no account, MIT licence.">
+<meta property="og:title" content="AutoFlowMate – free Windows automation (RPA)">
+<meta property="og:description" content="Automate repetitive work on your Windows PC: files, Excel, PDF, Word, e-mail, web pages and any Windows program. Free, open source, offline.">
+<meta property="og:image" content="https://srathinagiri.github.io/AutoFlowMate/site/studio.jpg">
+<meta property="og:type" content="website">
+<link rel="icon" href="site/favicon.ico">
+<style>
+  :root {
+    --bg: #f7f8fb; --bg-soft: #eef2f8; --card: #ffffff; --text: #141821; --muted: #4a5466;
+    --line: #dde3ee; --brand: #1f6feb; --brand-2: #0ea5a4; --brand-ink: #ffffff;
+    --code-bg: #0f1729; --code-text: #e6edf7; --shadow: 0 10px 30px rgba(20, 30, 60, .08);
+    --hero-glow: radial-gradient(1200px 500px at 20% -10%, #dbe8ff 0%, transparent 60%),
+                 radial-gradient(900px 450px at 100% 0%, #d6f5f2 0%, transparent 55%);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --bg-soft: #121a26; --card: #151d2b; --text: #e8edf5; --muted: #a3afc2;
+      --line: #263247; --brand: #58a6ff; --brand-2: #2dd4bf; --brand-ink: #06111f;
+      --code-bg: #0a0f1a; --code-text: #dce6f5; --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+      --hero-glow: radial-gradient(1200px 500px at 20% -10%, #13284a 0%, transparent 60%),
+                   radial-gradient(900px 450px at 100% 0%, #0c3b3a 0%, transparent 55%);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --bg-soft: #121a26; --card: #151d2b; --text: #e8edf5; --muted: #a3afc2;
+    --line: #263247; --brand: #58a6ff; --brand-2: #2dd4bf; --brand-ink: #06111f;
+    --code-bg: #0a0f1a; --code-text: #dce6f5; --shadow: 0 10px 30px rgba(0, 0, 0, .35);
+    --hero-glow: radial-gradient(1200px 500px at 20% -10%, #13284a 0%, transparent 60%),
+                 radial-gradient(900px 450px at 100% 0%, #0c3b3a 0%, transparent 55%);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 17px/1.6 "Segoe UI", system-ui, -apple-system, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: var(--brand); }
+  code { overflow-wrap: anywhere; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+  /* header */
+  header.top { position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--line); }
+  header.top .wrap { display: flex; align-items: center; gap: 16px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 19px; color: var(--text); text-decoration: none; }
+  .brand img { width: 30px; height: 30px; border-radius: 7px; }
+  nav.links { margin-left: auto; display: flex; gap: 18px; font-size: 15px; }
+  nav.links a { color: var(--muted); text-decoration: none; }
+  nav.links a:hover { color: var(--text); }
+  @media (max-width: 760px) { nav.links .opt { display: none; } }
+  @media (max-width: 440px) { nav.links a:not(:last-child) { display: none; } }
+  /* buttons */
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 10px;
+    font-weight: 600; text-decoration: none; border: 1px solid transparent; font-size: 16px; }
+  .btn.primary { background: var(--brand); color: var(--brand-ink); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  .btn.ghost { border-color: var(--line); color: var(--text); background: var(--card); }
+  .btn.ghost:hover { border-color: var(--brand); }
+  /* hero */
+  .hero { background: var(--hero-glow); padding: 56px 0 24px; text-align: center; }
+  .hero .wordmark { width: min(520px, 88%); margin: 0 auto 8px; }
+  .hero .wordmark.dark { display: none; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .hero .wordmark.light { display: none; } :root:not([data-theme="light"]) .hero .wordmark.dark { display: block; } }
+  :root[data-theme="dark"] .hero .wordmark.light { display: none; }
+  :root[data-theme="dark"] .hero .wordmark.dark { display: block; }
+  .tagline { font-size: clamp(22px, 3.2vw, 32px); font-weight: 700; margin: 10px 0 6px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); max-width: 720px; margin: 0 auto 22px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .facts { color: var(--muted); font-size: 14px; display: flex; gap: 8px 18px; justify-content: center; flex-wrap: wrap; }
+  .facts span::before { content: "✓ "; color: var(--brand-2); font-weight: 700; }
+  .shot { margin: 34px auto 0; max-width: 1040px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--card); }
+  /* sections */
+  section { padding: 64px 0; }
+  section.soft { background: var(--bg-soft); }
+  h2 { font-size: clamp(24px, 3vw, 32px); margin: 0 0 8px; letter-spacing: -.01em; }
+  .lead { color: var(--muted); margin: 0 0 30px; max-width: 760px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 16px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .ico { font-size: 22px; line-height: 1; margin-bottom: 8px; display: block; }
+  .split { display: grid; gap: 32px; grid-template-columns: 1fr 1fr; align-items: center; }
+  .split.rev > :first-child { order: 2; }
+  @media (max-width: 860px) { .split, .split.rev { grid-template-columns: 1fr; } .split.rev > :first-child { order: 0; } }
+  .split h3 { font-size: 22px; margin: 0 0 8px; }
+  .split p { color: var(--muted); margin: 0 0 10px; }
+  .split ul { color: var(--muted); padding-left: 20px; margin: 0; }
+  .figure { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--card); }
+  .feature-block + .feature-block { margin-top: 56px; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: color-mix(in srgb, var(--brand-2) 18%, transparent); color: var(--brand-2); vertical-align: middle; margin-left: 6px; }
+  /* code */
+  .cmd { display: flex; align-items: flex-start; gap: 10px; background: var(--code-bg); color: var(--code-text); border-radius: 10px; padding: 10px 12px 10px 14px; font: 14px/1.5 Consolas, "Cascadia Mono", ui-monospace, monospace; margin: 8px 0; }
+  .cmd code { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .ai .grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); }
+  .cmd button { flex: none; border: 1px solid #33415c; background: #1b2740; color: #dce6f5; border-radius: 7px; padding: 4px 10px; font-size: 12px; cursor: pointer; }
+  .cmd button:hover { background: #24345a; }
+  .ai .card h3 { display: flex; align-items: center; gap: 8px; }
+  /* languages */
+  .langs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .langs span { background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 6px 14px; font-size: 15px; }
+  /* faq */
+  details { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { color: var(--muted); margin: 10px 0 0; }
+  /* steps */
+  ol.steps { counter-reset: s; list-style: none; padding: 0; margin: 0; display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+  ol.steps li { counter-increment: s; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; color: var(--muted); font-size: 15px; }
+  ol.steps li::before { content: counter(s); display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--brand); color: var(--brand-ink); font-weight: 700; margin-bottom: 8px; }
+  ol.steps strong { color: var(--text); display: block; }
+  footer { border-top: 1px solid var(--line); padding: 30px 0 40px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 24px; justify-content: space-between; }
+  footer a { color: var(--muted); }
+  .theme-toggle { border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 8px; padding: 5px 9px; cursor: pointer; font-size: 15px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><img src="site/plugin-icon.png" alt="">AutoFlowMate</a>
+    <nav class="links">
+      <a href="#features">Features</a>
+      <a class="opt" href="#ai">AI assistants</a>
+      <a class="opt" href="#start">Get started</a>
+      <a class="opt" href="#faq">FAQ</a>
+      <a href="https://github.com/SRathinaGiri/AutoFlowMate">GitHub</a>
+    </nav>
+    <button class="theme-toggle" id="theme" title="Switch light / dark" aria-label="Switch light or dark theme">◐</button>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <img class="wordmark light" src="site/wordmark.png" alt="AutoFlowMate">
+    <img class="wordmark dark" src="site/wordmark-dark.png" alt="AutoFlowMate">
+    <p class="tagline">Automate the boring work on your Windows PC.</p>
+    <p class="sub">Show AutoFlowMate the steps once (copy these files, open that program, type this, read that invoice, send this mail) and it repeats them whenever you like, without mistakes. Build flows in a visual flowchart or record them like a macro.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/SRathinaGiri/AutoFlowMate/releases/latest">⬇ Download for Windows</a>
+      <a class="btn ghost" href="https://github.com/SRathinaGiri/AutoFlowMate">View on GitHub</a>
+    </div>
+    <div class="facts"><span>Free &amp; open source (MIT)</span><span>Runs offline on your PC</span><span>No account, no cloud</span><span>No installation needed</span><span>17 languages</span></div>
+    <div class="shot"><img src="site/studio.jpg" alt="AutoFlowMate Studio: a flow shown as a flowchart, with the step's settings on the right" width="1400" height="613"></div>
+  </div>
+</div>
+
+<section id="automate">
+  <div class="wrap">
+    <h2>What you can automate</h2>
+    <p class="lead">More than 100 ready-made actions in 22 groups, for the everyday work of an office PC.</p>
+    <div class="grid">
+      <div class="card"><span class="ico">📁</span><h3>Files and folders</h3><p>Sort downloads into folders, rename and move files, clean up old files, zip and unzip.</p></div>
+      <div class="card"><span class="ico">📊</span><h3>Excel, CSV and PDF</h3><p>Read a customer list from Excel, take the item table out of a PDF invoice, write reports to Excel or CSV.</p></div>
+      <div class="card"><span class="ico">📄</span><h3>Word documents</h3><p>Fill letter templates with names and amounts, write reports with tables.</p></div>
+      <div class="card"><span class="ico">✉</span><h3>E-mail</h3><p>Send mails with attachments through Outlook or Gmail; read the inbox and save attachments.</p></div>
+      <div class="card"><span class="ico">🌐</span><h3>Web pages</h3><p>Open a site, fill in a form, click buttons, read the result, save a picture of the page.</p></div>
+      <div class="card"><span class="ico">🖥</span><h3>Any Windows program</h3><p>Click buttons and menus, type, use shortcuts: in Tally, Excel, Notepad or your own software.</p></div>
+      <div class="card"><span class="ico">🔎</span><h3>Reading the screen</h3><p>Find a picture on screen and click it; read on-screen text with Windows' built-in OCR.</p></div>
+      <div class="card"><span class="ico">🗄</span><h3>Databases</h3><p>A built-in database, or SQL Server, MySQL, Access and Tally through ODBC.</p></div>
+      <div class="card"><span class="ico">🤖</span><h3>AI models</h3><p>Ask a local AI (LM Studio, Ollama) or OpenAI, Gemini, Claude to classify, summarise or extract.</p></div>
+      <div class="card"><span class="ico">🔒</span><h3>Personal data <span class="badge">beta</span></h3><p>Black out PAN, Aadhaar, mobile numbers, names and patient details in folders of documents, offline.</p></div>
+      <div class="card"><span class="ico">🧮</span><h3>Text, dates and sums</h3><p>Due dates, weekdays, GST, rounding, picking an invoice number out of text.</p></div>
+      <div class="card"><span class="ico">⏰</span><h3>Schedules and triggers</h3><p>Run every day at 9:00, at log-on, or when a file or an e-mail arrives.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="features" class="soft">
+  <div class="wrap">
+    <div class="feature-block split">
+      <div>
+        <h3>🧩 Build without programming</h3>
+        <p>Drag actions into the flowchart and fill in the details. Every field explains itself: hover a <strong>(?)</strong> to see what it expects, with examples. Choices are drop-down lists, and <strong>▶ Try it</strong> shows what a step produces before you run the flow.</p>
+        <p>Flows are plain, readable JSON files, easy to keep, share and compare.</p>
+      </div>
+      <div class="figure"><img src="site/help.jpg" alt="Help next to every field, and Try it showing weekday = Friday" loading="lazy" width="537" height="545"></div>
+    </div>
+
+    <div class="feature-block split rev">
+      <div>
+        <h3>⏺ Record, like a macro</h3>
+        <p>Press <strong>Record</strong> and do the job once. Your clicks and typing become steps you can edit and replay. A small always-on-top window shows the steps recorded and has a <strong>Stop</strong> button, and passwords typed while recording are never saved.</p>
+      </div>
+      <div class="figure" style="max-width:380px;justify-self:center"><img src="site/recording.png" alt="The small recording window with a Stop recording button" loading="lazy" width="350" height="132"></div>
+    </div>
+
+    <div class="feature-block split">
+      <div>
+        <h3>🔒 Protect personal data <span class="badge">beta</span></h3>
+        <p>Point <strong>redact_files</strong> at one file or thousands and get redacted copies of the same type, on your PC, without AI: PAN, Aadhaar (checksum-verified), mobile numbers, e-mail, bank accounts, names, dates of birth, patient details, plus your own patterns.</p>
+        <p>PDFs and scans get solid black boxes with no hidden text left behind. If a file can't be checked completely, it isn't written and the flow stops. <strong>Pseudonymise</strong> account numbers into tokens only your key can turn back.</p>
+      </div>
+      <div class="figure"><img src="site/redaction.jpg" alt="A discharge summary before and after redaction" loading="lazy" width="1400" height="477"></div>
+    </div>
+
+    <div class="feature-block">
+      <div class="grid">
+        <div class="card"><span class="ico">🧯</span><h3>Safe by design</h3><p>Push the mouse into a screen corner or press Ctrl+Alt+Q to stop at once. Dry runs change nothing. Passwords stay in Windows Credential Manager, never in flows.</p></div>
+        <div class="card"><span class="ico">🐞</span><h3>Easy to debug</h3><p>Breakpoints (F9), step-by-step running (F10) and every variable's value at each pause.</p></div>
+        <div class="card"><span class="ico">📋</span><h3>Templates</h3><p>Start from ready-made flows: redact a folder, mail merge from Excel, invoices to Excel, sort files, zip and mail a backup.</p></div>
+        <div class="card"><span class="ico">⚡</span><h3>Small and fast</h3><p>Written in Rust: no Python or runtime to install, one portable folder, and the Studio is under 50 MB.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="ai">
+  <div class="wrap ai">
+    <h2>Works with your AI assistant</h2>
+    <p class="lead">Describe a task in plain words and let your assistant write the flow. You still get a readable file to check, and AutoFlowMate validates it, tries it with a dry run, and asks before anything that deletes, sends or submits.</p>
+    <div class="grid">
+      <div class="card"><h3>Claude Code</h3>
+        <div class="cmd"><code>/plugin marketplace add SRathinaGiri/AutoFlowMate</code><button data-copy>Copy</button></div>
+        <div class="cmd"><code>/plugin install autoflowmate@autoflowmate</code><button data-copy>Copy</button></div></div>
+      <div class="card"><h3>Antigravity CLI</h3>
+        <div class="cmd"><code>agy plugin install https://github.com/SRathinaGiri/AutoFlowMate</code><button data-copy>Copy</button></div></div>
+      <div class="card"><h3>Gemini CLI</h3>
+        <div class="cmd"><code>gemini extensions install https://github.com/SRathinaGiri/AutoFlowMate</code><button data-copy>Copy</button></div></div>
+      <div class="card"><h3>Other assistants</h3><p>Copy the <code>skills/autoflowmate</code> folder from the download into your assistant's skills folder.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="languages" class="soft">
+  <div class="wrap split rev">
+    <div>
+      <h2>In your language</h2>
+      <p class="lead" style="margin-bottom:12px">Studio speaks 17 languages; choose one under <strong>View › Language</strong>. Adding another is one text file, and corrections from native speakers are welcome.</p>
+      <div class="langs">
+        <span>English</span><span>தமிழ்</span><span>हिन्दी</span><span>తెలుగు</span><span>ಕನ್ನಡ</span><span>മലയാളം</span><span>मराठी</span><span>বাংলা</span><span>ગુજરાતી</span><span>Español</span><span>Français</span><span>Deutsch</span><span>Português</span><span>Русский</span><span>Bahasa Indonesia</span><span>中文</span><span>日本語</span>
+      </div>
+    </div>
+    <div class="figure"><img src="site/tamil.jpg" alt="AutoFlowMate Studio in Tamil" loading="lazy" width="1400" height="613"></div>
+  </div>
+</section>
+
+<section id="who">
+  <div class="wrap">
+    <h2>Who is it for?</h2>
+    <p class="lead">A small, transparent, local-first tool for individual PCs and small teams, not a replacement for enterprise robot fleets.</p>
+    <div class="grid">
+      <div class="card"><h3>Accounting and back-office teams</h3><p>Tally exports, GST, Excel registers, PDF invoices, payment letters, mails.</p></div>
+      <div class="card"><h3>Everyday office users</h3><p>Drag boxes into a flowchart, or just record what you do.</p></div>
+      <div class="card"><h3>IT and Windows admins</h3><p>Scheduled tasks, file and mail triggers, databases, JSON output for monitoring.</p></div>
+      <div class="card"><h3>People who use AI assistants</h3><p>Let the assistant write the flow, and keep a file you can read and control.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="start" class="soft">
+  <div class="wrap">
+    <h2>Get started in a minute</h2>
+    <p class="lead">Windows 10 or 11. A few actions need the program they automate (Excel, Outlook, Edge or Chrome, TallyPrime).</p>
+    <ol class="steps">
+      <li><strong>Download</strong>the zip from the <a href="https://github.com/SRathinaGiri/AutoFlowMate/releases/latest">latest release</a>.</li>
+      <li><strong>Unzip it anywhere</strong>no installation, no admin rights.</li>
+      <li><strong>Run autoflow-studio.exe</strong>and open <code>examples\file_organizer.json</code>.</li>
+      <li><strong>Press ▶ Run (F5)</strong>then build your own, or press Record.</li>
+    </ol>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <h2>Questions</h2>
+    <details><summary>Windows says "Windows protected your PC". Is it safe?</summary>
+      <p>Windows shows this for new programs that aren't code-signed yet; signing is being set up. Click <strong>More info → Run anyway</strong>. AutoFlowMate is open source, every release is built by GitHub from the public code, and you can check your download against the <code>.sha256</code> file on the release page or with <code>gh attestation verify &lt;zip&gt; --repo SRathinaGiri/AutoFlowMate</code>.</p></details>
+    <details><summary>Does it send my data anywhere?</summary>
+      <p>No. There's no account, telemetry or update check. Data leaves your PC only when a flow you run tells it to, for example a step that sends an e-mail or asks a cloud AI. See the <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/PRIVACY.md">privacy policy</a>.</p></details>
+    <details><summary>Is it really free?</summary>
+      <p>Yes. It's open source under the MIT licence: free to use, change and share, including at work and commercially, with no warranty.</p></details>
+    <details><summary>Does redaction make me DPDP-compliant?</summary>
+      <p>It supports privacy work, but no tool makes a process compliant by itself. Pattern matching and OCR can miss things (unlabelled names, handwriting, poor scans), so spot-check results before sharing. The privacy features are in beta.</p></details>
+    <details><summary>Can it run unattended on a locked PC?</summary>
+      <p>File, data, e-mail, database and document flows run fine on a schedule. Flows that click and type need a logged-in, unlocked session, as with most desktop automation.</p></details>
+    <details><summary>How can I help?</summary>
+      <p>Try it and <a href="https://github.com/SRathinaGiri/AutoFlowMate/issues">report problems or ideas</a>, polish a translation, or share an example flow. See the <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/CONTRIBUTING.md">contributing guide</a>.</p></details>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>© SRathinaGiri · AutoFlowMate is free software under the <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/LICENSE">MIT licence</a>.</div>
+    <div><a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/docs/GUIDE.md">Guide</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/releases">Releases</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/PRIVACY.md">Privacy</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/issues">Support</a></div>
+  </div>
+</footer>
+
+<script>
+  // Copy buttons for the install commands.
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var text = b.previousElementSibling.textContent;
+      var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); };
+      if (navigator.clipboard) { navigator.clipboard.writeText(text).then(done, function () {}); }
+    });
+  });
+  // Light / dark switch (remembered in this browser only).
+  (function () {
+    var root = document.documentElement, key = 'afm-theme';
+    try { var saved = localStorage.getItem(key); if (saved) root.setAttribute('data-theme', saved); } catch (e) {}
+    document.getElementById('theme').addEventListener('click', function () {
+      var dark = root.getAttribute('data-theme') ? root.getAttribute('data-theme') === 'dark'
+               : window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var next = dark ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem(key, next); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>
