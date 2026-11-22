@@ -9,6 +9,9 @@ use crate::actions::{MouseButton, Tween};
 
 /// Pause after pressing/before releasing modifiers so apps see them held.
 const MOD_SETTLE: Duration = Duration::from_millis(15);
+/// How long a key stays down, like a real keypress. Programs that read the keyboard state
+/// themselves (Tally, older ERP and terminal programs) miss keys pressed and released at once.
+const KEY_HOLD: Duration = Duration::from_millis(25);
 
 pub struct Input {
     enigo: Enigo,
@@ -156,7 +159,7 @@ impl Input {
                             if !mod_keys.is_empty() {
                                 sleep(MOD_SETTLE);
                             }
-                            let r = self.enigo.key(Key::Other(vk), Direction::Click).map_err(|e| anyhow!("{e}"));
+                            let r = self.tap(Key::Other(vk));
                             if !mod_keys.is_empty() {
                                 sleep(MOD_SETTLE);
                             }
@@ -192,6 +195,13 @@ impl Input {
     }
 
     /// Press a combination like `ctrl+shift+s`: modifiers down, last key clicked, modifiers up.
+    /// Press and release one key, holding it down for `KEY_HOLD`.
+    fn tap(&mut self, k: Key) -> Result<()> {
+        self.enigo.key(k, Direction::Press).map_err(|e| anyhow!("{e}"))?;
+        sleep(KEY_HOLD);
+        self.enigo.key(k, Direction::Release).map_err(|e| anyhow!("{e}"))
+    }
+
     pub fn press_combo(&mut self, combo: &str) -> Result<()> {
         let keys = parse_combo(combo)?;
         let (last, mods) = keys.split_last().expect("parse_combo returns at least one key");
@@ -202,7 +212,7 @@ impl Input {
                 pressed.push(*k);
                 sleep(MOD_SETTLE);
             }
-            self.enigo.key(*last, Direction::Click).map_err(|e| anyhow!("{e}"))
+            self.tap(*last)
         })();
         if !pressed.is_empty() {
             sleep(MOD_SETTLE);
