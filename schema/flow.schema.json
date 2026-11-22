@@ -3071,12 +3071,12 @@
           "default": ""
         },
         "summary_var": {
-          "description": "Variable receiving a summary: {\"files\": 120, \"redacted\": 80, \"clean\": 35, \"unverified\": 1,\n\"skipped\": 3, \"failed\": 1, \"found\": {\"PAN\": 95...}}.",
+          "description": "Variable receiving a summary: {\"files\": 120, \"redacted\": 80, \"clean\": 35, \"unverified\": 1,\n\"skipped\": 3, \"failed\": 1, \"foreign\": 0, \"found\": {\"PAN\": 95...}}.",
           "type": "string",
           "default": "redaction"
         },
         "continue_on_problems": {
-          "description": "Let the flow go on when some files failed or could not be checked (unverified). Off by\ndefault: the step then fails, so later steps (zip, e-mail, upload) never send a folder that\nis not completely redacted. The report and summary are written either way.",
+          "description": "Let the flow go on when some files failed or could not be checked (unverified), or when the\noutput folder holds files this redaction did not make (foreign). Off by default: the step\nthen fails, so later steps (zip, e-mail, upload) never send a folder that is not completely\nredacted. The report and summary are written either way.",
           "type": "boolean",
           "default": false
         }

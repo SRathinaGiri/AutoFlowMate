@@ -2115,7 +2115,7 @@ pub struct RedactFiles {
     /// A CSV report: one line per file with what was found (counts only, never the values).
     pub report: String,
     /// Variable receiving a summary: {"files": 120, "redacted": 80, "clean": 35, "unverified": 1,
-    /// "skipped": 3, "failed": 1, "found": {"PAN": 95...}}.
+    /// "skipped": 3, "failed": 1, "foreign": 0, "found": {"PAN": 95...}}.
     pub summary_var: String,
     /// Let the flow go on when some files failed or could not be checked (unverified), or when the
     /// output folder holds files this redaction did not make (foreign). Off by default: the step
