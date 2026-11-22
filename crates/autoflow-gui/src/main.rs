@@ -451,7 +451,12 @@ impl Studio {
             );
             ui.label(tr("•  While recording, the mouse pointer is a cross."));
             ui.label(tr("•  What you type into password boxes is never recorded; the flow will ask for it when it runs."));
-            ui.label(tr("•  Clicks on the taskbar and on AutoFlowMate's own windows are not recorded."));
+            ui.label(
+                RichText::new(tr("•  Clicks on program buttons in the taskbar are NOT recorded. Open programs from Start or Search instead (recorded as the Windows key and Win+S), or start them in the flow with a Run program step."))
+                    .strong()
+                    .color(crate::look::err()),
+            );
+            ui.label(tr("•  Clicks on AutoFlowMate's own windows are not recorded."));
             ui.add_space(10.0);
             ui.horizontal(|ui| {
                 if ui.button(RichText::new(tr("OK, start recording")).strong()).clicked() {

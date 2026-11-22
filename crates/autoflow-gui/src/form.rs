@@ -341,7 +341,11 @@ impl Form<'_> {
                 }
                 let v = obj.get_mut(&key).unwrap();
                 // Tall editors go in a top-aligned column; a centred row would shift them over the next rows.
-                let tall = self.action.starts_with("redact_") && matches!(key.as_str(), "rules" | "patterns" | "words");
+                // (Multi-line text with its 𝑥 button below it, any-type values, JSON lists/records.)
+                let tall = (self.action.starts_with("redact_") && matches!(key.as_str(), "rules" | "patterns" | "words"))
+                    || (MULTILINE.contains(&key.as_str()) && v.is_string() && path_kind(&self.action, &key).is_none())
+                    || (key == "value" && matches!(self.action.as_str(), "set_variable" | "list_append"))
+                    || ((v.is_array() || v.is_object()) && key != "condition" && key != "region");
                 let row = if tall {
                     ui.vertical(|ui| {
                         changed |= self.field(ui, &path, &key, v);
@@ -403,6 +407,9 @@ impl Form<'_> {
         }
         if is_var_name_field(&self.action, key) {
             return self.var_name(ui, path, v);
+        }
+        if key == "value" && matches!(self.action.as_str(), "set_variable" | "list_append") {
+            return self.any_value(ui, path, key, v);
         }
         match v {
             Value::Bool(b) => ui.checkbox(b, "").changed(),
@@ -921,9 +928,11 @@ impl Form<'_> {
         } else if MULTILINE.contains(&key) && path_kind(&self.action, key).is_none() {
             ui.vertical(|ui| {
                 let hint = self.hint(key);
-                changed |= ui
-                    .add(egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(matches!(key, "script" | "sql")).hint_text(hint))
-                    .changed();
+                let r = ui.add(
+                    egui::TextEdit::multiline(&mut s).desired_rows(3).desired_width(300.0).code_editor_if(matches!(key, "script" | "sql")).hint_text(hint),
+                );
+                changed |= r.changed();
+                changed |= self.var_complete(ui, &r, &mut s);
                 changed |= self.insert_var_menu(ui, path, &mut s, key);
             });
         } else {
@@ -931,7 +940,9 @@ impl Form<'_> {
             // Capped: a box sized to "all available width" makes the side panel grow every frame.
             let w = (ui.available_width() - reserve).clamp(80.0, 230.0);
             let hint = self.hint(key);
-            changed |= ui.add_sized([w, 22.0], egui::TextEdit::singleline(&mut s).hint_text(hint)).changed();
+            let r = ui.add_sized([w, 22.0], egui::TextEdit::singleline(&mut s).hint_text(hint));
+            changed |= r.changed();
+            changed |= self.var_complete(ui, &r, &mut s);
             if key == "keys" {
                 egui::ComboBox::from_id_salt(format!("{path}#keys")).selected_text("▾").width(24.0).show_ui(ui, |ui| {
                     for k in COMMON_KEYS {
@@ -956,6 +967,70 @@ impl Form<'_> {
             *v = Value::String(s);
         }
         changed
+    }
+
+    /// Typing `${` in a text box lists the flow's variables and the built-in ones (narrowed by
+    /// what follows); clicking one completes it as `${name}`. Returns true when the text changed.
+    fn var_complete(&self, ui: &mut egui::Ui, resp: &egui::Response, s: &mut String) -> bool {
+        use egui::text::{CCursor, CCursorRange};
+        let ctx = ui.ctx().clone();
+        let popup_id = resp.id.with("var_complete");
+        // The list stays while the pointer is on it (clicking moves the focus away from the box).
+        let last_rect: Option<egui::Rect> = ctx.data(|d| d.get_temp(popup_id));
+        let on_popup = last_rect.is_some_and(|r| ctx.pointer_hover_pos().is_some_and(|p| r.expand(4.0).contains(p)));
+        if !resp.has_focus() && !on_popup {
+            ctx.data_mut(|d| d.remove::<egui::Rect>(popup_id));
+            return false;
+        }
+        let Some(mut state) = egui::text_edit::TextEditState::load(&ctx, resp.id) else { return false };
+        let Some(range) = state.cursor.char_range() else { return false };
+        let cur = range.primary.index.0;
+        let before: String = s.chars().take(cur).collect();
+        let Some(start) = before.rfind("${") else {
+            ctx.data_mut(|d| d.remove::<egui::Rect>(popup_id));
+            return false;
+        };
+        let partial = &before[start + 2..];
+        if partial.contains('}') || partial.contains(char::is_whitespace) {
+            ctx.data_mut(|d| d.remove::<egui::Rect>(popup_id));
+            return false;
+        }
+        let low = partial.to_lowercase();
+        let mut names: Vec<(String, String)> = self.vars.iter().map(|(n, _)| (n.clone(), tr("flow variable"))).collect();
+        names.extend(BUILTIN_VARS.iter().map(|(n, d)| (n.to_string(), tr(d))));
+        names.retain(|(n, _)| low.is_empty() || n.to_lowercase().contains(&low));
+        names.dedup_by(|a, b| a.0 == b.0);
+        if names.is_empty() {
+            ctx.data_mut(|d| d.remove::<egui::Rect>(popup_id));
+            return false;
+        }
+        let mut picked: Option<String> = None;
+        let area = egui::Area::new(popup_id).order(egui::Order::Foreground).fixed_pos(resp.rect.left_bottom() + egui::vec2(0.0, 2.0)).show(&ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(200.0);
+                ui.weak(RichText::new(tr("Insert variable")).small());
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    for (n, d) in names.iter().take(40) {
+                        if ui.selectable_label(false, format!("${{{n}}}")).on_hover_text(d).clicked() {
+                            picked = Some(n.clone());
+                        }
+                    }
+                });
+            });
+        });
+        ctx.data_mut(|d| d.insert_temp(popup_id, area.response.rect));
+        let Some(n) = picked else { return false };
+        // Replace "${partial" with "${name}" (an existing closing brace right after is reused).
+        let after: String = s.chars().skip(cur).collect();
+        let close = if after.starts_with('}') { "" } else { "}" };
+        let inserted = format!("${{{n}{close}");
+        let new_cur = before[..start].chars().count() + inserted.chars().count() + usize::from(close.is_empty());
+        *s = format!("{}{inserted}{after}", &before[..start]);
+        state.cursor.set_char_range(Some(CCursorRange::one(CCursor::new(new_cur))));
+        state.store(&ctx, resp.id);
+        ctx.data_mut(|d| d.remove::<egui::Rect>(popup_id));
+        resp.request_focus();
+        true
     }
 
     /// "𝑥" menu that appends ${variable} to the text.
@@ -1100,6 +1175,59 @@ impl Form<'_> {
                 }
             }
         });
+        changed
+    }
+
+    /// A value of any type, typed the way people expect: plain words are text (no quotes needed),
+    /// 42 is a number, true/false a yes/no, [..] a list and {..} a record. Text is shown without
+    /// quotes; "quoted" input forces text (for example "42" as text).
+    fn any_value(&mut self, ui: &mut egui::Ui, path: &str, key: &str, v: &mut Value) -> bool {
+        let shown = |v: &Value| match v {
+            Value::String(s) => s.clone(),
+            Value::Null => String::new(),
+            other => serde_json::to_string_pretty(other).unwrap_or_default(),
+        };
+        let mut buf = self.json_buffers.get(path).cloned().unwrap_or_else(|| shown(v));
+        let mut changed = false;
+        ui.vertical(|ui| {
+            let resp =
+                ui.add(egui::TextEdit::multiline(&mut buf).desired_rows(2).desired_width(300.0).hint_text("text, ${variable}, 42, true, [list] or {record}"));
+            let mut edited = resp.changed();
+            edited |= self.var_complete(ui, &resp, &mut buf);
+            ui.horizontal(|ui| {
+                edited |= self.insert_var_menu(ui, path, &mut buf, key);
+                let t = buf.trim_start();
+                let looks_json = t.starts_with('[') || t.starts_with('{') || t.starts_with('"');
+                let (kind, bad) = match v {
+                    Value::String(_) if looks_json => match serde_json::from_str::<Value>(&buf) {
+                        Err(e) => (format!("{} ({e})", tr("not valid JSON yet, kept as text")), true),
+                        Ok(_) => (tr("text"), false),
+                    },
+                    Value::String(_) | Value::Null => (tr("text"), false),
+                    Value::Number(_) => (tr("number"), false),
+                    Value::Bool(_) => (tr("yes/no"), false),
+                    Value::Array(_) => (tr("list"), false),
+                    Value::Object(_) => (tr("record"), false),
+                };
+                if bad {
+                    ui.colored_label(crate::look::err(), RichText::new(kind).small());
+                } else {
+                    ui.weak(RichText::new(format!("{}: {kind}", tr("saved as"))).small());
+                }
+            });
+            if edited {
+                // Valid JSON keeps its type; anything else is plain text.
+                let new = match serde_json::from_str::<Value>(buf.trim()) {
+                    Ok(p) if !buf.trim().is_empty() => p,
+                    _ => Value::String(buf.clone()),
+                };
+                if new != *v {
+                    *v = new;
+                    changed = true;
+                }
+            }
+        });
+        self.json_buffers.insert(path.to_string(), buf);
         changed
     }
 

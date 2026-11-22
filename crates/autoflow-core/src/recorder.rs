@@ -108,6 +108,11 @@ pub struct Converter<P: Probe> {
     alt: bool,
     shift: bool,
     win: bool,
+    /// The Windows key went down and nothing else happened before it came up (opens Start).
+    win_alone: bool,
+    /// Start or Search was just opened: the next window (the Start menu / search panel) is
+    /// noted without a window_activate, which could not find it when the flow runs.
+    shell_open: bool,
     text: String,
     password: bool,
     passwords: u32,
@@ -129,6 +134,8 @@ impl<P: Probe> Converter<P> {
             alt: false,
             shift: false,
             win: false,
+            win_alone: false,
+            shell_open: false,
             text: String::new(),
             password: false,
             passwords: 0,
@@ -170,6 +177,9 @@ impl<P: Probe> Converter<P> {
     fn switch_window(&mut self, title: &str) {
         if !title.is_empty() && title != self.window {
             self.window = title.to_string();
+            if std::mem::take(&mut self.shell_open) {
+                return;
+            }
             self.push(json!({"action": "window_activate", "title": title}));
         }
     }
@@ -194,6 +204,17 @@ impl<P: Probe> Converter<P> {
         self.password = false;
     }
 
+    /// Start (`win`) or Search (`win+s`) opened: a key_press, then a short wait for it to appear.
+    fn shell_key(&mut self, keys: &str, now: Instant) {
+        self.flush();
+        self.pause(now);
+        self.push(json!({"action": "key_press", "keys": keys, "comment": if keys == "win" { "open Start" } else { "open Search" }}));
+        self.push(json!({"action": "wait", "ms": 800}));
+        self.last_event = Some(now);
+        self.window.clear();
+        self.shell_open = true;
+    }
+
     /// Add a key_press, merging repeats of the same keys into `times`.
     fn key(&mut self, keys: String) {
         if let Some(last) = self.steps.last_mut() {
@@ -213,12 +234,23 @@ impl<P: Probe> Converter<P> {
                     0x11 | 0xA2 | 0xA3 => self.ctrl = down,
                     0x12 | 0xA4 | 0xA5 => self.alt = down,
                     0x10 | 0xA0 | 0xA1 => self.shift = down,
-                    0x5B | 0x5C => self.win = down,
+                    0x5B | 0x5C => {
+                        if down && !self.win {
+                            self.win_alone = true;
+                        }
+                        self.win = down;
+                    }
                     _ => {}
+                }
+                // The Windows key pressed and released on its own opens Start.
+                if matches!(vk, 0x5B | 0x5C) && !down && std::mem::take(&mut self.win_alone) {
+                    self.shell_key("win", now);
+                    return;
                 }
                 if !down || is_modifier(vk) {
                     return;
                 }
+                self.win_alone = false;
                 if self.ctrl && self.alt && vk == 0x52 {
                     self.stopped = true;
                     return;
@@ -279,7 +311,17 @@ impl<P: Probe> Converter<P> {
                 }
             }
             Raw::MouseDown { button, x, y } => {
+                self.win_alone = false;
                 let info = self.probe.element_at(x, y);
+                // Start and Search on the taskbar: the keyboard opens them the same way on every
+                // PC, whatever the taskbar layout or language.
+                if let Some(keys) = info.as_ref().and_then(shell_button) {
+                    self.down = None;
+                    if button == 0 {
+                        self.shell_key(keys, now);
+                    }
+                    return;
+                }
                 if info.as_ref().is_some_and(|i| self.ignored(&i.0)) {
                     self.down = None;
                     return;
@@ -375,6 +417,23 @@ const CLICKABLE: &[&str] = &[
     "Text",
     "Image",
 ];
+
+/// The taskbar's Start or Search button, as the keys that open it. Recognised by automation id
+/// (the same in every Windows language) or, failing that, the English name.
+fn shell_button(e: &Element) -> Option<&'static str> {
+    let (window, aid, name, _) = e;
+    if !window.trim().eq_ignore_ascii_case("taskbar") {
+        return None;
+    }
+    let (aid, name) = (aid.to_ascii_lowercase(), name.trim().to_ascii_lowercase());
+    if aid == "startbutton" || name == "start" {
+        Some("win")
+    } else if aid.contains("search") || name == "search" || name.starts_with("type here to search") {
+        Some("win+s")
+    } else {
+        None
+    }
+}
 
 fn click_step(b: u8, x: i32, y: i32, info: Option<&Element>) -> Value {
     if let Some((window, aid, name, ctype)) = info {
@@ -741,6 +800,9 @@ mod tests {
                 10 => ("Untitled - Notepad".into(), "".into(), "File".into(), "MenuItem".into()),
                 20 => ("Login".into(), "pwd".into(), "Password".into(), "Edit".into()),
                 30 => ("AutoFlowMate Studio".into(), "".into(), "Run".into(), "Button".into()),
+                40 => ("Taskbar".into(), "StartButton".into(), "Start".into(), "Button".into()),
+                50 => ("Taskbar".into(), "SearchButton".into(), "Search".into(), "Button".into()),
+                60 => ("Taskbar".into(), "".into(), "Notepad - 1 running window".into(), "Button".into()),
                 _ => ("Paint".into(), "".into(), "".into(), "Pane".into()),
             })
         }
@@ -812,6 +874,35 @@ mod tests {
         assert_eq!(v[5]["keys"], "ctrl+s");
         assert_eq!(v[7]["title"], "Paint");
         assert_eq!(v[8]["clicks"], 2);
+    }
+
+    #[test]
+    fn start_and_search_become_keys() {
+        let mut c = Converter::new(Fake { password_focus: false }, RecordOptions { min_wait_ms: 0, ..RecordOptions::default() });
+        let t = Instant::now();
+        // Start button on the taskbar, then typing in the Start menu and Enter.
+        c.feed(Raw::MouseDown { button: 0, x: 40, y: 1060 }, t);
+        c.feed(Raw::MouseUp { button: 0, x: 40, y: 1060 }, t);
+        keys(&mut c, t, "notepad");
+        c.feed(Raw::Key { vk: 0x0D, scan: 0, down: true }, t);
+        // Search button; an app's taskbar button is still ignored.
+        c.feed(Raw::MouseDown { button: 0, x: 50, y: 1060 }, t);
+        c.feed(Raw::MouseUp { button: 0, x: 50, y: 1060 }, t);
+        c.feed(Raw::MouseDown { button: 0, x: 60, y: 1060 }, t);
+        c.feed(Raw::MouseUp { button: 0, x: 60, y: 1060 }, t);
+        // The Windows key alone opens Start; Win+E is a shortcut, not Start.
+        c.feed(Raw::Key { vk: 0x5B, scan: 0, down: true }, t);
+        c.feed(Raw::Key { vk: 0x5B, scan: 0, down: false }, t);
+        c.feed(Raw::Key { vk: 0x5B, scan: 0, down: true }, t);
+        c.feed(Raw::Key { vk: 0x45, scan: 0, down: true }, t);
+        c.feed(Raw::Key { vk: 0x5B, scan: 0, down: false }, t);
+        let steps = c.finish().unwrap();
+        let v: Vec<Value> = steps.iter().map(|s| serde_json::to_value(s).unwrap()).collect();
+        let keys_pressed: Vec<&str> = v.iter().filter(|s| s["action"] == "key_press").map(|s| s["keys"].as_str().unwrap()).collect();
+        assert_eq!(keys_pressed, ["win", "enter", "win+s", "win", "win+e"], "{v:?}");
+        assert_eq!(actions(&steps)[..4], ["key_press", "wait", "type_text", "key_press"], "no window_activate for the Start menu");
+        assert_eq!(v[2]["text"], "notepad");
+        assert!(!serde_json::to_string(&v).unwrap().contains("running window"));
     }
 
     #[test]
