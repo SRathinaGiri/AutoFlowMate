@@ -1,7 +1,7 @@
 {
   "name": "autoflowmate",
   "displayName": "AutoFlowMate",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Build safe, reviewable Windows automation (RPA) flows for AutoFlowMate: desktop apps, Tally, Excel, PDFs, Word, e-mail, web pages, OCR, schedules, offline redaction and pseudonymisation. Writes plain JSON flows; validates, dry-runs and runs them when AutoFlowMate is installed.",
   "author": {
     "name": "SRathinaGiri",
