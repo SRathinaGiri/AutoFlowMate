@@ -347,7 +347,9 @@ logs). Other files are skipped and not copied, so nothing unredacted ends up in 
   `unverified` (a page or picture could not be read although it isn't blank, a picture format
   OCR can't open, or OCR switched off), `skipped` (type not supported) or `failed`. Unverified
   and failed files are **not written**, and the step fails after writing the report, so later
-  steps (zip, e-mail, upload) never pass on an incomplete folder. Set `continue_on_problems` only
+  steps (zip, e-mail, upload) never pass on an incomplete folder. Files in the output folder that
+  this redaction did not make (copied in by hand, left by another program) are listed as `foreign`
+  and also fail the step, so **use an empty output folder**. Set `continue_on_problems` only
   when you will check those files by hand.
 - **Thousands of files:** several files are worked on at once. A manifest in the output folder
   (`.autoflowmate-redaction.json`) records which output was made from which input with which

@@ -12,6 +12,7 @@
     "com.openai": {
       "interface": {
         "displayName": "AutoFlowMate",
+        "category": "Productivity",
         "shortDescription": "Build Windows RPA flows",
         "longDescription": "Create, explain and repair reviewable JSON automations for Windows applications, Tally, Excel, PDFs, Word, e-mail and repetitive back-office work, including offline redaction of personal data (PAN, Aadhaar, mobile numbers, names) and reversible pseudonymisation. Flows are plain JSON you can read and edit. With AutoFlowMate installed on a Windows PC they can be validated, dry-run and run locally; elsewhere the flow is written for you to run later. AutoFlowMate is free and open source (MIT).",
         "developerName": "SRathinaGiri",

@@ -2117,9 +2117,10 @@ pub struct RedactFiles {
     /// Variable receiving a summary: {"files": 120, "redacted": 80, "clean": 35, "unverified": 1,
     /// "skipped": 3, "failed": 1, "found": {"PAN": 95...}}.
     pub summary_var: String,
-    /// Let the flow go on when some files failed or could not be checked (unverified). Off by
-    /// default: the step then fails, so later steps (zip, e-mail, upload) never send a folder that
-    /// is not completely redacted. The report and summary are written either way.
+    /// Let the flow go on when some files failed or could not be checked (unverified), or when the
+    /// output folder holds files this redaction did not make (foreign). Off by default: the step
+    /// then fails, so later steps (zip, e-mail, upload) never send a folder that is not completely
+    /// redacted. The report and summary are written either way.
     pub continue_on_problems: bool,
 }
 impl Default for RedactFiles {

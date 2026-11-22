@@ -1036,6 +1036,15 @@ impl<'a> Context<'a> {
                     };
                     self.log(level, msg);
                 });
+                let report = self.text(&a.report)?;
+                let report_path = if report.trim().is_empty() { None } else { Some(self.path(&report)?) };
+                // Anything else in the output folder (copied in by hand, left by another tool) has
+                // not been checked: report it, so the folder is not zipped or sent as if it were.
+                let mut results = results;
+                for r in crate::redact::foreign_outputs(&input, &output, &results, report_path.as_slice()) {
+                    self.log(LogLevel::Warn, format!("! {}: {}", r.file, r.note));
+                    results.push(r);
+                }
                 let mut found = crate::redact::Counts::new();
                 let mut by_status: std::collections::BTreeMap<&str, usize> = Default::default();
                 for r in &results {
@@ -1043,18 +1052,16 @@ impl<'a> Context<'a> {
                     *by_status.entry(r.status).or_default() += 1;
                 }
                 let n = |s: &str| by_status.get(s).copied().unwrap_or(0);
-                let report = self.text(&a.report)?;
-                if !report.trim().is_empty() && !dry {
-                    let rp = self.path(&report)?;
-                    crate::redact::write_report(&rp, &results)?;
+                if let (Some(rp), false) = (&report_path, dry) {
+                    crate::redact::write_report(rp, &results)?;
                     self.log(LogLevel::Info, format!("report: {}", rp.display()));
                 }
-                let problems = n("failed") + n("unverified");
+                let problems = n("failed") + n("unverified") + n("foreign");
                 self.log(
                     if problems > 0 { LogLevel::Warn } else { LogLevel::Info },
                     format!(
-                        "{} file(s) in {:.1}s: {} redacted, {} clean, {} unchanged, {} unverified, {} skipped, {} failed; found {}",
-                        results.len(),
+                        "{} file(s) in {:.1}s: {} redacted, {} clean, {} unchanged, {} unverified, {} skipped, {} failed, {} foreign in the output folder; found {}",
+                        results.len() - n("foreign"),
                         started.elapsed().as_secs_f64(),
                         n("redacted"),
                         n("clean"),
@@ -1062,21 +1069,23 @@ impl<'a> Context<'a> {
                         n("unverified"),
                         n("skipped"),
                         n("failed"),
+                        n("foreign"),
                         if found.is_empty() { "nothing".to_string() } else { crate::redact::counts_text(&found) }
                     ),
                 );
                 self.set_var(
                     &a.summary_var,
-                    json!({"files": results.len(), "redacted": n("redacted"), "clean": n("clean"), "unchanged": n("unchanged"), "unverified": n("unverified"), "skipped": n("skipped"), "failed": n("failed"), "found": found}),
+                    json!({"files": results.len() - n("foreign"), "redacted": n("redacted"), "clean": n("clean"), "unchanged": n("unchanged"), "unverified": n("unverified"), "skipped": n("skipped"), "failed": n("failed"), "foreign": n("foreign"), "found": found}),
                 )?;
                 self.check_cancel()?;
                 // Fail closed: later steps (zip, e-mail, upload) must not run on a folder that is
                 // not completely redacted, unless the flow says so explicitly.
                 if problems > 0 && !a.continue_on_problems {
                     bail!(
-                        "{problems} file(s) could not be redacted completely and were not written ({} failed, {} unverified){}. Check them by hand, or set continue_on_problems",
+                        "{problems} problem(s): {} file(s) failed and {} could not be checked completely (none of them written), {} file(s) in the output folder were not made by this redaction{}. Check them by hand (use an empty output folder), or set continue_on_problems",
                         n("failed"),
                         n("unverified"),
+                        n("foreign"),
                         if report.trim().is_empty() { String::new() } else { format!("; see the report {report}") }
                     );
                 }

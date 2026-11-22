@@ -618,8 +618,8 @@ Join a list into one text.
 | `overwrite` | `false` | Redo files that are already in the output folder. |
 | `threads` | `0` | Files worked on at the same time (0 = automatic). |
 | `report` | `""` | A CSV report: one line per file with what was found (counts only, never the values). |
-| `summary_var` | `"redaction"` | Variable receiving a summary: {"files": 120, "redacted": 80, "clean": 35, "unverified": 1, "skipped": 3, "failed": 1, "found": {"PAN": 95...}}. |
-| `continue_on_problems` | `false` | Let the flow go on when some files failed or could not be checked (unverified). Off by default: the step then fails, so later steps (zip, e-mail, upload) never send a folder that is not completely redacted. The report and summary are written either way. |
+| `summary_var` | `"redaction"` | Variable receiving a summary: {"files": 120, "redacted": 80, "clean": 35, "unverified": 1, "skipped": 3, "failed": 1, "foreign": 0, "found": {"PAN": 95...}}. |
+| `continue_on_problems` | `false` | Let the flow go on when some files failed or could not be checked (unverified), or the output folder holds files this redaction did not make (foreign; use an empty output folder). Off by default: the step then fails, so later steps (zip, e-mail, upload) never send a folder that is not completely redacted. The report and summary are written either way. |
 
 ```json
 {"action":"redact_files","input":"","output":"","include":"","recursive":true,"rules":[],"patterns":{},"words":[],"words_file":"","mask_style":"label","replace_with":"","strict":true,"ocr":"auto","ocr_language":"","ocr_rotated":true,"pdf_dpi":150,"clear_metadata":true,"overwrite":false,"threads":0,"report":"","summary_var":"redaction","continue_on_problems":false}

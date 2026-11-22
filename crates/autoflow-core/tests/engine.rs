@@ -206,7 +206,7 @@ fn redaction_fails_closed_unless_told_otherwise() {
     };
     let (r, _) = run(flow(false), &dir);
     assert!(!r.success, "a failed file must stop the flow");
-    assert!(r.message.contains("could not be redacted completely"), "{}", r.message);
+    assert!(r.message.contains("1 file(s) failed"), "{}", r.message);
     assert!(!dir.join("after.txt").exists(), "later steps must not run");
     assert!(!dir.join("out").join("broken.docx").exists(), "nothing unredacted is written");
     assert_eq!(std::fs::read_to_string(dir.join("out").join("good.txt")).unwrap(), "PAN [PAN]");
@@ -218,6 +218,42 @@ fn redaction_fails_closed_unless_told_otherwise() {
     let (r, _) = run(flow(true), &dir);
     assert!(r.success, "{}", r.message);
     assert!(dir.join("after.txt").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn foreign_files_in_the_output_folder_stop_the_flow() {
+    let dir = tmpdir("redact_foreign");
+    std::fs::create_dir_all(dir.join("in")).unwrap();
+    std::fs::create_dir_all(dir.join("out").join("sub")).unwrap();
+    std::fs::write(dir.join("in").join("a.txt"), "PAN ABCPE1234F").unwrap();
+    // Copied into the output folder by hand: never checked, but a later zip would include it.
+    std::fs::write(dir.join("out").join("sub").join("copied.pdf"), b"unredacted").unwrap();
+    let flow = |cont: bool| {
+        json!({"name":"t","steps":[
+            {"action":"redact_files","input":"in","output":"out","report":"out/report.csv","continue_on_problems":cont,"summary_var":"s"},
+            {"action":"file_write","path":"after.txt","content":"ran"}
+        ]})
+    };
+    let (r, _) = run(flow(false), &dir);
+    assert!(!r.success, "a foreign file must stop the flow");
+    assert!(r.message.contains("1 file(s) in the output folder were not made by this redaction"), "{}", r.message);
+    assert!(!dir.join("after.txt").exists());
+    assert_eq!(r.variables["s"]["foreign"], json!(1));
+    assert_eq!(r.variables["s"]["redacted"], json!(1));
+    let report = std::fs::read_to_string(dir.join("out").join("report.csv")).unwrap();
+    assert!(report.contains("copied.pdf,foreign"), "{report}");
+    assert!(!report.contains("report.csv,foreign"), "the report itself is ours: {report}");
+    // Allowed explicitly: the flow goes on.
+    let (r, _) = run(flow(true), &dir);
+    assert!(r.success, "{}", r.message);
+    // Removed: our own outputs (now proven by the manifest), the manifest and the report pass.
+    std::fs::remove_file(dir.join("out").join("sub").join("copied.pdf")).unwrap();
+    let _ = std::fs::remove_file(dir.join("after.txt"));
+    let (r, _) = run(flow(false), &dir);
+    assert!(r.success, "{}", r.message);
+    assert_eq!(r.variables["s"]["foreign"], json!(0));
+    assert_eq!(r.variables["s"]["unchanged"], json!(1));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

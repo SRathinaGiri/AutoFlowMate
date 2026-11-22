@@ -47,6 +47,9 @@ jobs:
       - name: Read version
         id: version
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
           $v = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
           $tag = "v$v"
@@ -59,6 +62,17 @@ jobs:
           if ($claude -ne $v) { throw "skills/autoflowmate/.claude-plugin/plugin.json version $claude does not match Cargo.toml version $v" }
           $agy = (Get-Content .antigravity-plugin/plugin.json -Raw | ConvertFrom-Json).version
           if ($agy -ne $v) { throw ".antigravity-plugin/plugin.json version $agy does not match Cargo.toml version $v" }
+          # Releases are immutable: a published version is never rebuilt or replaced. Changed
+          # binaries need a new version and tag. Checked before building, so nothing is wasted.
+          $publishing = $env:GITHUB_REF_TYPE -eq 'tag' -or $env:PUBLISH -eq 'true'
+          if ($publishing) {
+            gh release view $tag *> $null
+            if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists; releases are never replaced. Bump the version for a new release." }
+            $tagSha = git ls-remote origin "refs/tags/$tag^{}" | ForEach-Object { ($_ -split '\s+')[0] }
+            if (-not $tagSha) { $tagSha = git ls-remote origin "refs/tags/$tag" | ForEach-Object { ($_ -split '\s+')[0] } }
+            if ($tagSha -and $tagSha -ne $env:GITHUB_SHA) { throw "Tag $tag points to $tagSha, but this run builds $env:GITHUB_SHA" }
+          }
+          $global:LASTEXITCODE = 0
           "version=$v" >> $env:GITHUB_OUTPUT
           "tag=$tag" >> $env:GITHUB_OUTPUT
           Write-Host "Version $v, tag $tag"
@@ -99,11 +113,8 @@ jobs:
           $files = @(Get-ChildItem dist -File | Where-Object { $_.Name -like '*.zip' -or $_.Name -like '*.sha256' } | ForEach-Object { $_.FullName })
           $ghArgs = @($env:TAG) + $files + @('--title', "AutoFlowMate $env:TAG", '--target', $env:GITHUB_SHA)
           if (Test-Path $notes) { $ghArgs += @('--notes-file', $notes) } else { $ghArgs += '--generate-notes' }
+          # Never upload over an existing release (checked again here in case one appeared meanwhile).
           gh release view $env:TAG *> $null
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "Release $env:TAG exists; replacing its assets"
-            gh release upload $env:TAG $files --clobber
-          } else {
-            gh release create @ghArgs
-          }
+          if ($LASTEXITCODE -eq 0) { throw "Release $env:TAG already exists; releases are never replaced" }
+          gh release create @ghArgs
           if ($LASTEXITCODE -ne 0) { throw "gh release failed" }

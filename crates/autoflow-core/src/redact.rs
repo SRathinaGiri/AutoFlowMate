@@ -1728,6 +1728,62 @@ pub fn redact_many(
     results
 }
 
+/// Files in the output folder that this redaction cannot vouch for: not written (or proven
+/// current) by this run, and not proven by the manifest. A later step that zips or sends the whole
+/// folder would share them as they are, so they are reported with status `foreign`.
+/// `ignore` lists files to leave out (such as the report). Only for folder outputs.
+pub fn foreign_outputs(input: &Path, output: &Path, results: &[FileResult], ignore: &[PathBuf]) -> Vec<FileResult> {
+    if input.is_file() && output.extension().is_some() && !output.is_dir() {
+        return vec![]; // a single named output file: there is no folder of ours to vouch for
+    }
+    if !output.is_dir() {
+        return vec![];
+    }
+    let manifest = read_manifest(&output.join(MANIFEST));
+    let ours: std::collections::BTreeSet<PathBuf> = results
+        .iter()
+        .filter(|r| matches!(r.status, "redacted" | "clean" | "unchanged"))
+        .map(|r| output.join(&r.file))
+        .filter_map(|p| std::fs::canonicalize(p).ok())
+        .collect();
+    let ignore: std::collections::BTreeSet<PathBuf> = ignore.iter().filter_map(|p| std::fs::canonicalize(p).ok()).collect();
+    let mut out = vec![];
+    let mut stack = vec![output.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let mut entries: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        entries.sort();
+        for p in entries {
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            let rel = p.strip_prefix(output).unwrap_or(&p).to_string_lossy().into_owned();
+            if rel == MANIFEST {
+                continue;
+            }
+            let canon = std::fs::canonicalize(&p).unwrap_or_else(|_| p.clone());
+            if ours.contains(&canon) || ignore.contains(&canon) {
+                continue;
+            }
+            // An output from an earlier run (for example with a narrower include) still counts
+            // when the manifest proves its content.
+            if manifest.get(&rel).is_some_and(|e| sha256_file(&p).is_ok_and(|h| h == e.output_sha256)) {
+                continue;
+            }
+            out.push(FileResult {
+                file: rel,
+                status: "foreign",
+                counts: Counts::new(),
+                pages: 0,
+                note: "in the output folder but not made by this redaction (not checked): remove it, or it may be shared unredacted".into(),
+            });
+        }
+    }
+    out.sort_by(|a, b| a.file.cmp(&b.file));
+    out
+}
+
 /// Write the report: one line per file (no personal data in it).
 pub fn write_report(path: &Path, results: &[FileResult]) -> Result<()> {
     if let Some(d) = path.parent() {

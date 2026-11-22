@@ -32,9 +32,11 @@ never changed and `output` must differ from `input`.
 - **Fail closed.** If any file fails or can't be checked completely (`unverified`: a page or
   picture where OCR read nothing although it isn't blank, a picture format OCR can't open, or OCR
   off), that file is **not written** and the step **fails** after writing the report, so later
-  steps (zip, mail, upload) never see an incomplete folder. Only set `continue_on_problems: true`
-  when the user explicitly accepts that, and then check `summary.failed` / `summary.unverified`.
-- `summary_var` gets `{files, redacted, clean, unchanged, unverified, skipped, failed, found: {PAN: n, ...}}`.
+  steps (zip, mail, upload) never see an incomplete folder. Files in the output folder that this
+  redaction did not make or prove (copied in by hand, left by another tool) are reported as
+  `foreign` and also fail the step: use an empty output folder. Only set `continue_on_problems: true`
+  when the user explicitly accepts that, and then check `summary.failed` / `summary.unverified` / `summary.foreign`.
+- `summary_var` gets `{files, redacted, clean, unchanged, unverified, skipped, failed, foreign, found: {PAN: n, ...}}`.
   `clean` means read completely and nothing found. `skipped` = file type not supported (not copied).
 - **Existing outputs need proof.** The output folder keeps a manifest
   (`.autoflowmate-redaction.json`) with the SHA-256 of each input and output and a hash of the
