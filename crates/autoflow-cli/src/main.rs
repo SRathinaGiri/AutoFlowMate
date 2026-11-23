@@ -757,7 +757,7 @@ fn schedule_cmd(cmd: ScheduleCmd) -> Result<ExitCode> {
                 name: schedule::sanitize_name(&name),
                 flow: flow.clone(),
                 trigger: Trigger::parse(&when)?,
-                exe: abs(&std::env::current_exe()?),
+                exe: if autoflow_core::packaged() { autoflow_core::cli_exe() } else { abs(&std::env::current_exe()?) },
                 extra_args: extra,
                 time_limit_minutes,
                 watch,

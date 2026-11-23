@@ -308,7 +308,8 @@ pub fn create(spec: &TaskSpec) -> Result<()> {
     if !spec.flow.is_absolute() || !spec.flow.exists() {
         bail!("flow file not found: {}", spec.flow.display());
     }
-    if !spec.exe.exists() {
+    // An MSIX alias is a special link that `exists()` doesn't follow, so check the link itself.
+    if !spec.exe.exists() && std::fs::symlink_metadata(&spec.exe).is_err() {
         bail!("autoflow.exe not found at {}", spec.exe.display());
     }
     if let Trigger::Once { at } = &spec.trigger {

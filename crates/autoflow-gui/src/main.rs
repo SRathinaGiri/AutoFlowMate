@@ -1072,6 +1072,15 @@ impl Studio {
                         self.show_about = true;
                         ui.close();
                     }
+                    if ui.button(tr("📂 Examples folder")).on_hover_text(tr("Ready-made example flows to open and run")).clicked() {
+                        match examples_dir() {
+                            Some(d) => {
+                                let _ = std::process::Command::new("explorer").arg(&d).spawn();
+                            }
+                            None => self.info(LogKind::Warn, tr("The examples folder was not found next to the program")),
+                        }
+                        ui.close();
+                    }
                     ui.hyperlink_to(tr("Project on GitHub"), GITHUB_URL);
                     ui.hyperlink_to(tr("Action reference"), format!("{GITHUB_URL}/blob/main/skills/autoflowmate/references/actions.md"));
                 });
@@ -2624,6 +2633,18 @@ fn cat_color(cat: &str) -> Color32 {
     }
 }
 
+/// The example flows. In the MSIX package the program folder is read-only, and the examples
+/// write their output next to themselves, so they are copied once to Documents\AutoFlowMate.
+fn examples_dir() -> Option<std::path::PathBuf> {
+    let src = autoflow_core::program_dirs().into_iter().map(|d| d.join("examples")).find(|d| d.is_dir())?;
+    if !autoflow_core::packaged() {
+        return Some(src);
+    }
+    let dest = autoflow_core::documents_dir()?.join("AutoFlowMate").join("examples");
+    autoflow_core::copy_dir(&src, &dest).ok()?;
+    Some(dest)
+}
+
 fn refresh_tasks(s: &mut SchedUi, flow: &std::path::Path) {
     match autoflow_core::schedule::for_flow(flow) {
         Ok(t) => s.tasks = t,
@@ -2654,8 +2675,8 @@ fn create_task(s: &SchedUi, flow: &std::path::Path) -> (bool, String) {
         Ok(t) => t,
         Err(e) => return (false, e.to_string()),
     };
-    // The task runs the CLI that sits next to Studio.
-    let exe = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("autoflow.exe"))).unwrap_or_default();
+    // The task runs the CLI that sits next to Studio (or the package's alias).
+    let exe = autoflow_core::cli_exe();
     let spec = TaskSpec {
         name: schedule::sanitize_name(&s.name),
         flow: flow.to_path_buf(),
