@@ -270,7 +270,7 @@
   <div class="wrap">
     <h2>Questions</h2>
     <details><summary>Windows says "Windows protected your PC". Is it safe?</summary>
-      <p>Windows shows this for new programs that aren't code-signed yet. Code signing for AutoFlowMate's Windows releases is being set up with free code signing provided by <a href="https://about.signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a> (see the <a href="https://github.com/SRathinaGiri/AutoFlowMate#code-signing-policy">code signing policy</a>). Until then, click <strong>More info → Run anyway</strong>. AutoFlowMate is open source, every release is built by GitHub from the public code, and you can check your download against the <code>.sha256</code> file on the release page or with <code>gh attestation verify &lt;zip&gt; --repo SRathinaGiri/AutoFlowMate</code>.</p></details>
+      <p>Windows shows this for programs that aren't code-signed, and AutoFlowMate's releases aren't signed yet (see the <a href="https://github.com/SRathinaGiri/AutoFlowMate#code-signing-policy">code signing policy</a>). Click <strong>More info → Run anyway</strong>. AutoFlowMate is open source, every release is built by GitHub from the public code, and you can check your download against the <code>.sha256</code> file on the release page or with <code>gh attestation verify &lt;zip&gt; --repo SRathinaGiri/AutoFlowMate</code>.</p></details>
     <details><summary>Does it send my data anywhere?</summary>
       <p>No. There's no account, telemetry or update check. Data leaves your PC only when a flow you run tells it to, for example a step that sends an e-mail or asks a cloud AI. See the <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/PRIVACY.md">privacy policy</a>.</p></details>
     <details><summary>Is it really free?</summary>
@@ -286,7 +286,7 @@
 
 <footer>
   <div class="wrap">
-    <div>© SRathinaGiri · AutoFlowMate is free software under the <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/LICENSE">MIT licence</a>. Code signing (being set up): free code signing provided by <a href="https://about.signpath.io/">SignPath.io</a>, certificate by <a href="https://signpath.org/">SignPath Foundation</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate#code-signing-policy">Code signing policy</a></div>
+    <div>© SRathinaGiri · AutoFlowMate is free software under the <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/LICENSE">MIT licence</a>. Releases are built by GitHub from the public code and can be checked with their <code>.sha256</code> file · <a href="https://github.com/SRathinaGiri/AutoFlowMate#code-signing-policy">Code signing policy</a></div>
     <div><a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/docs/GUIDE.md">Guide</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/releases">Releases</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/PRIVACY.md">Privacy</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/blob/main/SECURITY.md">Security</a> · <a href="https://github.com/SRathinaGiri/AutoFlowMate/issues">Support</a></div>
   </div>
 </footer>
